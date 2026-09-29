@@ -262,12 +262,18 @@ export async function makeApp(opts: { database?: Database | null; config?: Confi
   return { app, gateway, fx, oauth, clock, config };
 }
 
-/** Inject with §C5 headers signed over the exact body text. */
-export function signedInject(t: TestApp, opts: { method: 'GET' | 'POST'; url: string; body?: unknown; secret?: string; ts?: number; rawBody?: string }) {
+/**
+ * Inject with §C5 headers signed over the exact body text. By default from 127.0.0.1 without proxy headers, like
+ * FXServer on the same host; `remoteAddress` / `headers` simulate a request through a proxy or from elsewhere.
+ */
+export function signedInject(
+  t: TestApp,
+  opts: { method: 'GET' | 'POST'; url: string; body?: unknown; secret?: string; ts?: number; rawBody?: string; remoteAddress?: string; headers?: Record<string, string> },
+) {
   const raw = opts.rawBody ?? (opts.body === undefined ? '' : JSON.stringify(opts.body));
   const now = opts.ts ?? Math.floor(t.clock.now().getTime() / 1000);
-  const headers: Record<string, string> = signedHeaders(opts.secret ?? HMAC_SECRET, raw, now);
-  const inject: InjectOptions = { method: opts.method, url: opts.url, headers };
+  const headers: Record<string, string> = { ...opts.headers, ...signedHeaders(opts.secret ?? HMAC_SECRET, raw, now) };
+  const inject: InjectOptions = { method: opts.method, url: opts.url, headers, remoteAddress: opts.remoteAddress ?? '127.0.0.1' };
   if (opts.method === 'POST') {
     headers['content-type'] = 'application/json';
     inject.payload = raw;

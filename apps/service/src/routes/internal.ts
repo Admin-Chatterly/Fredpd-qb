@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// /internal/* — called by FXServer (fredpd_core signedFetch), HMAC-signed (docs/contracts.md §C5, §C6).
+// /internal/* — called by FXServer (fredpd_core signedFetch), HMAC-signed (docs/contracts.md §C5, §C6). FXServer
+// reaches the service on loopback (§C6, docs/hosting.md §7), so a request that did not come straight from loopback
+// (another address, or any proxy forwarding header: tunnel, Caddy) is answered 404 before anything else. A captured
+// signature therefore cannot be replayed from outside the host (§C5 does not sign method or path; see
+// docs/modules/service.md).
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { DiscordIdSchema, InternalEventSchema } from '@fredpd/types/actions';
@@ -8,7 +12,8 @@ import type { AppContext } from '../context';
 import { writeGrantCache } from '../db/repo';
 import { computeGrants, GatewayNotReadyError } from '../grants';
 import { HttpError, parseOr400 } from '../http/errors';
-import { requireHmac } from '../http/guards';
+import { requireHmac, requireLoopback } from '../http/guards';
+import { checkInternalEvent, liveAccess } from '../ws/events';
 
 /** FXServer is one trusted caller that may burst (a restart re-fetches every online player); HMAC gates it. */
 const INTERNAL_RATE = { max: 1200, timeWindow: '1 minute' };
@@ -17,14 +22,16 @@ const ParamsSchema = z.object({ discordId: DiscordIdSchema });
 
 export function registerInternalRoutes(app: FastifyInstance, ctx: AppContext): void {
   const hmac = requireHmac(ctx);
+  // onRequest: before the body is read and before the rate limiter (whose hook the plugin appends after this one).
+  const opts = { onRequest: requireLoopback, preHandler: hmac, config: { rateLimit: INTERNAL_RATE } };
 
-  app.get('/internal/ping', { preHandler: hmac, config: { rateLimit: INTERNAL_RATE } }, async () => ({
+  app.get('/internal/ping', opts, async () => ({
     ok: true,
     discord: ctx.gateway.isReady(),
     subscribers: ctx.hub.size,
   }));
 
-  app.get('/internal/grants/:discordId', { preHandler: hmac, config: { rateLimit: INTERNAL_RATE } }, async (request) => {
+  app.get('/internal/grants/:discordId', opts, async (request) => {
     const { discordId } = parseOr400(ParamsSchema, request.params);
     let result;
     try {
@@ -36,7 +43,7 @@ export function registerInternalRoutes(app: FastifyInstance, ctx: AppContext): v
       throw err;
     }
     await writeGrantCache(ctx.db, [{ discordId, grants: result.grants }]);
-    ctx.hub.setEligible(discordId, result.member && result.grants.grants.length > 0);
+    ctx.hub.setAccess(discordId, liveAccess(result.member, result.grants));
 
     // A player is joining (or FXServer re-fetches): make sure FXServer has the Discord name before the character
     // loads and fredpd_core creates the fredpd_officers row (§4.9). After the response, officers only.
@@ -49,8 +56,9 @@ export function registerInternalRoutes(app: FastifyInstance, ctx: AppContext): v
     return body;
   });
 
-  app.post('/internal/events', { preHandler: hmac, config: { rateLimit: INTERNAL_RATE } }, async (request) => {
-    const event = parseOr400(InternalEventSchema, request.body);
-    return { ok: true as const, delivered: ctx.hub.broadcast(event) };
+  app.post('/internal/events', opts, async (request) => {
+    const checked = checkInternalEvent(parseOr400(InternalEventSchema, request.body));
+    if (!checked.ok) throw new HttpError(400, 'invalid_body', checked.detail);
+    return { ok: true as const, delivered: ctx.hub.broadcast(checked.event) };
   });
 }

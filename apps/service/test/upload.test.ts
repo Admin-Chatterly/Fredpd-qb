@@ -136,6 +136,11 @@ describe.skipIf(!database)('POST /upload (DB)', () => {
     expect(unsigned.statusCode).toBe(401);
     const badSig = await signedInject(t, { method: 'POST', url: '/upload', body, secret: 'another-secret-0123456789abcdef-XYZ' });
     expect(badSig.statusCode).toBe(401);
+    // The game variant is for FXServer on this host only (like /internal/*): signed but proxied or remote -> 401.
+    const proxied = await signedInject(t, { method: 'POST', url: '/upload', body, headers: { 'x-forwarded-for': '198.51.100.7' } });
+    expect(proxied.statusCode).toBe(401);
+    const remote = await signedInject(t, { method: 'POST', url: '/upload', body, remoteAddress: '203.0.113.5' });
+    expect(remote.statusCode).toBe(401);
 
     const big = Buffer.alloc(5 * 1024 * 1024 + 1, 0);
     PNG_1X1.copy(big);

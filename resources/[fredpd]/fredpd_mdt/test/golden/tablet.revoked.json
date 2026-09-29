@@ -1,0 +1,15 @@
+{
+  "issuedAt": "2026-09-28T08:00:00Z",
+  "issuedBy": {
+    "callsign": "LED-01",
+    "citizenid": "MDT10002",
+    "displayName": "Eva L.",
+    "unit": "ledning"
+  },
+  "owner": {
+    "citizenid": "MDT10001",
+    "name": "Anna B."
+  },
+  "revoked": true,
+  "serial": "SP-AAAA-0001"
+}

@@ -15,7 +15,7 @@ import type { UploadMime, UploadResponse } from '@fredpd/types/actions';
 import type { AppContext } from '../context';
 import { insertUpload } from '../db/repo';
 import { HttpError, parseOr400 } from '../http/errors';
-import { checkCsrf, hasHmacHeaders, precheckHmacHeaders, requireHmac, sessionGrants } from '../http/guards';
+import { checkCsrf, hasHmacHeaders, isDirectLoopback, precheckHmacHeaders, requireHmac, sessionGrants } from '../http/guards';
 
 const EXT: Record<UploadMime, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 /** Base64 of 5 MB plus JSON overhead; the decoded size is checked exactly afterwards. */
@@ -52,13 +52,17 @@ export function registerUploadRoutes(app: FastifyInstance, ctx: AppContext): voi
       // no I/O. No session and no signature -> 401; malformed or stale HMAC headers -> 401; a portal upload that
       // is not multipart -> 415.
       onRequest: async (request) => {
-        if (request.portalSession) {
+        // The session row is loaded later (preParsing, after the rate limiter): here a validly signed session
+        // cookie decides the portal path.
+        if (request.sessionToken) {
           if (!String(request.headers['content-type'] ?? '').toLowerCase().startsWith('multipart/form-data')) {
             throw new HttpError(415, 'unsupported_type', 'multipart/form-data expected');
           }
           return;
         }
         if (!hasHmacHeaders(request)) throw new HttpError(401, 'unauthenticated');
+        // The game variant comes from FXServer on this host only, like /internal/* (§C6).
+        if (!isDirectLoopback(request)) throw new HttpError(401, 'unauthenticated');
         precheckHmacHeaders(ctx, request);
       },
       // After the rate limiter; the multipart stream is still unread here (the handler reads it).

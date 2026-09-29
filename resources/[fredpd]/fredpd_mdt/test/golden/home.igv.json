@@ -1,0 +1,194 @@
+{
+  "counts": {
+    "activeBolos": 44,
+    "myOpenCases": 3,
+    "onDuty": 5
+  },
+  "me": {
+    "callsign": "IGV-07",
+    "citizenid": "MDT10001",
+    "displayName": "Anna B.",
+    "unit": "igv"
+  },
+  "myCases": [
+    {
+      "caseNumber": "K-12-26",
+      "id": 12,
+      "level": 0,
+      "status": "open",
+      "title": "Rån mot värdetransport",
+      "visibility": "full"
+    },
+    {
+      "contact": {
+        "displayName": "Eva L.",
+        "unit": "ledning"
+      },
+      "visibility": "notice"
+    }
+  ],
+  "recentBolos": [
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 1,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC01D",
+      "reason": "Rån",
+      "subject": "ABC01D · sultan"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 2,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC02D",
+      "reason": "Rån",
+      "subject": "ABC02D · sultan"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 3,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC03D",
+      "reason": "Rån",
+      "subject": "ABC03D · sultan"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 4,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC04D",
+      "reason": "Rån",
+      "subject": "ABC04D · sultan"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 5,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC05D",
+      "reason": "Rån",
+      "subject": "ABC05D · sultan"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 6,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC06D",
+      "reason": "Rån",
+      "subject": "ABC06D · sultan"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 7,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC07D",
+      "reason": "Rån",
+      "subject": "ABC07D · sultan"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 8,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC08D",
+      "reason": "Rån",
+      "subject": "ABC08D · sultan"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 9,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC09D",
+      "reason": "Rån",
+      "subject": "ABC09D · sultan"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 10,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC10D",
+      "reason": "Rån",
+      "subject": "ABC10D · sultan"
+    }
+  ],
+  "roster": [],
+  "variant": "igv"
+}

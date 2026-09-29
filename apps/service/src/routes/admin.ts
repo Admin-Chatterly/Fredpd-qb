@@ -35,7 +35,7 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: AppContext): void
   app.put(
     '/api/admin/roles/:discordRoleId/grants',
     { preHandler: [requireSession({ csrf: true }), perm] },
-    async (request): Promise<AdminRoleGrantsPutResponse> => {
+    async (request): Promise<AdminRoleGrantsPutResponse & { fxPending?: true }> => {
       const session = sessionOf(request);
       const { discordRoleId } = parseOr400(DiscordRoleIdParamSchema, request.params);
       const body = parseOr400(AdminRoleGrantsPutBodySchema, request.body);
@@ -46,14 +46,17 @@ export function registerAdminRoutes(app: FastifyInstance, ctx: AppContext): void
       });
       if (!saved) throw new HttpError(404, 'not_found', 'role');
       // Committed: recompute every holder, refresh fredpd_grant_cache, and have FXServer re-fetch the online ones.
-      // The save stands even if that fails (players then get the change on their next join).
+      // The save stands even if that fails. `fxPending: true` (additive to §C10's `{ ok, recomputed }`) tells the
+      // page that FXServer has not confirmed yet: the service redelivers it (src/fx-retry.ts), or, when the Discord
+      // gateway was not ready, the resync after it reconnects recomputes everyone online.
       let recomputed = 0;
+      let delivered = false;
       try {
-        recomputed = await ctx.sync.recomputeRoleHolders(discordRoleId);
+        ({ scheduled: recomputed, delivered } = await ctx.sync.recomputeRoleHolders(discordRoleId));
       } catch (err) {
         request.log.error({ err, discordRoleId }, 'recompute after a permissions save failed');
       }
-      return { ok: true, recomputed };
+      return delivered ? { ok: true, recomputed } : { ok: true, recomputed, fxPending: true };
     },
   );
 }

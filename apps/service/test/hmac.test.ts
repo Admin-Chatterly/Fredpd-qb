@@ -55,12 +55,12 @@ describe('HMAC-protected routes', () => {
   });
 
   it('POST /internal/events: 200 when the raw body is signed, 401 when the body was altered', async () => {
-    const good = await signedInject(t, { method: 'POST', url: '/internal/events', body: { type: 'alertCreated', payload: { id: 1 } } });
+    const good = await signedInject(t, { method: 'POST', url: '/internal/events', body: { type: 'alertClosed', payload: { id: 1 } } });
     expect(good.statusCode).toBe(200);
     expect(good.json()).toEqual({ ok: true, delivered: 0 });
 
     // Signed with whitespace in the JSON: the signature is over the exact text, so it still verifies.
-    const spaced = '{ "type": "unitsChanged",  "payload": [] }';
+    const spaced = '{ "type": "unitsChanged",  "payload": { "units": [] } }';
     const ok2 = await signedInject(t, { method: 'POST', url: '/internal/events', rawBody: spaced });
     expect(ok2.statusCode).toBe(200);
 
@@ -134,6 +134,25 @@ describe('HMAC-protected routes', () => {
     } finally {
       t.gateway.ready = true;
     }
+  });
+
+  it('/internal/* only straight from loopback: another address or any proxy header is 404, even correctly signed', async () => {
+    for (const remoteAddress of ['127.0.0.1', '127.0.0.2', '::1', '::ffff:127.0.0.1']) {
+      const res = await signedInject(t, { method: 'GET', url: '/internal/ping', remoteAddress });
+      expect(res.statusCode, remoteAddress).toBe(200);
+    }
+    for (const remoteAddress of ['203.0.113.5', '192.168.1.10', '::ffff:10.0.0.1', '::2']) {
+      const res = await signedInject(t, { method: 'GET', url: '/internal/ping', remoteAddress });
+      expect(res.statusCode, remoteAddress).toBe(404);
+      expect(res.json()).toEqual({ error: 'not_found' });
+    }
+    // Through cloudflared or Caddy on the same host: the peer is loopback, but the proxy says where it came from.
+    for (const header of ['x-forwarded-for', 'forwarded', 'x-real-ip', 'cf-connecting-ip', 'via']) {
+      const res = await signedInject(t, { method: 'GET', url: '/internal/grants/123456789012345678', headers: { [header]: '198.51.100.7' } });
+      expect(res.statusCode, header).toBe(404);
+    }
+    const post = await signedInject(t, { method: 'POST', url: '/internal/events', body: { type: 'alertClosed', payload: { id: 1 } }, headers: { 'x-forwarded-for': '198.51.100.7' } });
+    expect(post.statusCode).toBe(404);
   });
 
   it('unknown routes answer 404 { error: not_found }', async () => {

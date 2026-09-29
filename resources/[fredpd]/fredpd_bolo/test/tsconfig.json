@@ -1,0 +1,7 @@
+// Type-checks the fredpd_bolo tests: pnpm exec tsc -p "resources/[fredpd]/fredpd_bolo/test/tsconfig.json".
+// resources/ is not a workspace package, so `pnpm -r typecheck` (in `pnpm lint`) does not visit it.
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": { "types": ["node"], "noEmit": true },
+  "include": ["*.ts"]
+}

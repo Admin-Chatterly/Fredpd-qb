@@ -24,6 +24,11 @@ M.MAX_NAME_CHARS = 100 -- fredpd_officers.display_name VARCHAR(100) utf8mb4 coun
 local ByCitizen = {} -- [citizenid] = officer (see rowToOfficer)
 local Names = {}     -- [discordId] = { displayName, avatarUrl } from /officer pushes (newer than the DB)
 local Pending = {}   -- [citizenid] = true while a callsign allocation runs
+local Warned = {}    -- [citizenid] = reason a callsign could not be given, logged once; cleared on a grant change
+
+--- Duty and job events come from qbx_core, but duty toggling starts with a client net event (QBCore:ToggleDuty),
+--- so each handler runs at most once per player per this many ms (each run costs DB queries).
+M.EVENT_INTERVAL_MS = 2000
 
 M.MAX_ATTEMPTS = 5
 M.MAX_CITIZENID = 50 -- fredpd_officers.citizenid VARCHAR(50); INSERT IGNORE would truncate a longer key silently
@@ -168,18 +173,21 @@ function M.loadOne(citizenid)
     return o
 end
 
---- A display name for a new row (display_name is NOT NULL): the Discord push if we have one, else the FiveM
---- player name (the account name, not the character name) until the bot fills in the real one.
-local function placeholderName(src, discordId)
+--- A display name for a new row (display_name is NOT NULL): the Discord push if we have one, else a neutral
+--- placeholder with the last digits of the Discord id until the bot fills in the real name. Never the FiveM
+--- account name: the player chooses it freely (control, bidi and look-alike characters included), so it could
+--- imitate another officer on rosters (§4.9). Stored in the server language (L at write time).
+function M.placeholderName(discordId)
     local pushed = Names[discordId]
     if pushed then return pushed.displayName end
-    return M.clampName(GetPlayerName(tostring(src))) or discordId
+    local name = Locale.L('officer.unnamed', { id = tostring(discordId):sub(-4) })
+    return M.clampName(name) or tostring(discordId)
 end
 
 --- Create the character's fredpd_officers row if it has none. A new row is a roster record and is audited once
 --- (system actor: the character did not ask for it). Returns true when this call inserted the row.
 local function insertRow(src, cid, discordId, via)
-    local affected = MySQL.update.await(M.INSERT_ROW_SQL, { cid, discordId, placeholderName(src, discordId) })
+    local affected = MySQL.update.await(M.INSERT_ROW_SQL, { cid, discordId, M.placeholderName(discordId) })
     if tonumber(affected) ~= 1 then return false end
     Audit.write({ action = 'officer.create', targetType = 'officer', targetId = cid,
         meta = { discordId = discordId, auto = true, via = via } })
@@ -207,6 +215,13 @@ function M.ensureRow(src, pd)
     return M.loadOne(cid)
 end
 
+--- Log why a character got no callsign, once per reason until its grants change.
+local function warnOnce(cid, reason, fmt, ...)
+    if Warned[cid] == reason then return end
+    Warned[cid] = reason
+    Core.warn(fmt, ...)
+end
+
 --- Give the player's police character a callsign if it has none (first duty). Returns the callsign, or nil and a
 --- reason: not_police | no_discord | no_unit | unknown_unit | no_template | busy | failed.
 function M.ensureCallsign(src)
@@ -221,13 +236,13 @@ function M.ensureCallsign(src)
     if not discordId then return nil, 'no_discord' end
     local unit = M.primaryUnit(Perms.getUnits(src), Core.config.unitOrder)
     if not unit then
-        Core.warn('player %d (%s) has no unit grant: no callsign', src, cid)
+        warnOnce(cid, 'no_unit', 'player %d (%s) has no unit grant: no callsign', src, cid)
         return nil, 'no_unit'
     end
     local unitCfg = Core.config.unitsByCode and Core.config.unitsByCode[unit]
     local prefix = unitCfg and unitCfg.callsign
     if type(prefix) ~= 'string' then
-        Core.warn('unit %s has no callsign prefix in config/units.json', unit)
+        warnOnce(cid, 'unknown_unit:' .. unit, 'unit %s has no callsign prefix in config/units.json', unit)
         return nil, 'unknown_unit'
     end
     local formats = Format.get()
@@ -331,7 +346,8 @@ function M.register()
     exports('getOfficer', M.getOfficer)
     exports('isOnDuty', M.isOnDuty)
     exports('getCitizenId', M.getCitizenId)
-    exports('setOfficerIdentity', M.setIdentity)
+    -- Only for server/http.js (POST /officer): refused for every other resource (Core.internalExport).
+    Core.internalExport('setOfficerIdentity', M.setIdentity)
     -- For duty scripts that know better when duty starts; runs in a thread of its own and returns immediately.
     exports('ensureCallsign', function(src)
         src = tonumber(src)
@@ -343,13 +359,24 @@ function M.register()
         local src = type(player) == 'table' and type(player.PlayerData) == 'table' and tonumber(player.PlayerData.source)
         if src then Core.async('officer on load', M.onCharacter, src) end
     end)
+    -- Rate limited per player (M.EVENT_INTERVAL_MS): duty toggling starts on the client. A dropped repeat loses
+    -- nothing, the run it follows already did the work (and the first-duty callsign is also given on load).
     AddEventHandler('QBCore:Server:SetDuty', function(src, onDuty)
         src = tonumber(src)
-        if src and onDuty then Core.async('callsign on duty', M.ensureCallsign, src) end
+        if src and onDuty and Core.rateLimit(src, 'officers:duty', M.EVENT_INTERVAL_MS) then
+            Core.async('callsign on duty', M.ensureCallsign, src)
+        end
     end)
     AddEventHandler('QBCore:Server:OnJobUpdate', function(src, job)
         src = tonumber(src)
-        if src and type(job) == 'table' and job.type == 'leo' then Core.async('officer on job', M.onCharacter, src) end
+        if src and type(job) == 'table' and job.type == 'leo' and Core.rateLimit(src, 'officers:job', M.EVENT_INTERVAL_MS) then
+            Core.async('officer on job', M.onCharacter, src)
+        end
+    end)
+    -- A grant change may fix a missing unit: log the next failure again.
+    AddEventHandler('fredpd:grantsChanged', function(src)
+        local cid = M.getCitizenId(src)
+        if cid then Warned[cid] = nil end
     end)
 end
 

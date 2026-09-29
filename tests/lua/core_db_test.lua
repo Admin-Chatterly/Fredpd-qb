@@ -33,7 +33,7 @@ local function withDb(t, fn)
         return
     end
     local names = { 'MySQL', 'LoadResourceFile', 'GetCurrentResourceName', 'CreateThread', 'TriggerEvent',
-        'TriggerClientEvent', 'GetPlayerName' }
+        'TriggerClientEvent', 'GetPlayerName', 'locale' }
     local saved = {}
     for _, n in ipairs(names) do saved[n] = { rawget(_G, n) } end
     shim.install({ database = DB, sessionTimeZone = '+02:00' })
@@ -56,7 +56,12 @@ local function withDb(t, fn)
     rawset(_G, 'CreateThread', function(f) f() end)
     rawset(_G, 'TriggerEvent', function() end)
     rawset(_G, 'TriggerClientEvent', function() end)
+    -- The FiveM account name is player-chosen and never used for a roster name (officers.placeholderName).
     rawset(_G, 'GetPlayerName', function() return 'FiveM Name' end)
+    rawset(_G, 'locale', function(key)
+        if key == 'officer.unnamed' then return 'Polis utan namn (…{id})' end
+        return key
+    end)
     local okRun, err = pcall(function()
         if prepared == nil then
             prepared = false
@@ -183,11 +188,11 @@ end
 tests['07 grant cache round trip through the JSON column'] = function(t)
     withDb(t, function()
         local set = Perms.validateSet({ grants = { 'weapon:*', 'unit:igv' }, denied = { 'weapon:rifle' }, tier = 1,
-            units = { 'igv' }, rank = { roleId = '222', key = 'inspektor' }, computedAt = '2026-09-29T12:00:00.000Z' })
+            units = { 'igv' }, rank = { roleId = '222', key = 'inspektor' }, computedAt = '2020-09-29T12:00:00.000Z' })
         Perms.writeCache('9001', set)
         t.eq(Perms.readCache('9001'), set)
         t.eq(scalar("SELECT DATE_FORMAT(computed_at, '%Y-%m-%d %H:%i:%s') FROM fredpd_grant_cache WHERE discord_id = '9001'"),
-            '2026-09-29 12:00:00')
+            '2020-09-29 12:00:00')
         local empty = Perms.validateSet({ grants = {}, denied = {}, tier = 0, units = {}, computedAt = 'not iso' })
         Perms.writeCache('9001', empty)
         t.ok(utcSkew("SELECT computed_at FROM fredpd_grant_cache WHERE discord_id = '9001'") <= 60,
@@ -196,6 +201,29 @@ tests['07 grant cache round trip through the JSON column'] = function(t)
         t.eq(scalar("SELECT JSON_TYPE(JSON_EXTRACT(grants, '$.grants')) FROM fredpd_grant_cache WHERE discord_id = '9001'"),
             'ARRAY')
         t.eq(Perms.readCache('404'), nil)
+    end)
+end
+
+tests['07b grant cache rows only move forward (an older set never overwrites a newer one)'] = function(t)
+    withDb(t, function()
+        local function at(iso, grants)
+            return Perms.validateSet({ grants = grants, denied = {}, tier = 0, units = {}, computedAt = iso })
+        end
+        local function row()
+            return Perms.readCache('9002').grants,
+                scalar("SELECT DATE_FORMAT(computed_at, '%Y-%m-%d %H:%i:%s') FROM fredpd_grant_cache WHERE discord_id = '9002'")
+        end
+        Perms.writeCache('9002', at('2026-09-29T12:00:10.000Z', { 'unit:igv' }))
+        Perms.writeCache('9002', at('2026-09-29T12:00:05.000Z', { 'perm:admin.permissions' })) -- stale push
+        local grants, computed = row()
+        t.eq(grants, { 'unit:igv' })
+        t.eq(computed, '2026-09-29 12:00:10')
+        Perms.writeCache('9002', at('2026-09-29T12:00:10.900Z', { 'unit:span' })) -- same second: last write wins
+        t.eq((row()), { 'unit:span' })
+        Perms.writeCache('9002', at('2026-09-29T12:05:00Z', {}))
+        grants, computed = row()
+        t.eq(grants, {})
+        t.eq(computed, '2026-09-29 12:05:00')
     end)
 end
 
@@ -319,7 +347,8 @@ tests['12 first duty assigns the lowest free callsign per unit'] = function(t)
             t.eq(why, 'no_unit')
             cs, why = Officers.ensureCallsign(6)
             t.eq(why, 'not_police')
-            t.eq(scalar("SELECT display_name FROM fredpd_officers WHERE citizenid = 'FPD10001'"), 'FiveM Name')
+            t.eq(scalar("SELECT display_name FROM fredpd_officers WHERE citizenid = 'FPD10001'"), 'Polis utan namn (…5001)',
+                'neutral placeholder until the bot pushes the Discord name, never the FiveM name')
             t.eq(scalar("SELECT unit FROM fredpd_officers WHERE citizenid = 'FPD10002'"), 'span')
             t.eq(scalar("SELECT COUNT(*) FROM fredpd_audit WHERE action = 'officer.callsign'"), 4)
             t.eq(scalar("SELECT COUNT(*) FROM fredpd_audit WHERE action = 'officer.create'"), 4,
@@ -393,7 +422,7 @@ tests['14 ensureRow creates and audits a roster row once, and audits a Discord r
             local pd = { citizenid = 'ROW1', job = { type = 'leo', onduty = false } }
             for _ = 1, 3 do t.eq(Officers.ensureRow(1, pd).citizenid, 'ROW1') end
             t.eq(scalar("SELECT COUNT(*) FROM fredpd_audit WHERE action = 'officer.create' AND target_id = 'ROW1'"), 1)
-            t.eq(scalar("SELECT display_name FROM fredpd_officers WHERE citizenid = 'ROW1'"), 'FiveM Name')
+            t.eq(scalar("SELECT display_name FROM fredpd_officers WHERE citizenid = 'ROW1'"), 'Polis utan namn (…6101)')
             q("UPDATE fredpd_officers SET display_name = 'Bo Ek' WHERE citizenid = 'ROW1'") -- the bot's name
             discord = '6102'
             t.eq(Officers.ensureRow(1, pd).discordId, '6102')

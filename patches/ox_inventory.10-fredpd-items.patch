@@ -1,0 +1,24 @@
+diff --git a/data/items.lua b/data/items.lua
+index 1464100..dfb493b 100644
+--- a/data/items.lua
++++ b/data/items.lua
+@@ -222,4 +222,19 @@ return {
+ 		label = 'Scrap Metal',
+ 		weight = 80,
+ 	},
++
++	-- FredPD: police tablet (patches/ox_inventory.10-fredpd-items.patch, docs/modules/mdt.md). Ledning issues it with
++	-- /surfplatta, which sets metadata.serial and metadata.owner server-side; fredpd_mdt refuses a tablet whose serial
++	-- is missing, unknown or revoked. consume = 0: an item with client.export would otherwise get consume = 1.
++	['pd_tablet'] = {
++		label = 'Surfplatta',
++		description = 'Polisens surfplatta med tillgång till registren. Kräver behörighet och tjänst.',
++		weight = 800,
++		stack = false,
++		close = true,
++		consume = 0,
++		client = {
++			export = 'fredpd_mdt.open',
++		},
++	},
+ }

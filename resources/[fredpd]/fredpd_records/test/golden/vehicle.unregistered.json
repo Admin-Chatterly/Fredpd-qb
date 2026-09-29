@@ -1,0 +1,25 @@
+{
+  "bolos": [
+    {
+      "active": true,
+      "createdAt": "2026-09-20T08:15:00Z",
+      "id": 8,
+      "issuedBy": {
+        "callsign": "UTR-02",
+        "citizenid": "REC10002",
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "FAKE01",
+      "reason": "Efterlyst för rån",
+      "subject": "ABC123 (sultan)"
+    }
+  ],
+  "cases": [],
+  "checks": [],
+  "vehicle": {
+    "plate": "FAKE01"
+  }
+}

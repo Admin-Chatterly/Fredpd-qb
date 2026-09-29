@@ -1,0 +1,21 @@
+{
+  "bolos": [],
+  "cases": [],
+  "person": {
+    "citizenid": "RP002",
+    "firstname": "Bo",
+    "gender": "unknown",
+    "lastname": "Ek"
+  },
+  "records": [
+    {
+      "chargeCode": "BRB-005",
+      "createdAt": "2026-07-01T12:00:00Z",
+      "fine": 1,
+      "id": 7,
+      "jailMinutes": 0,
+      "title": "Misshandel"
+    }
+  ],
+  "vehicles": []
+}

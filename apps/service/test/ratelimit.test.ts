@@ -3,6 +3,7 @@
 // shared error shape. Security headers from helmet are present. Only the per-user test needs the database.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { RATE_LIMIT_PER_MINUTE } from '../src/app';
+import { SESSION_COOKIE } from '../src/auth/session';
 import { cleanup, GUILD_ID, ids, loginAs, makeApp, setupTestDb } from './helpers';
 import type { TestApp } from './helpers';
 
@@ -25,6 +26,17 @@ describe('rate limit and headers', () => {
     // Another client is not affected.
     const other = await t.app.inject({ method: 'GET', url: '/api/session', remoteAddress: '203.0.113.8' });
     expect(other.statusCode).toBe(200);
+  });
+
+  it('runs before the session row is read: an over-limit request with a session cookie costs no DB query', async () => {
+    // This app has no database: every session lookup fails (500). The 61st request is refused before any lookup,
+    // because the limiter keys on the signed cookie alone (a hash of the token), not on the session row.
+    const cookie = `${SESSION_COOKIE}=${t.app.signCookie('a'.repeat(43))}`;
+    const hit = () => t.app.inject({ method: 'GET', url: '/api/session', remoteAddress: '203.0.113.30', headers: { cookie } });
+    for (let i = 0; i < RATE_LIMIT_PER_MINUTE; i += 1) expect((await hit()).statusCode).toBe(500);
+    const limited = await hit();
+    expect(limited.statusCode).toBe(429);
+    expect(limited.json()).toEqual({ error: 'rate_limited' });
   });
 
   it('sets helmet security headers', async () => {
@@ -56,7 +68,7 @@ describe.skipIf(!database)('rate limit per user (DB)', () => {
     await database.close();
   });
 
-  it('two logged-in users behind one IP have separate budgets (key user:<discordId>)', async () => {
+  it('two logged-in users behind one IP have separate budgets (key: hash of the session token)', async () => {
     const [a, b] = [await loginAs(u, database!, anna), await loginAs(u, database!, bo)];
     const hit = (cookie?: string) =>
       u.app.inject({ method: 'GET', url: '/api/session', remoteAddress: '198.51.100.20', headers: cookie ? { cookie } : {} });

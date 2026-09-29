@@ -1,0 +1,27 @@
+{
+  "grants": {
+    "computedAt": "2026-09-29T08:00:00Z",
+    "denied": [],
+    "grants": [
+      "mdt_page:*",
+      "mdt_page:alerts",
+      "mdt_page:bolos",
+      "mdt_page:search",
+      "perm:bolo.create",
+      "perm:bolo.resolve",
+      "perm:evidence.link",
+      "perm:tablets.manage"
+    ],
+    "tier": 2,
+    "units": [
+      "ledning",
+      "igv"
+    ]
+  },
+  "me": {
+    "callsign": "LED-01",
+    "citizenid": "MDT10002",
+    "displayName": "Eva L."
+  },
+  "unit": "ledning"
+}

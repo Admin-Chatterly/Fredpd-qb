@@ -1,11 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Tablet frame: sidebar with the grant-filtered navigation (≤ 6 items), header with search, officer and close.
-import { useId, useMemo, useState } from 'react';
+// Pages other than Hem are lazy (src/routes.tsx); the Suspense boundary around the outlet shows a spinner while one
+// loads, so the frame and the header never unmount.
+import { Suspense, useId, useMemo, useState } from 'react';
 import { Outlet, useHref, useLocation, useNavigate } from 'react-router';
-import { AppShell, Badge, IconButton, IconClose, IconMenu, IconShield, NavItem, SearchInput, Sidebar, useI18n } from '@fredpd/ui';
+import { AppShell, Badge, IconButton, IconClose, IconMenu, IconShield, NavItem, Sidebar, useI18n } from '@fredpd/ui';
 import { activeNavId, buildNav, canSeePage } from '../nav';
 import type { NavEntry } from '../nav';
 import { useSession, useTablet } from '../tablet/TabletContext';
+import { PageSpinner } from './Common';
+import { HeaderSearch } from './HeaderSearch';
 
 function RouterNavItem({ entry, active, onNavigated }: { entry: NavEntry; active: boolean; onNavigated?: () => void }) {
   const { t } = useI18n();
@@ -32,10 +36,8 @@ export function TabletLayout() {
   const { grants, unit, me } = useSession();
   const { requestClose } = useTablet();
   const location = useLocation();
-  const navigate = useNavigate();
   const menuId = useId();
   const [menuOpen, setMenuOpen] = useState(false);
-  const [query, setQuery] = useState('');
 
   const nav = useMemo(() => buildNav(grants, unit), [grants, unit]);
   const activeId = activeNavId(location.pathname);
@@ -80,14 +82,7 @@ export function TabletLayout() {
   const header = (
     <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-4">
       {canSeePage(grants, 'search') ? (
-        <SearchInput
-          className="w-full max-w-lg"
-          value={query}
-          onValueChange={setQuery}
-          onSubmit={(q) => void navigate(`/sok?q=${encodeURIComponent(q)}`)}
-          placeholder={t('mdt.search.placeholder')}
-          aria-label={t('common.search')}
-        />
+        <HeaderSearch />
       ) : (
         <div className="flex-1" />
       )}
@@ -102,7 +97,9 @@ export function TabletLayout() {
   return (
     <AppShell sidebar={sidebar} header={header}>
       <div className="p-5">
-        <Outlet />
+        <Suspense fallback={<PageSpinner />}>
+          <Outlet />
+        </Suspense>
       </div>
     </AppShell>
   );

@@ -1,0 +1,19 @@
+{
+  "detected": "caseNumber",
+  "hits": [
+    {
+      "case": {
+        "caseNumber": "K-1-26",
+        "id": 1,
+        "level": 0,
+        "status": "open",
+        "title": "Rån mot värdetransport",
+        "visibility": "full"
+      },
+      "kind": "case"
+    }
+  ],
+  "normalized": "K-1-26",
+  "page": 1,
+  "total": 1
+}

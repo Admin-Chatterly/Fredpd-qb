@@ -4,7 +4,8 @@
 # what FredPD needs and the order it needs it in.
 
 ## ---------------------------------------------------------------------------------------------------------------
-## Database (oxmysql). utf8mb4 so Swedish names survive; the server's time zone should be UTC (docs/modules/db.md).
+## Database (oxmysql). utf8mb4 so Swedish names survive. FredPD stores UTC regardless of the MariaDB time zone
+## (docs/contracts.md C7); no zone change needed.
 set mysql_connection_string "mysql://fivem:CHANGE_ME@127.0.0.1:3306/qbox?charset=utf8mb4"
 
 ## ---------------------------------------------------------------------------------------------------------------
@@ -54,7 +55,10 @@ ensure ps-dispatch
 # fredpd_core so its start-up check sees them running; adjust to the scripts you actually use.
 ensure ps-housing
 ensure qbx_garages
-ensure qbx_prison
+# Prison: xt-prison (all Qbox recipes install it; FredPD's adapter comes with task 4.1, until then
+# config/integrations.json has "prison": "none"). NEVER run qbx_prison: its gate event lets any client unlock any
+# ox_doorlock door (station doors, fredpd_breach targets) and clear its own sentence (docs/deps-verification.md 2a).
+# ensure xt-prison
 
 # FredPD: fredpd_core first (permissions, migrations, bridge), then the modules that use it.
 ensure fredpd_core

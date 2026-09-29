@@ -16,3 +16,7 @@ export * from './components/SearchInput';
 export * from './components/Spinner';
 export * from './components/Table';
 export * from './components/VirtualList';
+export * from './components/Dialog';
+export * from './components/Pagination';
+export * from './components/Textarea';
+export * from './components/VirtualListbox';

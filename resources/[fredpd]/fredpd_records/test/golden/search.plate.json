@@ -1,0 +1,16 @@
+{
+  "detected": "plate",
+  "hits": [
+    {
+      "bolo": true,
+      "kind": "vehicle",
+      "model": "sultan",
+      "ownerCitizenid": "RP005",
+      "ownerName": "Maria Nilsson",
+      "plate": "ABC123"
+    }
+  ],
+  "normalized": "ABC123",
+  "page": 1,
+  "total": 1
+}

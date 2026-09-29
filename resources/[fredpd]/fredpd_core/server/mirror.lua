@@ -330,8 +330,9 @@ end
 
 function M.register()
     exports('refreshPlate', M.refreshPlate)
-    exports('backfillMirror', M.backfill)
-    exports('seedDevRows', M.insertDevRows)
+    -- For fredpd_devtools (/fredpd_backfill, /fredpd_seed) only: refused for every other resource.
+    Core.internalExport('backfillMirror', M.backfill, { 'fredpd_devtools' })
+    Core.internalExport('seedDevRows', M.insertDevRows, { 'fredpd_devtools' })
 
     -- VERIFY (docs/modules/core.md): qbx_core event names. Every handler is idempotent (upsert + fingerprint), so
     -- a name that fires twice costs nothing. Only AddEventHandler: none of these may be triggered by a client.

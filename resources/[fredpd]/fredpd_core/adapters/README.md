@@ -5,7 +5,7 @@ FredPD talks to third-party housing, garage and prison scripts only through thes
 task 0.6). The active adapter per kind comes from `config/integrations.json`:
 
 ```json
-{ "housing": "ps-housing", "garage": "qbx_garages", "prison": "qbx_prison" }
+{ "housing": "ps-housing", "garage": "qbx_garages", "prison": "none" }
 ```
 
 Other resources get the active one with `exports.fredpd_core:getAdapter(kind)` and call its methods with a dot
@@ -39,11 +39,20 @@ Each adapter also has `kind`, `name`, `resource`, `stub`, `state()` (GetResource
 | housing | `ox_doorlock-only` | `housing/ox_doorlock_only.lua` | ox_doorlock | stub, task 6.2 |
 | garage | `none` | `garage/none.lua` | – | done |
 | garage | `qbx_garages` (default) | `garage/qbx_garages.lua` | qbx_garages | stub, task 3.4 |
-| prison | `none` | `prison/none.lua` | – | done |
-| prison | `qbx_prison` (default) | `prison/qbx_prison.lua` | qbx_prison | stub, task 4.1 |
-| prison | `qbx_police-jail` (alias `qbx_police`) | `prison/qbx_police_jail.lua` | qbx_policejob | stub, task 4.1 |
+| prison | `none` (default until task 4.1) | `prison/none.lua` | – | done |
+| prison | `xt-prison` (planned default) | – | xt-prison | task 4.1 (docs/deps-verification.md Decision 2) |
+| prison | `qbx_prison` (**opt-in, insecure unpatched**) | `prison/qbx_prison.lua` | qbx_prison | stub, task 4.1 |
+| prison | `qbx_police-jail` (metadata only, no confinement) | `prison/qbx_police_jail.lua` | qbx_policejob | stub, task 4.1 |
 
-The loader logs **one** warning per configured adapter whose resource is not available: at once when the resource
+**qbx_prison must not run on a FredPD server as shipped**: its net event `qbx_prison:server:onGateHackDone` lets any
+client unlock any ox_doorlock door (station doors, fredpd_breach targets), and clients can clear or set their own
+sentence (docs/deps-verification.md §2a). The adapter stays only for servers that already run it with those events
+patched, and logs a warning at every start when selected. qbx_police has no jail of its own (§2): the
+`qbx_police-jail` adapter can at most set metadata and also warns when selected; the old alias `qbx_police` was
+removed (it now counts as an unknown name and falls back to `none`).
+
+An adapter may carry a `caution` (see `base.lua`), logged once whenever it is selected. The loader logs **one**
+warning per configured adapter whose resource is not available: at once when the resource
 is not installed (`missing`); otherwise once after a deferred re-check (15 s after fredpd_core starts, so a resource
 ensured later in server.cfg is not reported), or at the first call made while it is down, whichever comes first.
 An unknown config value gets one warning and falls back to `none`. Start the integrated resources before

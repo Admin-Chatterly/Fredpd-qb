@@ -1,0 +1,56 @@
+{
+  "items": [
+    {
+      "active": false,
+      "citizenid": "FPD10001",
+      "createdAt": "2026-09-29T09:00:00Z",
+      "id": 3,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "BOL10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "person",
+      "level": 0,
+      "reason": "Saknad sedan i går",
+      "resolveNote": "Hittad välbehållen vid Pillbox.",
+      "resolvedAt": "2026-09-29T10:30:00Z",
+      "resolvedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "BOL10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "subject": "Anna Berg"
+    },
+    {
+      "active": true,
+      "citizenid": "FPD10003",
+      "createdAt": "2026-09-29T10:10:00Z",
+      "id": 2,
+      "kind": "person",
+      "level": 1,
+      "reason": "Det finns uppgifter som rör Sara Öberg. Kontakta Bo C. (SPAN-02).",
+      "subject": "Sara Öberg"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T10:00:00Z",
+      "id": 1,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "BOL10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC12D",
+      "reason": "Rån mot värdetransport",
+      "subject": "ABC12D · sultan"
+    }
+  ],
+  "page": 1,
+  "total": 3
+}

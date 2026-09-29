@@ -36,6 +36,8 @@ local function withRuntime(opts, fn)
             end },
         },
         GetGameTimer = function() return rec.time or 0 end,
+        GetInvokingResource = function() return opts.invoker end,
+        GetCurrentResourceName = function() return 'fredpd_core' end,
     }
     local savedGlobals = {}
     for k, v in pairs(globals) do
@@ -140,6 +142,8 @@ tests['isoToDatetime and cacheUpsert'] = function(t)
     local set = Perms.validateSet(copy(SET))
     local sql, params = Perms.cacheUpsert('42', set)
     t.ok(sql:find('VALUES (?, ?, ?)', 1, true), sql)
+    t.ok(sql:find('grants = IF(VALUES(computed_at) >= computed_at, VALUES(grants), grants)', 1, true), 'older rows never win')
+    t.ok(sql:find('computed_at = GREATEST(computed_at, VALUES(computed_at))', 1, true), sql)
     t.eq(params[1], '42')
     t.eq(params[3], '2026-09-29 12:00:00')
     set.computedAt = 'garbage'
@@ -235,25 +239,117 @@ tests['load: player without Discord gets an empty set'] = function(t)
     t.ok(rec.warns[1]:find('no Discord', 1, true))
 end
 
-tests['a push during an in-flight fetch wins over the older fetch result'] = function(t)
-    local pushed = Perms.validateSet({ grants = { 'perm:intel.command' }, denied = {}, tier = 2, units = {} })
+tests['stampOf / isNotOlder order sets by computedAt (milliseconds)'] = function(t)
+    local function at(iso) return { computedAt = iso } end
+    t.eq(Perms.stampOf(at('2026-09-29T12:00:00.250Z')), 1790683200250)
+    t.eq(Perms.stampOf(at('garbage')), nil)
+    t.eq(Perms.isNotOlder(at('2026-09-29T12:00:00.900Z'), at('2026-09-29T12:00:00.100Z')), true)
+    t.eq(Perms.isNotOlder(at('2026-09-29T12:00:00.100Z'), at('2026-09-29T12:00:00.900Z')), false)
+    t.eq(Perms.isNotOlder(at('2026-09-29T12:00:00Z'), at('2026-09-29T12:00:00.000Z')), true, 'tie: not older')
+    t.eq(Perms.isNotOlder(at('x'), at('2026-09-29T12:00:00Z')), true, 'unreadable: never treated as older')
+    t.eq(Perms.isNotOlder(at('2026-01-01T00:00:00Z'), nil), true)
+end
+
+tests['a push during an in-flight fetch: the newer set wins, whichever arrives last'] = function(t)
+    local pushed = copy(SET)
+    pushed.grants, pushed.tier, pushed.computedAt = { 'perm:intel.command' }, 2, '2026-09-29T12:00:05.000Z'
     withRuntime({
         discord = { [108] = '9008' },
         fetch = function()
-            -- The service pushes while our GET is still on the wire.
+            -- The service pushes a newer set while our GET (resolved earlier, SET at 12:00:00) is on the wire.
             t.eq(Perms.applyGrants('9008', pushed), 1)
             return 200, { grants = copy(SET) }
         end,
     }, function()
-        t.eq(Perms.load(108, true), false)
+        t.eq(Perms.load(108, true), true, 'the service answered')
     end)
     t.eq(Perms.hasGrant(108, 'perm', 'intel.command'), true)
     t.eq(Perms.getTier(108), 2)
+
+    -- The other way round: a push resolved before the fetch (older) must not win over the fetched set.
+    local older = copy(SET)
+    older.grants, older.tier, older.computedAt = { 'perm:intel.command' }, 2, '2026-09-29T11:59:00.000Z'
+    local fetched = copy(SET)
+    fetched.computedAt = '2026-09-29T12:10:00.000Z'
+    withRuntime({
+        discord = { [109] = '9009' },
+        fetch = function()
+            t.eq(Perms.applyGrants('9009', older), 1, 'nothing held yet: applied')
+            return 200, { grants = fetched }
+        end,
+    }, function()
+        Perms.load(109, true)
+    end)
+    t.eq(Perms.hasGrant(109, 'perm', 'intel.command'), false)
+    t.eq(Perms.getTier(109), 1)
+end
+
+tests['a stale push (resolved before a revocation) is ignored; the cache row decides by computedAt'] = function(t)
+    local revoked = copy(SET)
+    revoked.grants, revoked.units, revoked.tier, revoked.computedAt = {}, {}, 0, '2026-09-29T12:00:10.000Z'
+    local stale = copy(SET)
+    stale.computedAt = '2026-09-29T12:00:09.500Z'
+    local rec = withRuntime({ discord = { [113] = '9013' }, fetch = function() return 200, { grants = copy(revoked) } end },
+        function(r)
+            Perms.load(113, false)
+            r.clientEvents, r.sql = {}, {}
+            t.eq(Perms.applyGrants('9013', stale), 0)
+        end)
+    t.eq(Perms.hasGrant(113, 'weapon', 'pistol'), false, 'revocation stands')
+    t.eq(#rec.clientEvents, 0)
+    t.ok(rec.warns[#rec.warns]:find('older', 1, true), rec.warns[#rec.warns])
+    t.eq(#rec.sql, 1, 'the conditional upsert still runs (the DB keeps the newer row)')
+end
+
+tests['service down during a recompute: a newer in-memory set beats an older cache row, a newer row wins'] = function(t)
+    local held = copy(SET)
+    held.computedAt = '2026-09-29T12:00:00.000Z'
+    local olderRow = Perms.encodeSet(Perms.validateSet({ grants = { 'perm:intel.command' }, denied = {}, tier = 2,
+        units = {}, computedAt = '2026-09-29T11:00:00Z' }))
+    local newerRow = Perms.encodeSet(Perms.validateSet({ grants = {}, denied = {}, tier = 0, units = {},
+        computedAt = '2026-09-29T13:00:00Z' }))
+    local up = true
+    local opts = { discord = { [114] = '9014' }, fetch = function()
+        if up then return 200, { grants = copy(held) } end
+        return 0, { error = 'timeout' }
+    end }
+    withRuntime(opts, function() Perms.load(114, false) end)
+    up = false
+    opts.cacheRow = olderRow
+    withRuntime(opts, function() Perms.load(114, true) end)
+    t.eq(Perms.hasGrant(114, 'perm', 'intel.command'), false, 'older fallback row ignored')
+    t.eq(Perms.getTier(114), 1)
+    opts.cacheRow = newerRow
+    withRuntime(opts, function() Perms.load(114, true) end)
+    t.eq(Perms.getTier(114), 0, 'newer fallback row (e.g. a revocation the service cached) applied')
+    opts.cacheRow = nil
+    local rec = withRuntime(opts, function() Perms.load(114, true) end)
+    t.eq(Perms.getTier(114), 0, 'no row: the current set is kept, not replaced by an empty one')
+    t.ok(rec.warns[#rec.warns]:find('keeping', 1, true), rec.warns[#rec.warns])
+end
+
+tests['loads are coalesced: a request during a fetch queues exactly one more fetch after it'] = function(t)
+    local fetches = 0
+    withRuntime({ players = { '115' }, discord = { [115] = '9015' }, fetch = function()
+        fetches = fetches + 1
+        if fetches == 1 then
+            -- Three recomputes arrive while the first fetch is on the wire.
+            t.eq(Perms.recompute(nil), 1)
+            t.eq(Perms.recompute({ '9015' }), 1)
+            t.eq(Perms.load(115, false), false)
+        end
+        return 200, { grants = copy(SET) }
+    end }, function()
+        Perms.load(115, false)
+    end)
+    t.eq(fetches, 2)
 end
 
 tests['applyGrants updates every online player of that Discord user'] = function(t)
     local rec = withRuntime({ discord = { [110] = '9010', [111] = '9010', [112] = '9099' },
-        fetch = function() return 200, { grants = { grants = {}, denied = {}, tier = 0, units = {} } } end }, function(r)
+        fetch = function()
+            return 200, { grants = { grants = {}, denied = {}, tier = 0, units = {}, computedAt = '2026-09-29T11:00:00Z' } }
+        end }, function(r)
             Perms.load(110, false)
             Perms.load(111, false)
             Perms.load(112, false)
@@ -299,6 +395,31 @@ tests['recompute: selected ids or everyone, returns the count'] = function(t)
         end)
     t.eq(fetched[1], '/internal/grants/9021')
     t.eq(#fetched, 4)
+end
+
+tests['applyGrants and recomputeGrants exports refuse other resources'] = function(t)
+    local opts = { discord = { [131] = '9031' }, fetch = function() return 200, { grants = copy(SET) } end }
+    local rec = withRuntime(opts, function(r)
+        Perms.register()
+        Perms.load(131, false)
+        local evil = copy(SET)
+        evil.grants, evil.computedAt = { 'perm:*' }, '2026-09-29T13:00:00Z'
+        opts.invoker = 'some_script'
+        t.eq(r.exports.applyGrants('9031', evil), false)
+        t.eq(r.exports.recomputeGrants(nil), false)
+        t.eq(Perms.hasGrant(131, 'perm', 'admin.permissions'), false)
+        opts.invoker = 'fredpd_devtools'
+        t.eq(r.exports.applyGrants('9031', evil), false, 'not even devtools')
+        opts.invoker = 'fredpd_core' -- server/http.js
+        t.eq(r.exports.applyGrants('9031', evil), 1)
+        opts.invoker = nil
+    end)
+    t.eq(Perms.hasGrant(131, 'perm', 'admin.permissions'), true)
+    local refusals = 0
+    for _, w in ipairs(rec.warns) do
+        if w:find('internal to fredpd_core', 1, true) then refusals = refusals + 1 end
+    end
+    t.eq(refusals, 3, 'one log line per export and resource')
 end
 
 tests['register: exports, playerDropped cleanup, getMyGrants with rate limit'] = function(t)

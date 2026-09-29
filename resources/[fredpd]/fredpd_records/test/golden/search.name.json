@@ -1,0 +1,32 @@
+{
+  "detected": "name",
+  "hits": [
+    {
+      "birthdate": "1971-12-12",
+      "bolo": true,
+      "citizenid": "RP011",
+      "kind": "person",
+      "name": "Anna Berg",
+      "personnummer": "19711212-0011"
+    },
+    {
+      "birthdate": "1991-08-04",
+      "bolo": false,
+      "citizenid": "RP031",
+      "kind": "person",
+      "name": "Anna Berglund",
+      "personnummer": "19910804-0031"
+    },
+    {
+      "birthdate": "1981-10-22",
+      "bolo": false,
+      "citizenid": "RP021",
+      "kind": "person",
+      "name": "Anna Bergström",
+      "personnummer": "19811022-0021"
+    }
+  ],
+  "normalized": "Anna Berg",
+  "page": 1,
+  "total": 3
+}

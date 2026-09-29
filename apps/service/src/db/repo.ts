@@ -181,12 +181,29 @@ function grantString(g: GrantInput): string {
 // ---------------------------------------------------------------------------------------------------------------
 // Grant cache (fallback for FXServer when the service is down)
 
+/**
+ * Upsert cache rows. A row only moves forward in time: a set whose computedAt is older than the stored one (a push
+ * that lost a race with a newer resolution) leaves the row alone. `computed_at` is DATETIME (seconds), so within
+ * one second the last write wins (tie rule). The same rule is in fredpd_core perms.lua (CACHE_UPSERT_SQL). The two
+ * assignments do not depend on their order: `VALUES(computed_at) >= GREATEST(old, new)` iff `new >= old`.
+ */
 export async function writeGrantCache(db: DbOrTx, entries: { discordId: string; grants: GrantSet }[]): Promise<void> {
   if (entries.length === 0) return;
   await db
     .insert(grantCache)
     .values(entries.map((e) => ({ discordId: e.discordId, grants: e.grants, computedAt: new Date(e.grants.computedAt) })))
-    .onDuplicateKeyUpdate({ set: { grants: sql`VALUES(${grantCache.grants})`, computedAt: sql`VALUES(${grantCache.computedAt})` } });
+    .onDuplicateKeyUpdate({
+      set: {
+        grants: sql`IF(VALUES(${grantCache.computedAt}) >= ${grantCache.computedAt}, VALUES(${grantCache.grants}), ${grantCache.grants})`,
+        computedAt: sql`GREATEST(${grantCache.computedAt}, VALUES(${grantCache.computedAt}))`,
+      },
+    });
+}
+
+/** Every Discord id with a cache row (sync.refreshGrantCache re-resolves them on service start). */
+export async function listGrantCacheIds(db: DbOrTx): Promise<string[]> {
+  const rows = await db.select({ discordId: grantCache.discordId }).from(grantCache).orderBy(grantCache.discordId);
+  return rows.map((r) => r.discordId);
 }
 
 // ---------------------------------------------------------------------------------------------------------------

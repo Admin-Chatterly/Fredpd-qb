@@ -3,6 +3,7 @@
 // dependency (DB, Discord gateway, FXServer client, clock, OAuth) so tests inject fakes; src/main.ts wires the real
 // ones. Security baseline (§4.6): helmet, signed httpOnly/secure/SameSite=Lax session cookie, CSRF token on
 // writes, 60 requests/min per user (or IP when logged out), uploads ≤ 5 MB with MIME sniffing, HMAC on /internal.
+import { createHash } from 'node:crypto';
 import { join, resolve } from 'node:path';
 import cookie from '@fastify/cookie';
 import helmet from '@fastify/helmet';
@@ -25,6 +26,7 @@ import type { Db } from './db/client';
 import type { DiscordGateway } from './discord/gateway';
 import { createSync } from './discord/sync';
 import type { FxClient } from './fx';
+import { FxRetry } from './fx-retry';
 import { errorHandler, HttpError } from './http/errors';
 import { checkHmacBeforeParse } from './http/guards';
 import { createLogger } from './log';
@@ -36,6 +38,7 @@ import { registerInternalRoutes } from './routes/internal';
 import { registerUploadRoutes } from './routes/upload';
 import { registerWsRoutes } from './routes/ws';
 import { loadUnitCodes } from './units';
+import { liveAccess } from './ws/events';
 import { WsHub } from './ws/hub';
 
 export interface AppDeps {
@@ -56,6 +59,13 @@ export interface AppDeps {
   logger?: FastifyServerOptions['logger'];
   /** Unit codes in primary-unit order. Default: config/units.json. */
   unitOrder?: string[];
+  /** Redelivery delays for grant changes FXServer missed. Default FX_RETRY_DELAYS_MS (2 s, 10 s, 30 s). */
+  fxRetryDelaysMs?: readonly number[];
+}
+
+/** Rate-limit key of a session cookie token (sha256, shortened): no raw token in the limiter's memory. */
+function sessionRateKey(token: string): string {
+  return createHash('sha256').update(token).digest('hex').slice(0, 32);
 }
 
 /** Default JSON body limit; /upload raises it for base64 images. */
@@ -76,6 +86,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     trustProxy: 'loopback',
   });
 
+  app.decorateRequest('sessionToken', undefined);
   app.decorateRequest('portalSession', null);
   app.decorateRequest('rawBody', undefined);
   app.setErrorHandler(errorHandler);
@@ -86,21 +97,29 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   await app.register(helmet);
   await app.register(cookie, { secret: config.SESSION_SECRET });
 
-  // Session before the rate limiter (whose hooks are route-level and so run after this one): logged-in users are
-  // limited per Discord id, everyone else per IP.
+  // The session cookie is only unsigned here (no I/O): a validly signed token keys the rate limiter (whose hooks are
+  // route-level and so run after this one), everyone else is limited per IP. The session row is read afterwards, in
+  // preParsing, so a client over its limit costs no DB query. The key is a hash of the token (sessions are one per
+  // user: a new login ends the old one), so the raw token is never kept in the limiter's store.
   app.addHook('onRequest', async (request) => {
     const raw = request.cookies[SESSION_COOKIE];
     if (!raw) return;
     const unsigned = request.unsignCookie(raw);
     if (!unsigned.valid || unsigned.value === null) return;
-    request.portalSession = await loadSession(db, unsigned.value, clock.now());
+    request.sessionToken = unsigned.value;
   });
 
   await app.register(rateLimit, {
     max: RATE_LIMIT_PER_MINUTE,
     timeWindow: '1 minute',
-    keyGenerator: (request) => (request.portalSession ? `user:${request.portalSession.discordId}` : `ip:${request.ip}`),
+    keyGenerator: (request) => (request.sessionToken ? `session:${sessionRateKey(request.sessionToken)}` : `ip:${request.ip}`),
     errorResponseBuilder: () => new HttpError(429, 'rate_limited'),
+  });
+
+  // After every onRequest hook (rate limit, route guards), before the body is parsed: the JSON parser (HMAC check)
+  // and every later hook see request.portalSession.
+  app.addHook('preParsing', async (request) => {
+    if (request.sessionToken) request.portalSession = await loadSession(db, request.sessionToken, clock.now());
   });
   await app.register(multipart, {
     limits: { fileSize: UPLOAD_MAX_BYTES, files: 1, fields: 4, parts: 5, fieldSize: 1024 },
@@ -111,6 +130,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   const hub = new WsHub(() => clock.now());
   const grantDeps = { db, gateway, clock, unitOrder };
+  const fxRetry = new FxRetry({ fx, log, delaysMs: deps.fxRetryDelaysMs });
   const sync = createSync({
     db,
     gateway,
@@ -118,8 +138,9 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     clock,
     log,
     unitOrder,
+    retry: fxRetry,
     identity: { publicUrl: config.PUBLIC_URL, guildId: config.DISCORD_GUILD_ID, nameSource: config.OFFICER_NAME_SOURCE },
-    onGrantsChanged: (discordId, grants, member) => hub.setEligible(discordId, member && grants.grants.length > 0),
+    onGrantsChanged: (discordId, grants, member) => hub.setAccess(discordId, liveAccess(member, grants)),
   });
   const ctx: AppContext = {
     config,
@@ -130,6 +151,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     log,
     oauth,
     sync,
+    fxRetry,
     hub,
     avatars: new AvatarCache({ dir: join(resolve(config.UPLOAD_DIR), 'avatars'), log, fetch: deps.fetch }),
     background: new BackgroundTasks(log),
@@ -164,6 +186,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerWsRoutes(app, ctx);
 
   app.addHook('onClose', async () => {
+    fxRetry.close();
     hub.closeAll();
     await ctx.background.drain();
   });

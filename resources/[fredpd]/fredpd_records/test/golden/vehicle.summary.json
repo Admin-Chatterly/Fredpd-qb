@@ -1,0 +1,188 @@
+{
+  "bolos": [
+    {
+      "active": true,
+      "createdAt": "2026-09-20T08:15:00Z",
+      "id": 7,
+      "issuedBy": {
+        "callsign": "UTR-02",
+        "citizenid": "REC10002",
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC123",
+      "reason": "Efterlyst för rån",
+      "subject": "ABC123 (sultan)"
+    }
+  ],
+  "cases": [
+    {
+      "caseNumber": "K-4-26",
+      "id": 4,
+      "level": 0,
+      "role": "vehicle",
+      "status": "open",
+      "title": "Misshandel på Grove Street",
+      "visibility": "full"
+    },
+    {
+      "contact": {
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "visibility": "notice"
+    }
+  ],
+  "checks": [
+    {
+      "checkedAt": "2026-09-10T10:25:00Z",
+      "hit": true
+    },
+    {
+      "checkedAt": "2026-09-10T10:24:00Z",
+      "hit": false,
+      "officer": {
+        "callsign": "IGV-07",
+        "citizenid": "REC10001",
+        "displayName": "Anna Patrull",
+        "unit": "igv"
+      }
+    },
+    {
+      "checkedAt": "2026-09-10T10:23:00Z",
+      "hit": false
+    },
+    {
+      "checkedAt": "2026-09-10T10:22:00Z",
+      "hit": false,
+      "officer": {
+        "callsign": "IGV-07",
+        "citizenid": "REC10001",
+        "displayName": "Anna Patrull",
+        "unit": "igv"
+      }
+    },
+    {
+      "checkedAt": "2026-09-10T10:21:00Z",
+      "hit": false
+    },
+    {
+      "checkedAt": "2026-09-10T10:20:00Z",
+      "hit": true,
+      "officer": {
+        "callsign": "IGV-07",
+        "citizenid": "REC10001",
+        "displayName": "Anna Patrull",
+        "unit": "igv"
+      }
+    },
+    {
+      "checkedAt": "2026-09-10T10:19:00Z",
+      "hit": false
+    },
+    {
+      "checkedAt": "2026-09-10T10:18:00Z",
+      "hit": false,
+      "officer": {
+        "callsign": "IGV-07",
+        "citizenid": "REC10001",
+        "displayName": "Anna Patrull",
+        "unit": "igv"
+      }
+    },
+    {
+      "checkedAt": "2026-09-10T10:17:00Z",
+      "hit": false
+    },
+    {
+      "checkedAt": "2026-09-10T10:16:00Z",
+      "hit": false,
+      "officer": {
+        "callsign": "IGV-07",
+        "citizenid": "REC10001",
+        "displayName": "Anna Patrull",
+        "unit": "igv"
+      }
+    },
+    {
+      "checkedAt": "2026-09-10T10:15:00Z",
+      "hit": true
+    },
+    {
+      "checkedAt": "2026-09-10T10:14:00Z",
+      "hit": false,
+      "officer": {
+        "callsign": "IGV-07",
+        "citizenid": "REC10001",
+        "displayName": "Anna Patrull",
+        "unit": "igv"
+      }
+    },
+    {
+      "checkedAt": "2026-09-10T10:13:00Z",
+      "hit": false
+    },
+    {
+      "checkedAt": "2026-09-10T10:12:00Z",
+      "hit": false,
+      "officer": {
+        "callsign": "IGV-07",
+        "citizenid": "REC10001",
+        "displayName": "Anna Patrull",
+        "unit": "igv"
+      }
+    },
+    {
+      "checkedAt": "2026-09-10T10:11:00Z",
+      "hit": false
+    },
+    {
+      "checkedAt": "2026-09-10T10:10:00Z",
+      "hit": true,
+      "officer": {
+        "callsign": "IGV-07",
+        "citizenid": "REC10001",
+        "displayName": "Anna Patrull",
+        "unit": "igv"
+      }
+    },
+    {
+      "checkedAt": "2026-09-10T10:09:00Z",
+      "hit": false
+    },
+    {
+      "checkedAt": "2026-09-10T10:08:00Z",
+      "hit": false,
+      "officer": {
+        "callsign": "IGV-07",
+        "citizenid": "REC10001",
+        "displayName": "Anna Patrull",
+        "unit": "igv"
+      }
+    },
+    {
+      "checkedAt": "2026-09-10T10:07:00Z",
+      "hit": false
+    },
+    {
+      "checkedAt": "2026-09-10T10:06:00Z",
+      "hit": false,
+      "officer": {
+        "callsign": "IGV-07",
+        "citizenid": "REC10001",
+        "displayName": "Anna Patrull",
+        "unit": "igv"
+      }
+    }
+  ],
+  "owner": {
+    "citizenid": "RP001",
+    "name": "Anna Andersson"
+  },
+  "vehicle": {
+    "model": "sultan",
+    "plate": "ABC123"
+  }
+}

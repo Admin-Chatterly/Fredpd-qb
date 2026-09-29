@@ -192,7 +192,8 @@ tests['ensureRow audits a newly created roster row once (FOUND_ROWS semantics)']
     local db, written, discord = foundRowsTable(), {}, '7001'
     patched({
         MySQL = { update = { await = db.update }, single = { await = db.single } },
-        GetPlayerName = function() return ('Å'):rep(150) end,
+        GetPlayerName = function() error('the FiveM account name must never become a roster name') end,
+        locale = function(key) return key == 'officer.unnamed' and 'Polis utan namn (…{id})' or key end,
     }, {
         { Perms, 'getDiscordId', function() return discord end },
         { Audit, 'write', function(e) written[#written + 1] = e; return true end },
@@ -204,7 +205,7 @@ tests['ensureRow audits a newly created roster row once (FOUND_ROWS semantics)']
         t.eq(written[1].targetId, 'NEW1')
         t.eq(written[1].meta.via, 'load')
         t.eq(written[1].actorCitizenid, nil, 'system actor')
-        t.eq(db.rows.NEW1.display_name, ('Å'):rep(100), 'FiveM name clamped to 100 characters')
+        t.eq(db.rows.NEW1.display_name, 'Polis utan namn (…7001)', 'neutral placeholder until the bot pushes the name')
         for _ = 1, 3 do Officers.ensureRow(3, pd) end
         t.eq(#written, 1, 'reloading an existing officer is not a new roster row')
         for _, sql in ipairs(db.sqls) do
@@ -219,6 +220,60 @@ tests['ensureRow audits a newly created roster row once (FOUND_ROWS semantics)']
         t.eq(#written, 2, 'unchanged Discord account: no relink row')
         t.eq(Officers.ensureRow(3, { citizenid = 'CIV', job = { type = 'civ' } }), nil)
         t.eq(Officers.ensureRow(3, { citizenid = ('X'):rep(51), job = { type = 'leo' } }), nil, 'too long for the key')
+    end)
+end
+
+tests['duty and job handlers run at most once per player per interval; setOfficerIdentity is internal'] = function(t)
+    local handlers, exported, runs, now = {}, {}, {}, 0
+    patched({
+        AddEventHandler = function(name, fn) handlers[name] = fn end,
+        exports = function(name, fn) exported[name] = fn end,
+        GetGameTimer = function() return now end,
+        GetInvokingResource = function() return 'some_script' end,
+        GetCurrentResourceName = function() return 'fredpd_core' end,
+    }, {
+        { Core, 'async', function(label) runs[#runs + 1] = label end },
+        { Core, 'warn', function() end },
+    }, function()
+        Officers.register()
+        for _ = 1, 5 do handlers['QBCore:Server:SetDuty'](41, true) end
+        handlers['QBCore:Server:SetDuty'](42, true)
+        handlers['QBCore:Server:SetDuty'](43, false)
+        for _ = 1, 5 do handlers['QBCore:Server:OnJobUpdate'](41, { type = 'leo' }) end
+        t.eq(#runs, 3, table.concat(runs, ', '))
+        now = Officers.EVENT_INTERVAL_MS
+        handlers['QBCore:Server:SetDuty'](41, true)
+        handlers['QBCore:Server:OnJobUpdate'](41, { type = 'leo' })
+        t.eq(#runs, 5)
+        t.eq(exported.setOfficerIdentity('123', 'Anna', nil), false, 'another resource cannot rename officers')
+    end)
+    Core.clearRateLimits(41)
+    Core.clearRateLimits(42)
+end
+
+tests['a missing unit grant is logged once per character until its grants change'] = function(t)
+    local Perms = require('server.perms')
+    local warns, handlers = {}, {}
+    patched({
+        MySQL = { single = { await = function() return nil end } },
+        AddEventHandler = function(name, fn) handlers[name] = fn end,
+        exports = function() end,
+    }, {
+        { Core, 'getPlayerData', function() return { citizenid = 'NOUNIT1', job = { type = 'leo', onduty = true } } end },
+        { Core, 'warn', function(fmt, ...) warns[#warns + 1] = fmt:format(...) end },
+        { Perms, 'getDiscordId', function() return '8001' end },
+        { Perms, 'getUnits', function() return {} end },
+    }, function()
+        Officers.register()
+        for _ = 1, 4 do
+            local cs, why = Officers.ensureCallsign(51)
+            t.eq(cs, nil)
+            t.eq(why, 'no_unit')
+        end
+        t.eq(#warns, 1, table.concat(warns, ' | '))
+        handlers['fredpd:grantsChanged'](51)
+        Officers.ensureCallsign(51)
+        t.eq(#warns, 2)
     end)
 end
 

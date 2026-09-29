@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
-# Module: ui (tasks 0.1 web apps, 1.8 UI, 2.2)
+# Module: ui (tasks 0.1 web apps, 1.8 UI, 2.2, 2.3–2.7 NUI pages)
 
 Shared React layer (`packages/ui`), the tablet NUI shell (`apps/nui`) and the portal shell with the
 "Behörigheter" page (`apps/portal`). Implements IMPLEMENTATION.md §4.4, §4.7, §5.2 (NUI routes), §5.9 (admin UI)
@@ -12,6 +12,7 @@ and docs/contracts.md §C8 (t()) and §C10 (permissions admin API, client side).
 | `src/theme.css` | Tailwind v4 `@theme` tokens. Dark and flat. There is one accent hue (`accent`, `accent-strong`, `accent-text`, `accent-soft`), plus `canvas/surface/raised`, `line`, `fg/muted/subtle` and the status colours `success/warning/danger`. The base is 15 px (`html { font-size: 15px }`, so 1rem = 15 px). The default palette and shadows are removed (`--color-*: initial`), so pages can only use these tokens. Apps import it after `@import "tailwindcss"`. Its `@source "./"` makes Tailwind scan the shared components. It sets **no `color-scheme`** (see "color-scheme" below). |
 | `src/i18n.tsx` | `createI18n(messages, { lang = 'sv', fallbackLang = 'en', onMissing })` returns `{ lang, t, tx, has }`. `t(key: LocaleKey, vars)` is typed through `LocaleArgs`, so vars are required exactly when the key has placeholders. `tx(key: string, vars?, fallback?)` handles keys built from data, such as ``tx(`unit.${code}`, undefined, code)``. Lookup order is lang, then en, then the key itself. `{name}` is substituted and a placeholder without a value is left as is. Also exports `I18nProvider`, `useI18n()` and `useT()`. Without a provider, components render their keys. |
 | `src/components/*` | `Button` (primary/secondary/ghost/danger, `loading`), `IconButton` (a `label` is required; a padding-free square from `buttonClass(…, 'icon')`), `Input`/`Label` (`fieldClass` is the input look without a width, for `<select>`), `SearchInput` (controlled, trims on Enter, has a clear button), `Card`, `Badge` (`level={0\|1\|2}` gives Standard/Begränsad/Hemlig in neutral/warning/danger), `Notice` (kontaktnotis) and `VisibilityGate`, `EmptyState`, `Spinner` (CSS only), `VirtualList` (TanStack Virtual), `Table`, and the layout pieces `AppShell`, `Sidebar`, `NavItem`, `PageHeader`. |
+| `src/components/` (Phase 2) | `Dialog` (modal; `absolute inset-0` over the nearest positioned ancestor, which is the tablet frame in the NUI, or `position="fixed"`; focuses the first field, gives focus back on close; Esc is left to the tablet), `Pagination` (prev / "Sida x av y" / next, hidden for one page), `Textarea`, `VirtualListbox` (keyboard-navigable windowed `role="listbox"` with `aria-activedescendant`: ↑/↓, Home/End, PageUp/PageDown, Enter or click activates, `isDisabled` rows can be selected but not activated). |
 | `src/mdtPages.ts` | Re-exports `MDT_PAGE_KEYS`, `MdtPageKey`, `MDT_PAGE_LABEL_KEYS` and `isMdtPageKey` from `@fredpd/types/mdtPages` (docs/contracts.md §C12), so the apps keep importing them from `@fredpd/ui` (see below). |
 | `src/icons.tsx` | A small stroke icon set drawn for FredPD (`aria-hidden`). |
 
@@ -87,15 +88,92 @@ and scrollbars dark. `apps/nui/test/theme.test.ts` compiles the NUI CSS with Tai
 - **Navigation.** Hem comes first, then the primary unit's priority sections (`UNIT_NAV_PRIORITY`, for example
   tekniker gets evidence and then cases), then the base order. At most 6 slots are shown. When more sections are
   allowed, the 6th slot is **Meny** (`nav.menu`), which expands the rest in the sidebar.
-- **Hem.** The variant comes from `config/units.json` `home` for the primary unit, or `default` when there is none.
-  Each section is shown only with its `mdt_page` grant. Task 2.7 fills the sections with data.
+- **Hem.** See "Phase 2 pages" below.
 - **Dev.** `pnpm --filter @fredpd/nui dev` serves http://localhost:5174 and opens the tablet with mock data. The
   mock open is sent from `TabletProvider`'s `onReady` (called once the message listener is attached); a message
   dispatched before that is lost. Use
-  `?unit=tekniker&pages=search,cases` (or `unit=none`) to preview other units or grants. While the tablet is
-  closed, a "Öppna surfplattan" button reopens it.
+  `?unit=tekniker&pages=search,cases&perms=bolo.create&tier=2` (or `unit=none`, `perms=none`) to preview other units
+  or grants (default: igv, `mdt_page:*`, perms `bolo.create,bolo.resolve,tablets.manage`, tier 1). While the tablet
+  is closed, a "Öppna surfplattan" button reopens it. Every tablet action answers from an in-memory Swedish register
+  (`src/mock/data.ts`: ~900 persons, ~85 vehicles, cases full/masked/notice, BOLOs live/resolved/expired, tablets,
+  plate checks; `src/mock/handlers.ts` follows the server rules the NUI can see: canView-shaped refs, 50 per page,
+  one live BOLO per subject, level ≤ tier, `{ error, reason }` refusals). Answers go through `toLuaWire` (nulls
+  removed, as Lua sends them) after 150 ms, so the page code runs the game path. Try "Andersson", "19870412-5531",
+  "ABC 12D", "K-1042-26" (full), "K-988-26" (masked), "K-1077-26" (kontaktnotis). The mocks are only reachable from
+  `import.meta.env.DEV` branches and are absent from the production bundle.
 - **First paint.** Dev builds log `[fredpd] open -> first paint N ms`, measured on the second animation frame after
   the open message.
+
+## Phase 2 pages (tasks 2.3–2.7, Ledning → Surfplattor)
+
+Shapes: `packages/types/src/mdt.ts` (`MDT_ACTIONS`), docs/contracts.md §C3, §C12. The fredpd_mdt dispatcher answers
+the output data or `{ error, reason? }` (docs/modules/mdt.md).
+
+### Typed client (`src/api/`)
+
+| File | Content |
+|---|---|
+| `client.ts` | `callMdt(action, input)`: `fetchNui` → `{ error }` becomes `MdtClientError(code, reason)` (unknown codes → `unknown`, a non-2xx callback → `network`) → `normalizeWire` → **dev builds only** (`IS_DEV_BUILD`): `MDT_ACTIONS[action].output.safeParse`, a mismatch is logged with the zod issues and thrown as `unknown`/`contract`. Query keys `['mdt', action, input]`. `PUSH_INVALIDATES`: `bolo` → listBolos, getPerson, getVehicle, getHome, search (its BOLO flag); `case` → getPerson, getVehicle, getHome, search; `grants` → every read action. `MUTATION_INVALIDATES`: createBolo/resolveBolo → the `bolo` set, checkPlate → getVehicle, setTabletRevoked → listTablets. |
+| `wire.ts` | `normalizeWire(schema, value)`: Lua has no null, so absent nullable keys are restored as null, `{}` where a list is expected becomes `[]` and `[]` where an object is expected `{}` (records.md edge case), through arrays and discriminated unions (by the discriminator literal). It reads the zod schemas' public `def` only (no parsing), so it runs in production too; it never adds or drops other keys. `toLuaWire` is its inverse for mocks/tests. |
+| `errors.ts` | `MdtClientError`, `errorLocaleKey(err)`: `unauthorized/not_found/validation/rate_limited/unavailable/network/unknown` → `errors.unauthorized/notFound/validation/rateLimited/serviceUnavailable/network/unknown`; reasons first: `off_duty` → `errors.notOnDuty`, `too_far` → `errors.tooFar`, `revoked` → `tablet.revoked`. `useErrorText()`. |
+| `hooks.ts` | `useMdtQuery(action, input, { enabled, keepPrevious })` and `useMdtMutation(action, { onSuccess, onError })` over TanStack Query (client defaults: staleTime 30 s, refetch on open, no interval). A query retries once (600 ms) only for `network/unavailable/rate_limited/unknown`. `mdtQueryOptions()` is shared with imperative `fetchQuery` calls. |
+
+`TabletContext` calls `invalidateForPush(queryClient, topic, refetchType)` next to its `[topic]` invalidation (closed
+tablet: `refetchType: 'none'`, refetched on the next open) and on a `grants` push.
+
+### Pages
+
+- **Routes.** Hem and the placeholders are eager (Hem is the first paint after open); Sök, Person, Fordon,
+  Efterlysningar and Ledning are `React.lazy` behind one `Suspense` around the layout's `<Outlet>`. With
+  `vite-plugin-singlefile` the lazy chunks are inlined into the one `index.html` (dynamic imports inlined), so lazy
+  loading defers their rendering, not their download. New: `/ledning` (index) and `/ledning/surfplattor`.
+- **Header search (2.3)** (`components/HeaderSearch.tsx`): a chip shows `detectSearchType` (config/formats.json via
+  `@fredpd/types/format`) while typing. **Enter** posts `search { query, type: 'auto', page: 1 }` and opens the top hit
+  (person → `/person/:cid`, vehicle → `/fordon/:plate`, case → `/arende/:id`); no hit, a kontaktnotis top hit, an
+  error or a query under 2 characters opens `/sok?q=` instead. **Shift+Enter** / "Visa alla" always open the list.
+  Typing posts nothing.
+- **Results `/sok?q=&page=` (2.3):** `VirtualListbox` (64 px rows, 50 per page, `Pagination`), focused on arrival:
+  ↑/↓ select, Enter or click opens, **Esc closes the tablet** (§5.2 wins over "Esc" in the task text; the hint
+  string `mdt.search.keys` says "Esc stänger"). Person/vehicle rows carry the BOLO flag; a `notice` case row is
+  only the Notice (subject = the searched number, owner = contact) and is `aria-disabled` (opens nothing).
+- **Person (2.4):** header facts (personnummer, birthdate, gender, phone, address; absent ones are not rendered),
+  Efterlys (perm `bolo.create`; disabled with the duplicate text while a BOLO is live) opens the BOLO dialog prefilled
+  (kind person); Lägg i ärende / Ny rapport / POI-blad are disabled with the tooltip `common.comingPhase5` (on a
+  wrapper: disabled buttons get no pointer events). Sections: BOLOs (resolve with perm `bolo.resolve`), vehicles,
+  cases, belastningsregister (fine per row and `charge.totalFine` with `formatCurrency`; jail as `time.duration.minutes`,
+  the field is `jailMinutes`).
+- **CaseRef rendering** (`components/CaseRefs.tsx`): `full` → number, title, role, status, level badge (> 0);
+  `masked` → number, status, "Begränsad insyn" badge, level badge, role, and the title **only if sent**; `notice` →
+  **only** `<Notice>`; only `contact` is passed on, owner line "Name (Unit)" / name / unit / null → "Kontakta
+  ledningen".
+- **Vehicle (2.5):** plate, model, owner link (or `vehicle.ownerUnknown`), BOLO flag, Efterlys (vehicle), linked
+  cases, Kontrollera (`checkPlate`: hit → danger callout with the reason; unregistered; clear) and the history
+  (officer label, hit badge; refetched after a check).
+- **Efterlysningar (2.6 UI):** tabs Aktiva / Alla (`listBolos { active, page }`), table with subject link, level,
+  issuer, times, status (active / resolved / expired), Pagination; "Ny efterlysning" (perm `bolo.create`) and
+  resolve (perm `bolo.resolve`) are UI hints only. **BOLO dialog** (`components/Bolos.tsx`, logic in `src/bolo.ts`):
+  kind, subject picker (`search` with `type: person | vehicle`, Enter searches, pick from ≤ 8 hits), reason (3–500),
+  level (options above the viewer's tier disabled, hint `level.hint.*`), expiry (none, 1/4/12 h, 1/3/7/30 dygn).
+  `buildBoloCreateInput` sends citizenid **or** plate (never both), the trimmed reason, the level and
+  `expiresInHours` only when chosen; `checkBoloForm` runs `BoloCreateInputSchema` plus level ≤ tier before sending.
+  Refusals: `reason = duplicate` → `bolo.create.duplicate`, `level` → `bolo.create.levelTooHigh`, `not_found` →
+  `bolo.create.subjectNotFound`.
+- **Hem (2.7):** one `getHome`. Variant = the primary unit's `home` (instant; follows a grants push), else the
+  server's `variant`, else `default`. `HOME_LAYOUTS` per variant: count cards in order (first emphasised; links to
+  their page when granted) and blocks: igv/span/default BOLOs first, utredning/tekniker my cases first, ledning the
+  roster first (`officer.roster` table: callsign, name, unit, on/off duty). Cards/blocks need `mdt_page` bolos /
+  cases / roster (the on-duty count needs none).
+- **Ledning → Surfplattor:** `listTablets` (50 per page), revoke asks (`tablet.revokeConfirm`), reinstate is direct,
+  result `tablet.revokedNotice` / `tablet.reinstatedNotice`. Without perm `tablets.manage` the page shows
+  `errors.unauthorized` and calls nothing.
+- **Locale keys:** new ones are in `locales/pending/nui.json` (16 keys) and read with `tx()`. `src/i18n.ts` layers
+  that file under sv/en through `import.meta.glob`, which finds nothing after the merge deletes it (no build break).
+
+### Bundle
+
+`pnpm --filter @fredpd/nui build`: `dist/index.html` **575.7 kB** (gzip 174 kB), up from 472.4 kB. Largest parts:
+react-dom 210 kB, zod 89 kB (already present for the open payload), locale files + app code ~113 kB, react-router
+38 kB, query-core 33 kB, virtual-core 24 kB (new, for the virtualised list), `@fredpd/types` format/mdt ~13 kB.
 
 ## apps/portal
 
@@ -149,14 +227,33 @@ and scrollbars dark. `apps/nui/test/theme.test.ts` compiles the NUI CSS with Tai
       key on a scroll-driven re-render (stable `getItemKey`/`estimateSize`).
     - IconButton is a padding-free square (no `px-*`/`w-*`), text buttons keep their padding.
     - Badge levels, the SearchInput Enter and clear behaviour, and NavItem routing.
+- `packages/ui/test/phase2.test.tsx`: Dialog (closed, labelled modal, focus in and back, backdrop/close button),
+  Pagination, Textarea, VirtualListbox (window, keys, Enter/click activation, disabled rows).
 - `apps/nui/test`
+  - `search`: detection chip, Enter opens the top person / vehicle / case hit, a kontaktnotis top hit shows the
+    results page with only the notice (aria-disabled, Enter stays), Shift+Enter lists, ↓ ↓ ↑ ↓ Enter opens the third
+    hit, a 50-row page renders a window and pages, too short query posts nothing, masked hit without title.
+  - `person`: absent facts not rendered, notice case = only the Notice (the case's number/title appear nowhere, not
+    even through its record row), masked without title (null and absent), fines summed with formatCurrency, phase 5
+    buttons disabled with tooltip, Efterlys → prefilled dialog → createBolo input parsed with BoloCreateInputSchema →
+    refetch; vehicle page owner/flag/cases/history, Kontrollera hit/clear/unregistered.
+  - `bolo`: `buildBoloCreateInput` / `checkBoloForm` (zod-parsed), list active/all, create via the subject picker,
+    client validation + duplicate refusal, levels above tier disabled, resolve with note, perm hints.
+  - `home`: variant selection, layouts, grant filtering, IGV / Utredning / Ledning (roster) rendering, server variant.
+  - `tablets`: Ledning → Surfplattor, revoke with confirm, reinstate, perm and page guards.
+  - `mocks`: a mock for every MDT action; every answer parses with its output schema, as built and after
+    `toLuaWire` + `normalizeWire`; refusals; create → list → resolve, lazy expiry; dev URL params.
+  - `client`: normalizeWire (nulls, `{}`/`[]`, unions), `{ error, reason }` → MdtClientError → errors.* keys,
+    network errors, dev-build contract check, push invalidation per topic, pending locale layering.
   - `fetchNui`: mock mode, FiveM mode, errors and `debugData`.
   - `nav`: grant filtering, the 6-item cap with Meny, denies over the wildcard, unit priority, active paths, the Hem
     variant, and message parsing (Lua nil and `{}`).
   - `tablet`: open and close with visibility, Esc (also from the search field, and nothing when closed), the close
     button, an invalid payload, `onReady` (a message or a `debugData` open sent from it arrives), the first-paint
     log, nav filtering, the grants push with the route guard and the primary unit, header search, the Hem
-    variant, and push invalidation (refetch while open; while closed only marked stale, refetched on open).
+    variant, and push invalidation (refetch while open; while closed only marked stale, refetched on open). The
+    header search test now expects the results page (no hit to open) and the posted search input; the Hem test
+    checks the grant-filtered cards/blocks and the single getHome call.
   - `theme`: the compiled NUI CSS never gives a selector that can reach the document (`*`, html, `:root`,
     `:host`, body, also compound: `html.dark`, `:root:not(…)`, `:where(html)`) a `color-scheme`; the guard is
     self-tested. `index.html` has no color-scheme meta, and its html/body carry no style or class (Tailwind
@@ -189,3 +286,19 @@ and scrollbars dark. `apps/nui/test/theme.test.ts` compiles the NUI CSS with Tai
 5. **Locale keys.** `perms.addKey`, `perms.newKey` (the add-column form) and `perms.csrfRetry` are in
    `locales/pending/ui.json` and read with `tx()` until merged (`node scripts/merge-pending-locales.mjs`); after
    the merge they can become `t()`. Everything else uses existing keys; the matrix cell labels join existing labels with " · ".
+6. **Phase 2 locale keys.** `locales/pending/nui.json` (16 keys: `bolo.create.*` picker/refusal texts,
+   `bolo.expiry.none`, `bolo.field.subject`, `case.notice.subject`, `common.comingPhase5`, `home.myOpenCases`,
+   `person.field.address`, `vehicle.checkHit/checkClear`, `visibility.masked.badge`, `visibility.notice.owner`).
+   `merge-pending-locales.mjs --dry-run` accepts them. After the merge, the `tx()` calls can become `t()`.
+7. **BOLO kontaktnotis** (bolo.md open question 1): `BoloSchema` has no `visibility`, so a notice-shaped BOLO is
+   shown as a normal row whose reason is the notice text (issuer etc. absent, so not rendered). A `visibility`
+   field would let the NUI render it with `<Notice>` like case refs.
+8. **Jail time** is shown as `time.duration.minutes` because the wire field is `jailMinutes`. If in-game "månader"
+   are meant, switch to `charge.jailMonths`.
+9. **Esc** on the results page and in dialogs closes the tablet (§5.2 "Esc always closes" wins); the task text's
+   "Esc" for the results list is therefore the global close. Dialogs do not trap Tab.
+10. **Hem variant** comes from the client unit first (no layout jump, follows grants pushes); the server's
+    `variant` is used only without a known unit. The mock server answers `igv` for a member without a unit.
+11. **UNVERIFIED in FiveM:** that fredpd_mdt's `cb(table)` delivers empty Lua tables as `[]`/`{}` in the way
+    `normalizeWire` expects (both are handled), and CEF behaviour of the lazy Suspense fallback on first visit
+    (all chunks are inlined, so it should resolve in the same tick).

@@ -150,6 +150,18 @@ function M.toEpoch(v)
     return daysFromCivil(p.y, p.m, p.d) * 86400 + p.h * 3600 + p.mi * 60 + p.s
 end
 
+--- Unix milliseconds (UTC) of the same inputs as M.toEpoch, keeping the first three fraction digits: for ordering
+--- timestamps that may lie within one second of each other (e.g. two GrantSet computedAt values). Never raises.
+--- @param v any
+--- @return integer|nil, string|nil
+function M.toEpochMs(v)
+    if type(v) ~= 'string' then return nil, 'not a string' end
+    local p, why = parse(v)
+    if not p then return nil, why or 'zero date' end
+    local ms = tonumber(((p.frac:sub(2)) .. '000'):sub(1, 3)) or 0
+    return (daysFromCivil(p.y, p.m, p.d) * 86400 + p.h * 3600 + p.mi * 60 + p.s) * 1000 + ms
+end
+
 --- Current time as 'YYYY-MM-DDTHH:MM:SSZ'. `now` (unix seconds) is for tests; os.time() is zone-independent and
 --- os.date('!…') formats in UTC.
 --- @param now integer|nil

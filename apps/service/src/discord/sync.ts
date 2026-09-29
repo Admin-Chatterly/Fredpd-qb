@@ -5,6 +5,7 @@
 //
 // Flows:
 //   ready            -> (service start) import roles (upsert, soft-delete missing) -> FXServer /recompute (all), always
+//                       -> re-resolve every fredpd_grant_cache row (offline members' fallback sets, see refreshGrantCache)
 //   resynced         -> (guild caches reloaded: new gateway session / guild outage over) same as ready
 //   role create/upd. -> upsert; a position change can move ranks -> /recompute the role's holders
 //   role delete      -> soft delete -> /recompute (all online; the holders are no longer known)
@@ -12,16 +13,18 @@
 //                       name/avatar changed: fredpd_officers display_name/avatar_url -> /officer push
 //                       (bot.ts also reports user-level changes, global name / user avatar, as member updates)
 //   member removed   -> resolve (now empty) -> cache -> /grants push
+// A push or recompute that does not reach FXServer (timeout, network, 5xx) is redelivered by src/fx-retry.ts.
 import type { GrantSet } from '@fredpd/types/grants';
 import type { OfficerNameSource } from '../config';
 import type { Clock } from '../clock';
 import type { Db } from '../db/client';
 import {
-  listRoles, markRolesDeleted, updateOfficerIdentity, upsertRoles, writeAudit, writeGrantCache,
+  listGrantCacheIds, listRoles, loadResolveRows, markRolesDeleted, updateOfficerIdentity, upsertRoles, writeAudit, writeGrantCache,
 } from '../db/repo';
 import type { OfficerIdentity, StoredRole } from '../db/repo';
-import type { FxClient } from '../fx';
-import { computeGrants, computeGrantsMany } from '../grants';
+import type { FxClient, FxResult } from '../fx';
+import type { FxRetry } from '../fx-retry';
+import { computeGrants, computeGrantsMany, GatewayNotReadyError, resolveFor } from '../grants';
 import type { MemberGrants } from '../grants';
 import type { Logger } from '../log';
 import type { DiscordGateway, GatewayEvents, GatewayMember, GatewayRole } from './gateway';
@@ -148,6 +151,8 @@ export interface SyncDeps {
   log: Logger;
   unitOrder: string[];
   identity: IdentityOptions;
+  /** Redelivers grant pushes/recomputes that did not reach FXServer (src/fx-retry.ts). None = failures are only logged. */
+  retry?: FxRetry;
   /** Called after every recompute (the /ws hub re-checks who may receive live events). */
   onGrantsChanged?: (discordId: string, grants: GrantSet, member: boolean) => void;
 }
@@ -156,8 +161,16 @@ export interface Sync extends GatewayEvents {
   /** Diff roles into fredpd_roles; FXServer /recompute (all) when something changed or `recomputeAll`. */
   importRoles(roles: GatewayRole[], opts?: { recomputeAll?: boolean }): Promise<RoleDiff>;
   recomputeAndPush(discordId: string): Promise<MemberGrants>;
-  /** Recompute and cache every holder of a role, then ask FXServer to re-fetch them. Returns FXServer's count. */
-  recomputeRoleHolders(roleId: string): Promise<number>;
+  /**
+   * Recompute and cache every holder of a role, then ask FXServer to re-fetch them. `scheduled` = FXServer's count;
+   * `delivered` = false when FXServer did not confirm (the recompute is then pending in the retry queue).
+   */
+  recomputeRoleHolders(roleId: string): Promise<{ scheduled: number; delivered: boolean }>;
+  /**
+   * Re-resolve every Discord id in fredpd_grant_cache and write the result, so FXServer's fallback (used while the
+   * service is down) never returns grants revoked while the service was down. Returns the number of rows written.
+   */
+  refreshGrantCache(): Promise<number>;
   /**
    * Write the member's name/avatar to fredpd_officers and push it to FXServer. `force` pushes even when no row
    * changed (FXServer's in-memory name may be older than the DB), but only for officers: members with a
@@ -170,6 +183,12 @@ const CACHE_CHUNK = 500;
 
 export function createSync(deps: SyncDeps): Sync {
   const grantDeps = { db: deps.db, gateway: deps.gateway, clock: deps.clock, unitOrder: deps.unitOrder };
+
+  /** Hand a grant push/recompute result to the retry queue (ids undefined = everyone online). */
+  const tracked = async (call: Promise<FxResult>, discordIds: readonly string[] | undefined): Promise<FxResult> => {
+    const res = await call;
+    return deps.retry ? deps.retry.track(res, discordIds) : res;
+  };
 
   const notify = (m: MemberGrants) => {
     try {
@@ -202,7 +221,7 @@ export function createSync(deps: SyncDeps): Sync {
     const changed = diff.created.length + diff.updated.length + diff.deleted.length;
     deps.log.info({ component: 'sync', roles: guildRoles.length, created: diff.created.length, updated: diff.updated.length, deleted: diff.deleted.length }, 'Discord roles imported');
     // Positions or deletions may have moved ranks and grants of anyone online; one request re-fetches them all.
-    if (changed > 0 || opts.recomputeAll) await deps.fx.recompute();
+    if (changed > 0 || opts.recomputeAll) await tracked(deps.fx.recompute(), undefined);
     return diff;
   }
 
@@ -210,20 +229,45 @@ export function createSync(deps: SyncDeps): Sync {
     const result = await computeGrants(grantDeps, discordId);
     await writeGrantCache(deps.db, [{ discordId, grants: result.grants }]);
     notify(result);
-    await deps.fx.pushGrants(discordId, result.grants);
+    await tracked(deps.fx.pushGrants(discordId, result.grants), [discordId]);
     return result;
   }
 
-  async function recomputeRoleHolders(roleId: string): Promise<number> {
+  async function recomputeRoleHolders(roleId: string): Promise<{ scheduled: number; delivered: boolean }> {
     const holders = deps.gateway.membersWithRole(roleId);
-    if (holders.length === 0) return 0;
+    if (holders.length === 0) return { scheduled: 0, delivered: true };
     const results = await computeGrantsMany(grantDeps, holders);
     for (let i = 0; i < results.length; i += CACHE_CHUNK) {
       await writeGrantCache(deps.db, results.slice(i, i + CACHE_CHUNK).map((r) => ({ discordId: r.discordId, grants: r.grants })));
     }
     results.forEach(notify);
-    const res = await deps.fx.recompute(holders);
-    return res.ok && typeof res.body.scheduled === 'number' ? res.body.scheduled : 0;
+    const res = await tracked(deps.fx.recompute(holders), holders);
+    if (!res.ok) return { scheduled: 0, delivered: false };
+    return { scheduled: typeof res.body.scheduled === 'number' ? res.body.scheduled : 0, delivered: true };
+  }
+
+  async function refreshGrantCache(): Promise<number> {
+    if (!deps.gateway.isReady()) throw new GatewayNotReadyError();
+    const ids = await listGrantCacheIds(deps.db);
+    if (ids.length === 0) return 0;
+    const rows = await loadResolveRows(deps.db);
+    for (let i = 0; i < ids.length; i += CACHE_CHUNK) {
+      const results = ids.slice(i, i + CACHE_CHUNK).map((id) => resolveFor(grantDeps, rows, id));
+      await writeGrantCache(deps.db, results.map((r) => ({ discordId: r.discordId, grants: r.grants })));
+      results.forEach(notify);
+    }
+    return ids.length;
+  }
+
+  /** ready/resynced: role changes and member role changes made while events were not delivered. */
+  async function catchUp(roles: GatewayRole[]): Promise<void> {
+    await importRoles(roles, { recomputeAll: true });
+    try {
+      const n = await refreshGrantCache();
+      deps.log.info({ component: 'sync', rows: n }, 'fredpd_grant_cache re-resolved');
+    } catch (err) {
+      deps.log.error({ err, component: 'sync' }, 'fredpd_grant_cache refresh failed');
+    }
   }
 
   async function syncIdentity(member: GatewayMember, opts: { force?: boolean; grants?: GrantSet } = {}) {
@@ -237,6 +281,7 @@ export function createSync(deps: SyncDeps): Sync {
     }
     if (push) {
       const res = await deps.fx.pushOfficer(member.id, ident.displayName, ident.avatarUrl);
+      if (res.ok) deps.retry?.succeeded(); // FXServer is reachable again: redeliver pending grant changes now
       return { rows, changed, pushed: res.ok };
     }
     return { rows, changed, pushed: false };
@@ -246,18 +291,20 @@ export function createSync(deps: SyncDeps): Sync {
     importRoles,
     recomputeAndPush,
     recomputeRoleHolders,
+    refreshGrantCache,
     syncIdentity,
 
     async ready(roles) {
       // Member role changes while the service was down were never pushed, and perms.lua does not re-fetch on its
       // own: every online player re-fetches (/internal/grants resolves live, refreshes fredpd_grant_cache and the
-      // /ws eligibility, and re-syncs the officer name).
-      await importRoles(roles, { recomputeAll: true });
+      // /ws access, and re-syncs the officer name). Offline members' cache rows are re-resolved too, so a later
+      // service outage never hands a joining player grants that were revoked while the service was down.
+      await catchUp(roles);
     },
 
     async resynced(roles) {
       // Same gap after a gateway outage: changes made meanwhile were never delivered as events.
-      await importRoles(roles, { recomputeAll: true });
+      await catchUp(roles);
     },
 
     async roleUpserted(role, before) {
@@ -277,7 +324,7 @@ export function createSync(deps: SyncDeps): Sync {
     async roleDeleted(roleId) {
       await markRolesDeleted(deps.db, [roleId]);
       await auditRoles({ created: [], updated: [], deleted: [roleId] }, 'delete');
-      await deps.fx.recompute();
+      await tracked(deps.fx.recompute(), undefined);
     },
 
     async memberUpdated(before, after) {

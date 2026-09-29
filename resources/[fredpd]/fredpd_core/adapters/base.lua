@@ -42,7 +42,8 @@ M.INTERFACES = {
 }
 
 --- Build an adapter.
---- spec = { kind, name, resource = 'resource name' | nil, stub = boolean, task = 'N.N' | nil, methods = { ... } }
+--- spec = { kind, name, resource = 'resource name' | nil, stub = boolean, task = 'N.N' | nil, methods = { ... },
+---         caution = 'text' | nil }  -- caution: a warning logged once whenever this adapter is selected (init)
 --- @return table adapter { kind, name, resource, stub, state(), available(), init(log), <interface methods> }
 function M.define(spec)
     local defaults = M.INTERFACES[spec.kind]
@@ -51,7 +52,9 @@ function M.define(spec)
     local log = Core -- anything with warn/error/debug(fmt, ...); the loader may pass its own
     local warned = false
 
-    local adapter = { kind = spec.kind, name = spec.name, resource = spec.resource, stub = spec.stub == true }
+    local adapter = { kind = spec.kind, name = spec.name, resource = spec.resource, stub = spec.stub == true,
+        caution = spec.caution }
+    local cautioned = false
 
     --- GetResourceState of the backing resource ('started' for adapters without one).
     function adapter.state()
@@ -82,6 +85,10 @@ function M.define(spec)
     --- @param defer function|nil (ms, fn) one-shot timer, default SetTimeout
     function adapter.init(logger, defer)
         log = logger or log
+        if spec.caution and not cautioned then
+            cautioned = true
+            log.warn('%s adapter "%s": %s', spec.kind, spec.name, spec.caution)
+        end
         if spec.resource and not warned then
             local state = adapter.state()
             if state == 'missing' then

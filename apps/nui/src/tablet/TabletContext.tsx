@@ -2,8 +2,9 @@
 // Tablet session state driven by Lua messages (see messages.ts):
 // - open: store the payload, show the root, tell TanStack Query the "window" is focused (refetches stale data);
 // - close: hide the root, unfocus;
-// - push: invalidate queries whose key starts with the topic and notify subscribers (no polling anywhere). While
-//   closed the queries are only marked stale (no fetch); the focus on the next open refetches them (§4.7);
+// - push: invalidate queries whose key starts with the topic, plus the tablet actions the topic can change
+//   (src/api/client.ts PUSH_INVALIDATES), and notify subscribers (no polling anywhere). While closed the queries
+//   are only marked stale (no fetch); the focus on the next open refetches them (§4.7);
 // - Esc (while open) and requestClose(): hide at once and call fetchNui('close') so Lua releases NUI focus.
 import { createContext, useCallback, useContext, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
@@ -13,7 +14,8 @@ import { UnitCodeSchema } from '@fredpd/types/actions';
 import type { MdtOpenPayload } from '@fredpd/types/actions';
 import type { GrantSet } from '@fredpd/types/grants';
 import { fetchNui } from '../utils/fetchNui';
-import { parseNuiMessage } from './messages';
+import { invalidateForPush } from '../api/client';
+import { GRANTS_TOPIC, parseNuiMessage } from './messages';
 
 export type PushListener = (payload: unknown) => void;
 
@@ -111,12 +113,17 @@ export function TabletProvider({ queryClient, onReady, children }: TabletProvide
         break;
       case 'grants':
         setState((s) => (s.session ? { ...s, session: { ...s.session, grants: message.grants, unit: primaryUnit(message.grants) } } : s));
+        // New grants can change what the server answers (tier, units): refetch the tablet's data too.
+        void invalidateForPush(queryClient, GRANTS_TOPIC, visibleRef.current ? 'active' : 'none');
         break;
-      case 'push':
+      case 'push': {
         // Closed: mark stale only, so a push in flight across a close does not fetch through Lua; open refetches.
-        void queryClient.invalidateQueries({ queryKey: [message.topic], refetchType: visibleRef.current ? 'active' : 'none' });
+        const refetchType = visibleRef.current ? 'active' : 'none';
+        void queryClient.invalidateQueries({ queryKey: [message.topic], refetchType });
+        void invalidateForPush(queryClient, message.topic, refetchType);
         listeners.get(message.topic)?.forEach((listener) => listener(message.payload));
         break;
+      }
     }
   });
 

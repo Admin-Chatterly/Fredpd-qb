@@ -1,0 +1,16 @@
+{
+  "detected": "personId",
+  "hits": [
+    {
+      "birthdate": "1961-02-02",
+      "bolo": false,
+      "citizenid": "RP001",
+      "kind": "person",
+      "name": "Anna Andersson",
+      "personnummer": "19610202-0001"
+    }
+  ],
+  "normalized": "19610202-0001",
+  "page": 1,
+  "total": 1
+}

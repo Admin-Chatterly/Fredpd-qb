@@ -176,6 +176,22 @@ describe.skipIf(!database)('permissions admin API (DB)', () => {
     }
   });
 
+  it('PUT while FXServer is unreachable: saved, fxPending: true, and the recompute is redelivered later', async () => {
+    t.fx.calls = [];
+    t.fx.ok = false;
+    try {
+      const res = await put(adminSession, polisRole, { grants: [{ grantType: 'weapon', grantKey: 'pistol', effect: 'allow' }] }, adminSession.csrf);
+      expect(res.statusCode).toBe(200);
+      expect(res.json()).toEqual({ ok: true, recomputed: 0, fxPending: true });
+      expect(t.app.fredpd.fxRetry.pending).toEqual({ all: false, discordIds: [polis1, polis2].sort() });
+    } finally {
+      t.fx.ok = true;
+    }
+    expect(await t.app.fredpd.fxRetry.flush()).toBe(true);
+    expect(t.fx.of('recompute').at(-1)).toEqual({ kind: 'recompute', discordIds: [polis1, polis2].sort() });
+    expect(t.app.fredpd.fxRetry.hasPending).toBe(false);
+  });
+
   it('PUT with an empty list removes every row of the role', async () => {
     const res = await put(adminSession, polisRole, { grants: [] }, adminSession.csrf);
     expect(res.statusCode).toBe(200);

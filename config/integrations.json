@@ -2,7 +2,7 @@
   "$comment": "Active adapter per integration kind (IMPLEMENTATION.md §9). A missing resource makes the adapter a no-op that logs one warning at start.",
   "housing": "ps-housing",
   "garage": "qbx_garages",
-  "prison": "qbx_prison",
+  "prison": "none",
   "dispatch": "ps-dispatch",
   "officerNameSource": "discord_nick",
   "unauthorizedLookupThreshold": 3

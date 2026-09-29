@@ -7,9 +7,10 @@ local M = {}
 
 M.RESOURCE = 'fredpd_core'
 
---- This resource's name (only callable inside FiveM).
+--- This resource's name (M.RESOURCE outside FiveM).
 function M.resource()
-    return GetCurrentResourceName()
+    if type(GetCurrentResourceName) == 'function' then return GetCurrentResourceName() end
+    return M.RESOURCE
 end
 
 ---------------------------------------------------------------------------------------------------------------
@@ -40,6 +41,44 @@ function M.async(label, fn, ...)
     CreateThread(function()
         local ok, err = pcall(fn, table.unpack(args, 1, args.n))
         if not ok then M.error('%s failed: %s', label, tostring(err)) end
+    end)
+end
+
+---------------------------------------------------------------------------------------------------------------
+-- Internal exports. Some exports exist only for server/http.js (this resource's own JS runtime) or for
+-- fredpd_devtools: applyGrants, recomputeGrants, setOfficerIdentity, backfillMirror, seedDevRows. As plain exports
+-- any server resource could call them (e.g. applyGrants(id, { grants = { 'perm:*' } }) to escalate a player), so
+-- they refuse every other invoking resource.
+
+local refusedCallers = {} -- ['export|resource'] = true once the refusal was logged
+
+--- True when the current export call may run: no invoking resource (console, same runtime), this resource
+--- (http.js calls through exports[resource], so the invoker is fredpd_core itself) or a name in `allowed`.
+--- @param exportName string for the log line
+--- @param allowed string[]|nil other resources allowed to call it
+--- @return boolean
+function M.callerAllowed(exportName, allowed)
+    local caller = type(GetInvokingResource) == 'function' and GetInvokingResource() or nil
+    if caller == nil or caller == '' or caller == M.resource() then return true end
+    for _, name in ipairs(allowed or {}) do
+        if caller == name then return true end
+    end
+    local key = exportName .. '|' .. tostring(caller)
+    if not refusedCallers[key] then
+        refusedCallers[key] = true
+        M.warn('export %s is internal to fredpd_core; call from resource %s refused', exportName, tostring(caller))
+    end
+    return false
+end
+
+--- Register an internal export: callers outside `allowed` (and fredpd_core) get false and fn does not run.
+--- @param name string
+--- @param fn function
+--- @param allowed string[]|nil
+function M.internalExport(name, fn, allowed)
+    exports(name, function(...)
+        if not M.callerAllowed(name, allowed) then return false end
+        return fn(...)
     end)
 end
 

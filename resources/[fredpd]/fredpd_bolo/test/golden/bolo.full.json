@@ -1,0 +1,16 @@
+{
+  "active": true,
+  "createdAt": "2026-09-29T10:00:00Z",
+  "id": 1,
+  "issuedBy": {
+    "callsign": "IGV-07",
+    "citizenid": "BOL10001",
+    "displayName": "Anna B.",
+    "unit": "igv"
+  },
+  "kind": "vehicle",
+  "level": 0,
+  "plate": "ABC12D",
+  "reason": "Rån mot värdetransport",
+  "subject": "ABC12D · sultan"
+}

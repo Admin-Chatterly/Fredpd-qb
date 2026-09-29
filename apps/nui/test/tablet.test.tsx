@@ -50,10 +50,26 @@ function mount(onReady?: () => void) {
 
 let fetchSpy: ReturnType<typeof vi.fn>;
 
+/** A valid getHome answer (Hem calls it on open), as Lua sends it: nulls left out. */
+const HOME = {
+  me: { citizenid: 'ABC12345', displayName: 'Anna Berg', callsign: 'IGV-07', unit: 'igv' },
+  variant: 'igv',
+  counts: { activeBolos: 2, myOpenCases: 1, onDuty: 5 },
+  recentBolos: [],
+  myCases: [],
+  roster: [],
+};
+
+/** Lua's answer per NUI callback (`{}` for the rest, e.g. close). */
+const answers: Record<string, unknown> = { getHome: HOME, search: { detected: 'plate', normalized: 'ABC12D', hits: [], total: 0, page: 1 } };
+
+/** The NUI callbacks posted to `close` (Hem's getHome is posted too). */
+const closeCalls = () => fetchSpy.mock.calls.filter((c) => String(c[0]).endsWith('/close'));
+
 beforeEach(() => {
   // Inside FiveM: fetchNui posts to https://fredpd_mdt/<action>.
   window.GetParentResourceName = () => 'fredpd_mdt';
-  fetchSpy = vi.fn(async () => new Response('{}', { status: 200 }));
+  fetchSpy = vi.fn(async (url: string) => new Response(JSON.stringify(answers[url.split('/').pop() ?? ''] ?? {}), { status: 200 }));
   vi.stubGlobal('fetch', fetchSpy);
   vi.spyOn(console, 'info').mockImplementation(() => {});
 });
@@ -74,7 +90,7 @@ describe('open / close', () => {
     expect(screen.getByRole('heading', { name: 'Hej Anna Berg' })).toBeTruthy();
     send({ action: 'close' });
     expect(root().style.visibility).toBe('hidden');
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(closeCalls()).toHaveLength(0);
   });
 
   it('Esc hides the tablet and calls fetchNui("close") so Lua releases focus', () => {
@@ -82,8 +98,8 @@ describe('open / close', () => {
     send(openMessage(['mdt_page:*']));
     fireEvent.keyDown(window, { key: 'Escape' });
     expect(root().style.visibility).toBe('hidden');
-    expect(fetchSpy).toHaveBeenCalledTimes(1);
-    expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://fredpd_mdt/close');
+    expect(closeCalls()).toHaveLength(1);
+    expect(closeCalls()[0]?.[0]).toBe('https://fredpd_mdt/close');
   });
 
   it('Esc closes even while typing in the search field', () => {
@@ -93,7 +109,9 @@ describe('open / close', () => {
     fireEvent.change(search, { target: { value: 'Andersson' } });
     fireEvent.keyDown(search, { key: 'Escape' });
     expect(root().style.visibility).toBe('hidden');
-    expect(fetchSpy.mock.calls.map((c) => c[0])).toEqual(['https://fredpd_mdt/close']);
+    expect(closeCalls().map((c) => c[0])).toEqual(['https://fredpd_mdt/close']);
+    // Typing ran no search: only Enter does.
+    expect(fetchSpy.mock.calls.some((c) => String(c[0]).endsWith('/search'))).toBe(false);
   });
 
   it('Esc does nothing while closed; other keys do nothing while open', () => {
@@ -101,7 +119,7 @@ describe('open / close', () => {
     fireEvent.keyDown(window, { key: 'Escape' });
     send(openMessage(['mdt_page:*']));
     fireEvent.keyDown(window, { key: 'Enter' });
-    expect(fetchSpy).not.toHaveBeenCalled();
+    expect(closeCalls()).toHaveLength(0);
   });
 
   it('the close button closes like Esc', () => {
@@ -109,7 +127,7 @@ describe('open / close', () => {
     send(openMessage([]));
     fireEvent.click(screen.getByRole('button', { name: 'Stäng surfplattan' }));
     expect(root().style.visibility).toBe('hidden');
-    expect(fetchSpy.mock.calls[0]?.[0]).toBe('https://fredpd_mdt/close');
+    expect(closeCalls()[0]?.[0]).toBe('https://fredpd_mdt/close');
   });
 
   it('an invalid open payload still opens a closable tablet with an error', () => {
@@ -202,27 +220,30 @@ describe('navigation', () => {
     expect(primaryUnit({ ...grantSet([]), units: [] })).toBeNull();
   });
 
-  it('header search opens the search page with the query', () => {
+  it('header search: Enter posts the search and, without a hit to open, shows the results page', async () => {
     mount();
     send(openMessage(['mdt_page:search']));
     const search = screen.getByRole('searchbox', { name: 'Sök' });
     fireEvent.change(search, { target: { value: 'ABC 12D' } });
     fireEvent.keyDown(search, { key: 'Enter' });
-    expect(screen.getByRole('heading', { name: 'Sök' })).toBeTruthy();
-    expect(screen.getByText('ABC 12D')).toBeTruthy();
+    expect(await screen.findByRole('heading', { name: 'Sökresultat' })).toBeTruthy();
+    expect(await screen.findByText('Inga träffar på ”ABC 12D”.')).toBeTruthy();
+    const posted = fetchSpy.mock.calls.filter((c) => String(c[0]).endsWith('/search'));
+    expect(posted).toHaveLength(1);
+    expect(JSON.parse(String((posted[0]?.[1] as RequestInit).body))).toEqual({ query: 'ABC 12D', type: 'auto', page: 1 });
   });
 
-  it('picks the Hem variant from the primary unit and hides sections without grant', () => {
+  it('picks the Hem variant from the primary unit and hides sections without grant', async () => {
     mount();
     send(openMessage(['mdt_page:evidence', 'mdt_page:cases'], [], 'tekniker'));
     const home = document.querySelector('[data-home-variant]');
     expect(home?.getAttribute('data-home-variant')).toBe('tekniker');
     expect(screen.getByText('I tjänst som IGV-07 · Kriminalteknik')).toBeTruthy();
-    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual([
-      'Bevis att analysera',
-      'Mina ärenden',
-      'Enhetens ärenden',
-    ]);
+    // No mdt_page:bolos: neither the BOLO count nor the BOLO block.
+    expect(screen.getAllByRole('heading', { level: 2 }).map((h) => h.textContent)).toEqual(['Mina ärenden']);
+    expect([...document.querySelectorAll('[data-stat]')].map((e) => e.getAttribute('data-stat'))).toEqual(['myOpenCases', 'onDuty']);
+    expect(await screen.findByText('5')).toBeTruthy();
+    expect(fetchSpy.mock.calls.filter((c) => String(c[0]).endsWith('/getHome'))).toHaveLength(1);
   });
 });
 

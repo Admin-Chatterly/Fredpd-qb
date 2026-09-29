@@ -53,6 +53,32 @@ export function requirePerm(ctx: AppContext, key: string): Guard {
   };
 }
 
+/**
+ * Headers a reverse proxy or tunnel adds (cloudflared, Caddy, nginx). FXServer's signedFetch sends none of them, so
+ * their presence means the request came through the public side even when the socket peer is loopback.
+ */
+const FORWARDING_HEADERS = ['x-forwarded-for', 'x-forwarded-host', 'x-forwarded-proto', 'forwarded', 'x-real-ip', 'cf-connecting-ip', 'cf-ray', 'true-client-ip', 'via'];
+
+function isLoopbackAddress(address: string | undefined): boolean {
+  if (!address) return false;
+  return address === '::1' || /^(::ffff:)?127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/i.test(address);
+}
+
+/** True when the TCP peer is loopback and no proxy forwarded the request (FXServer on the same host, §C6). */
+export function isDirectLoopback(request: FastifyRequest): boolean {
+  if (!isLoopbackAddress(request.socket?.remoteAddress)) return false;
+  return !FORWARDING_HEADERS.some((h) => request.headers[h] !== undefined);
+}
+
+/**
+ * onRequest guard for FXServer-only routes (/internal/*): 404, as if the route did not exist, unless the request
+ * came straight from loopback. docs/hosting.md §7 blocks /internal at Caddy and the Cloudflare edge too; this keeps
+ * it closed when the tunnel points straight at the service (task 7.1) or a proxy rule is missing.
+ */
+export async function requireLoopback(request: FastifyRequest): Promise<void> {
+  if (!isDirectLoopback(request)) throw new HttpError(404, 'not_found');
+}
+
 export function hasHmacHeaders(request: FastifyRequest): boolean {
   return typeof request.headers[HMAC_TS_HEADER] === 'string' || typeof request.headers[HMAC_SIG_HEADER] === 'string';
 }

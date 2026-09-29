@@ -32,9 +32,12 @@ server_scripts {
     'server/main.lua',
 }
 
+-- Sent to every client, so only what client code may load: the shared modules, formats/units (non-secret display
+-- config) and locales. Not migrations/ (schema DDL; db.lua reads them server-side with LoadResourceFile, which needs
+-- no `files` entry) and not config/integrations.json (server-only settings such as unauthorizedLookupThreshold).
 files {
     'shared/*.lua',
-    'config/*.json',
+    'config/formats.json',
+    'config/units.json',
     'locales/*.json',
-    'migrations/*',
 }

@@ -8,8 +8,9 @@ local Core = require 'server.core'
 
 local M = {}
 
---- Older config spellings -> adapter name.
-M.ALIASES = { prison = { qbx_police = 'qbx_police-jail' } }
+--- Older config spellings -> adapter name. (The former prison alias qbx_police -> qbx_police-jail is gone: qbx_police
+--- has no jail of its own, docs/deps-verification.md §2; "qbx_police" is now an unknown name and falls back to none.)
+M.ALIASES = {}
 
 local active = {}
 

@@ -1,0 +1,16 @@
+{
+  "$comment": "fredpd_bolo (task 2.6, docs/modules/bolo.md). Merge with scripts/merge-pending-locales.mjs.",
+  "audit.action.bolo.expire": { "sv": "Efterlysning utgången", "en": "BOLO expired" },
+  "bolo.checkPlate.header": { "sv": "Skyltkontroll: {plate}", "en": "Plate check: {plate}" },
+  "bolo.checkPlate.model": { "sv": "Modell: {model}", "en": "Model: {model}" },
+  "bolo.hit.alertCode": { "sv": "Efterlyst", "en": "BOLO" },
+  "bolo.hit.alertTitlePerson": { "sv": "Efterlyst person: {name}", "en": "Wanted person: {name}" },
+  "bolo.hit.via": { "sv": "Källa: {source}", "en": "Source: {source}" },
+  "bolo.notice.owner": { "sv": "{name} ({callsign})", "en": "{name} ({callsign})" },
+  "bolo.subject.vehicle": { "sv": "{plate} · {model}", "en": "{plate} · {model}" },
+  "dev.command.testbolo": {
+    "sv": "Efterlys ett fordon för test (skylten, eller fordonet du sitter i)",
+    "en": "Issue a test BOLO (the plate, or the vehicle you are in)"
+  },
+  "dev.testbolo.reason": { "sv": "Testefterlysning", "en": "Test BOLO" }
+}

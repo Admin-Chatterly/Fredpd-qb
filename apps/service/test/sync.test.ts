@@ -1,11 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // src/discord/sync.ts: pure helpers (display name per OFFICER_NAME_SOURCE, avatar, diffs) and the orchestration
 // (role import, resync, member role change -> recompute -> /grants push, nickname or global name change ->
-// fredpd_officers + /officer push)
-// with a fake gateway and a fake FXServer. The orchestration tests use their own database
+// fredpd_officers + /officer push, cache refresh of offline members on ready/resync, monotonic fredpd_grant_cache,
+// redelivery of pushes FXServer missed) with a fake gateway and a fake FXServer. The orchestration tests use their own database
 // (fredpd_test_service_sync) because a role import soft-deletes every role it does not see.
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { hasGrant } from '@fredpd/types/grants';
+import { emptyGrantSet, hasGrant } from '@fredpd/types/grants';
+import { writeGrantCache } from '../src/db/repo';
+import { FxRetry } from '../src/fx-retry';
 import {
   avatarRef, cleanName, createSync, diffRoles, identityChanged, officerAvatarUrl, officerIdentity, portalDisplayName,
   resolveDisplayName, rolesChanged,
@@ -236,6 +238,37 @@ describe.skipIf(!database)('sync orchestration (DB)', () => {
     expect(fx.calls).toEqual([{ kind: 'recompute', discordIds: undefined }]);
   });
 
+  it('ready/resynced also re-resolve fredpd_grant_cache rows of offline members (FXServer\'s fallback)', async () => {
+    const offline = '320000000000000009';
+    const stale = { ...emptyGrantSet(new Date('2026-01-01T00:00:00Z')), grants: ['perm:admin.permissions'] };
+    await writeGrantCache(database!.db, [{ discordId: offline, grants: stale }, { discordId: anna, grants: stale }]);
+    await sync.resynced([
+      { id: R.everyone, name: '@everyone', colour: 0, position: 0 },
+      { id: R.polis, name: 'Polisassistent', colour: 0x3366ff, position: 9 },
+    ]);
+    const cache = await rows<{ discord_id: string; grants: string }>(database!, 'SELECT discord_id, CAST(grants AS CHAR) AS grants FROM fredpd_grant_cache WHERE discord_id IN (?, ?) ORDER BY discord_id', [anna, offline]);
+    const byId = Object.fromEntries(cache.map((c) => [c.discord_id, JSON.parse(c.grants) as { grants: string[]; computedAt: string }]));
+    expect(byId[offline]!.grants).toEqual([]); // left the guild while the service was down
+    expect(byId[anna]!.grants).toContain('unit:igv');
+    expect(byId[anna]!.grants).not.toContain('perm:admin.permissions');
+    expect(byId[offline]!.computedAt).toBe(clock.now().toISOString());
+  });
+
+  it('fredpd_grant_cache only moves forward: an older set never overwrites a newer one', async () => {
+    const id = '320000000000000008';
+    const at = (iso: string, grants: string[]) => ({ ...emptyGrantSet(new Date(iso)), grants });
+    const read = async () => (await rows<{ grants: string; computed_at: string }>(database!, "SELECT CAST(grants AS CHAR) AS grants, DATE_FORMAT(computed_at, '%Y-%m-%dT%H:%i:%s') AS computed_at FROM fredpd_grant_cache WHERE discord_id = ?", [id]))[0]!;
+    await writeGrantCache(database!.db, [{ discordId: id, grants: at('2026-09-29T12:00:10Z', ['unit:igv']) }]);
+    await writeGrantCache(database!.db, [{ discordId: id, grants: at('2026-09-29T12:00:05Z', ['perm:admin.permissions']) }]);
+    expect(JSON.parse((await read()).grants).grants).toEqual(['unit:igv']);
+    expect((await read()).computed_at).toBe('2026-09-29T12:00:10');
+    await writeGrantCache(database!.db, [{ discordId: id, grants: at('2026-09-29T12:00:10Z', ['unit:span']) }]); // tie: last write wins
+    expect(JSON.parse((await read()).grants).grants).toEqual(['unit:span']);
+    await writeGrantCache(database!.db, [{ discordId: id, grants: at('2026-09-29T12:01:00Z', []) }]);
+    expect(JSON.parse((await read()).grants).grants).toEqual([]);
+    expect((await read()).computed_at).toBe('2026-09-29T12:01:00');
+  });
+
   it('member removed from the guild: empty set pushed', async () => {
     gateway.members.delete(anna);
     await sync.memberRemoved(anna);
@@ -244,15 +277,29 @@ describe.skipIf(!database)('sync orchestration (DB)', () => {
     expect(pushes[0]!.grants.grants).toEqual([]);
   });
 
-  it('FXServer down: the push fails quietly, the DB is still updated', async () => {
+  it('FXServer down: the push fails quietly, the DB is still updated, and the change is redelivered', async () => {
+    const armed: number[] = [];
+    const retry = new FxRetry({ fx, log: silentLogger, setTimer: (_fn, ms) => armed.push(ms), clearTimer: () => {} });
+    const withRetry = createSync({
+      db: database!.db, gateway, fx, clock, log: silentLogger, unitOrder: ['ledning', 'igv'], retry,
+      identity: { publicUrl: 'https://portal.example.test', guildId: GUILD_ID, nameSource: 'discord_nick' },
+    });
     fx.ok = false;
     try {
       const m = gateway.addMember({ id: anna, nick: 'Anna', roleIds: [GUILD_ID, R.polis] });
-      await expect(sync.recomputeAndPush(m.id)).resolves.toMatchObject({ member: true });
+      await expect(withRetry.recomputeAndPush(m.id)).resolves.toMatchObject({ member: true });
       const [cache] = await rows<{ grants: string }>(database!, 'SELECT CAST(grants AS CHAR) AS grants FROM fredpd_grant_cache WHERE discord_id = ?', [anna]);
       expect(JSON.parse(cache!.grants).grants).toContain('unit:igv');
+      expect(retry.pending).toEqual({ all: false, discordIds: [anna] });
+      expect(armed).toEqual([2000]);
+      await withRetry.roleDeleted(R.old);
+      expect(retry.pending).toEqual({ all: true, discordIds: [] });
     } finally {
       fx.ok = true;
     }
+    fx.calls = [];
+    expect(await retry.flush()).toBe(true);
+    expect(fx.calls).toEqual([{ kind: 'recompute', discordIds: undefined }]); // FXServer re-fetches live sets
+    retry.close();
   });
 });

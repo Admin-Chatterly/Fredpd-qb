@@ -10,17 +10,17 @@ and the migration runner (`server/db.lua`) belong to other modules; this one cal
 
 | File | Role |
 |---|---|
-| `fredpd_core/fxmanifest.lua` | cerulean, lua54, `node_version '22'`, `ox_lib 'locale'`; server: MySQL.lua, `server/http.js`, `server/main.lua` |
+| `fredpd_core/fxmanifest.lua` | cerulean, lua54, `node_version '22'`, `ox_lib 'locale'`; server: MySQL.lua, `server/http.js`, `server/main.lua`; `files`: see "Client files" |
 | `server/main.lua` | entry: config → exports/events (perms, canview, audit, mirror, officers, adapters) → `MySQL.ready`: `db.migrate()`, rules, officers, units, online players |
 | `server/http.js` | HMAC bridge: `SetHttpHandler` routes (§C6) and the `signedFetch` export |
-| `server/core.lua` | `Core.fetch`, `Core.rateLimit`, `Core.async`, SQL binding helpers, config, qbx player access, logging |
+| `server/core.lua` | `Core.fetch`, `Core.rateLimit`, `Core.async`, `Core.internalExport`, SQL binding helpers, config, qbx player access, logging |
 | `server/perms.lua` | grant cache `Cache[src]`, fallback to `fredpd_grant_cache`, `applyGrants` push, `fredpd_identities` |
 | `server/canview.lua` | rules from `fredpd_visibility_rules`, `canView` / `canViewMany` |
 | `server/audit.lua` | `audit` export, `Audit.write`, `archiveOlderThan` + command `fredpd_audit_archive` |
 | `server/mirror.lua` | `fredpd_persons` / `fredpd_vehicles_idx`: qbx events, backfill, plate refresh, dev seeding |
 | `server/officers.lua` | officer names from Discord, `fredpd_officers` rows, callsign on first duty, `fredpd_units` sync |
 | `shared/locale.lua` | `L(key, vars)` over ox_lib `locale()`; pure `substitute` |
-| `shared/time.lua` | UTC timestamps (§C7, §C12): `isoSelect`, `toIsoUtc`, `toDatetime`, `toEpoch`, `nowIso` (see "Timestamps") |
+| `shared/time.lua` | UTC timestamps (§C7, §C12): `isoSelect`, `toIsoUtc`, `toDatetime`, `toEpoch`, `toEpochMs`, `nowIso` (see "Timestamps") |
 | `adapters/` | housing/garage/prison interfaces, `none` + stubs, loader (see `adapters/README.md`) |
 | `fredpd_devtools/` | `/fredpd_selftest`, `/fredpd_backfill`, `/fredpd_seed`, `/fredpd_fakeunits` (dev only) |
 | `server.cfg.example` | convars, ACE lines, ensure order |
@@ -41,13 +41,24 @@ Additions (additive, no contract change needed):
 | Export | Why |
 |---|---|
 | `canViewMany(src, records)` → results[] | a list page evaluates 50 records with one viewer lookup |
-| `recomputeGrants(discordIds\|nil)` → n | called by http.js for `POST /recompute` |
-| `setOfficerIdentity(discordId, displayName, avatarUrl)` → n | called by http.js for `POST /officer` |
+| `recomputeGrants(discordIds\|nil)` → n | called by http.js for `POST /recompute` (**internal**) |
+| `setOfficerIdentity(discordId, displayName, avatarUrl)` → n | called by http.js for `POST /officer` (**internal**) |
 | `ensureCallsign(src)` | lets a duty script trigger callsign allocation (async, returns nothing) |
 | `refreshPlate(plate)` → row\|nil | vehicle search calls it on a `fredpd_vehicles_idx` miss |
-| `backfillMirror(src)` → `{ persons, vehicles }` | `/fredpd_backfill`; audited |
-| `seedDevRows(src, persons, vehicles)` → counts | `/fredpd_seed`; only `DEV…` citizenids, `INSERT IGNORE`, audited |
+| `backfillMirror(src)` → `{ persons, vehicles }` | `/fredpd_backfill`; audited (**fredpd_devtools only**) |
+| `seedDevRows(src, persons, vehicles)` → counts | `/fredpd_seed`; only `DEV…` citizenids, `INSERT IGNORE`, audited (**fredpd_devtools only**) |
 | `getAdapter(kind)` | task 0.6 |
+
+**Internal exports.** `applyGrants`, `recomputeGrants` and `setOfficerIdentity` exist only for `server/http.js`, and
+`backfillMirror` / `seedDevRows` only for fredpd_devtools. As plain exports any server resource could call them
+(`exports.fredpd_core:applyGrants(id, { grants = { 'perm:*' }, … })` would escalate a player; `seedDevRows` is live
+in production), so they are registered with `Core.internalExport(name, fn, allowed)`: the call runs only when
+`GetInvokingResource()` is nil/empty (console, same runtime), `fredpd_core` itself (http.js calls
+`exports[resource][name]` from this resource's JS runtime) or a listed resource (`fredpd_devtools` for the two dev
+exports); anyone else gets `false` and one warning per export and resource. **UNVERIFIED** (FiveM runtime): that
+`GetInvokingResource()` inside a Lua export called from the same resource's JS runtime is `'fredpd_core'` (or nil);
+if it were anything else, `/grants`, `/recompute` and `/officer` would answer 400 `rejected by …` and the log would
+show `export … is internal to fredpd_core; call from resource … refused`.
 
 Events: client `fredpd:client:grantsChanged(set)` (contract). New server-local events other modules may listen to:
 `fredpd:grantsChanged(src)` after every cache change, `fredpd:officerChanged(citizenid)` after a name push or a new
@@ -124,8 +135,20 @@ warning).
 
 - `playerJoining` → Discord id from `GetPlayerIdentifierByType(src, 'discord')` → `GET /internal/grants/:id` →
   validate → `Cache[src]` + `fredpd_grant_cache` upsert. Failure (status ≠ 200 or invalid set) → cached row + warning;
-  no row → empty set. No Discord identifier → empty set + warning. Until loaded every check fails closed.
-- A push (`applyGrants`) that arrives while a fetch is in flight wins: the older fetch result is discarded.
+  no row → empty set (or, for a player who already holds a set, that set is kept). No Discord identifier → empty set
+  + warning. Until loaded every check fails closed.
+- **Sets only move forward (`computedAt`, milliseconds via `Time.toEpochMs`).** A fetched, pushed or cached set older
+  than the one the player holds is ignored (`applyGrants` counts only the players it updated and logs the skipped
+  ones). So a `/grants` push resolved before an admin's revocation that reaches FXServer after the recompute that
+  revocation triggered cannot bring the revoked grants back, whichever order they arrive in; the old rule "a push
+  always beats an in-flight fetch" is gone. A set without a readable `computedAt` is never treated as older (the
+  service always sends one). The `fredpd_grant_cache` upsert has the same rule in SQL
+  (`grants = IF(VALUES(computed_at) >= computed_at, …)`, `computed_at = GREATEST(…)`; order-independent). The column
+  is `DATETIME` (seconds), so in the DB two sets within one second tie and the last write wins; the in-memory
+  comparison has millisecond precision. The service's `writeGrantCache` uses the same rule.
+- **Loads are coalesced per player:** while a fetch is in flight, further loads (a burst of `/recompute`, a join and a
+  recompute) only queue **one** more load that starts when the first ends. A change committed during the first fetch
+  is still picked up by the second; a replayed `/recompute {}` costs at most one extra fetch per player at a time.
 - `fredpd_grant_cache.grants` is written with a hand-built encoder so empty lists are `[]` (FiveM's json may encode
   `{}`); `computed_at` = the set's `computedAt` as UTC DATETIME (`Time.toDatetime`; an offset is converted), or
   `UTC_TIMESTAMP()` when it is not an ISO timestamp. `fredpd_identities.last_seen` = `UTC_TIMESTAMP()`.
@@ -200,8 +223,18 @@ warning).
 - `getOfficer(src).rankRoleId` / `.rankKey` come from the player's **live** grant set (`GrantSet.rank`, refreshed by
   every `/grants` push); the stored `rank_role_id` is only used until the grants have loaded.
 - When a `job.type == 'leo'` character loads, FXServer creates its `fredpd_officers` row (the bot cannot know the
-  citizenid) without touching the Discord-owned columns of an existing row. `display_name` is NOT NULL: until the
-  bot fills it, the FiveM account name (`GetPlayerName`) is used, never the character name (§4.9).
+  citizenid) without touching the Discord-owned columns of an existing row. `display_name` is NOT NULL: the name
+  pushed by the bot (`/officer`, sent when the player joins) if FXServer has it, else a **neutral placeholder**
+  `L('officer.unnamed', { id = <last 4 digits of the Discord id> })` ("Polis utan namn (…1234)"), stored in the server
+  language. Never the character name (§4.9) and no longer the FiveM account name: that one is player-chosen (control,
+  bidi, zero-width and look-alike characters included) and could imitate another officer on rosters. The placeholder
+  stays until the bot's next identity sync for that user (next join or name change) when the service was down at
+  the first load; with `OFFICER_NAME_SOURCE=character` (not implemented here, service.md question 1) it stays.
+- **Duty and job events are rate limited**: `QBCore:Server:SetDuty` and `QBCore:Server:OnJobUpdate` run at most once
+  per player per 2 s each (`Core.rateLimit`, keys `officers:duty` / `officers:job`), because duty toggling starts with
+  the client net event `QBCore:ToggleDuty` and each run costs DB queries. A dropped repeat loses nothing (the run it
+  follows did the work). "No unit grant" / "no callsign prefix" is logged once per character and reason until the
+  next `fredpd:grantsChanged` for that player.
 - Callsign on first duty: `formats.json callsign` with `{{unit}}` = the `units.json` callsign prefix of the primary
   unit (the held unit first in `units.json` order) and `{{n}}` = lowest free number in that unit (gaps are reused).
   `uq_unit_callsign` turns a concurrent allocation into an error that is retried (5 attempts). An existing callsign
@@ -236,6 +269,12 @@ warning).
 
 ## Adapters (task 0.6)
 
+- **Prison default is `none`** (config/integrations.json) until the xt-prison adapter exists (task 4.1,
+  docs/deps-verification.md Decision 2). `qbx_prison` must never run as shipped (any client can unlock any
+  ox_doorlock door and clear its own sentence, §2a): `server.cfg.example` no longer ensures it (a commented
+  `# ensure xt-prison` instead) and the `qbx_prison` adapter is opt-in and logs a caution at every start. The
+  `qbx_police` → `qbx_police-jail` alias is gone (qbx_police has no jail, §2); that stub is rescoped to "metadata
+  only, no confinement" and warns when selected. Adapters can carry a `caution` (`base.lua`), logged once per init.
 - `adapter.init` runs while fredpd_core starts. A configured resource in state `missing` (not installed) is warned
   about at once. One that exists but is not running yet may be ensured after fredpd_core, so it gets one deferred
   re-check (`SetTimeout`, 15 s, one shot) and a call made while it is still down also reports it; either way only
@@ -244,10 +283,17 @@ warning).
 ## Locale
 
 `L(key, vars)` calls `locale(key)` with the key only (ox_lib's own varargs run `string.format`) and substitutes
-`{name}` literally; a missing var leaves `{name}` visible. New strings are in `locales/pending/core.json` (27 keys:
-`core.*`, `dev.*`, `officer.callsignAssigned`,
-`audit.action.{audit.archive,mirror.backfill,mirror.seed,officer.create,officer.relink}`); the merge dry run
-validates them. `tests/lua/locale_test.lua` fails if code uses an `L('…')` key that exists nowhere.
+`{name}` literally; a missing var leaves `{name}` visible. The earlier 27 keys are merged. New since then:
+`locales/pending/core.json` → `officer.unnamed` (the roster placeholder above); the merge dry run validates it.
+`tests/lua/locale_test.lua` fails if code uses an `L('…')` key that exists nowhere.
+
+## Client files (`fxmanifest.lua` `files`)
+
+`shared/*.lua`, `config/formats.json`, `config/units.json`, `locales/*.json`. **Not** `migrations/*` (schema DDL,
+index.json; `db.lua` reads them server-side with `LoadResourceFile`, which needs no `files` entry) and **not**
+`config/integrations.json` (server-only; it holds e.g. `unauthorizedLookupThreshold`, which a client should not
+learn). **Deviation from §C1** ("`config/*.json` under `files`"): only the two display configs client code may need
+are listed; the contract owner may want to narrow §C1 the same way. No client code loads any of them yet.
 
 ## fredpd_devtools
 
@@ -276,7 +322,11 @@ production (`server.cfg.example` has it commented out).
 - Type check: `pnpm exec tsc -p "resources/[fredpd]/fredpd_core/test/tsconfig.json"`. `resources/` is not a
   workspace package, so `pnpm -r typecheck` does not run it: **the owner of `package.json` should add this command
   to `pnpm lint`** (or cover it with typed ESLint).
-- `lua5.4 tests/lua/run.lua core_`, `locale_test` and `time_test`. `core_db_test.lua` runs against MariaDB through
+- `lua5.4 tests/lua/run.lua core_`, `locale_test` and `time_test` (incl. `toEpochMs`). Added for the review fixes:
+  perms (newer set wins in both arrival orders, stale push ignored, fallback row vs held set, coalesced loads,
+  internal exports refused for other resources), officers (neutral placeholder, duty/job rate limit, warn once),
+  helpers (`internalExport`), adapters (prison default `none`, cautions, alias gone), DB (`07b` cache rows only move
+  forward, placeholder names). `core_db_test.lua` runs against MariaDB through
   `tests/lua/mysql_shim.lua` in database `fredpd_test_core_lua` (reset once per run; skipped with a notice when
   unreachable), **every session at time_zone `+02:00`**: backfill/idempotency/FULLTEXT EXPLAIN, refreshPlate,
   seeding, grant cache JSON round trip (+ UTC fallback), identities (UTC last_seen/created_at), seed rules loaded ==
@@ -293,17 +343,21 @@ production (`server.cfg.example` has it commented out).
 1. Resolved: `POST /rules` (§C6) is built (http.js emits `fredpd:rulesChanged`; service `fx.pushRulesChanged()`).
    There is no rule editor yet, so nothing calls it; until the Ledning rules page exists, rules are edited in the
    database and applied with the signed curl call in `docs/test-phase-1.md` step 10 (or a fredpd_core restart).
-2. `files { 'migrations/*' }` (as specified) ships the SQL files to every client; `db.lua` reads them with
-   `LoadResourceFile` on the server, which does not need `files`. Consider dropping it.
+2. Resolved: `migrations/*` and `config/integrations.json` are no longer sent to clients (see "Client files").
 3. The derived personnummer is FredPD-only. If an ID-card script is added, store its number in
    `charinfo.personnummer` so both agree.
 4. Should `getOfficer` fall back to anything when a character has no `fredpd_officers` row (currently nil)?
-5. §C5 signs `ts + "." + body` only, not method or path. `/recompute` now refuses an empty body and unknown keys,
-   so a captured `GET /ping` signature or `/grants` / `/officer` body is no longer accepted there; what remains is
-   that a captured `/recompute` body can be replayed within 60 s (an extra reload), and `/rules {}` and
-   `/recompute {}` sign the same bytes, so either can be replayed as the other within 60 s (an extra rules reload or
-   an extra grant re-fetch for everyone online; no state changes). Still suggest signing
-   `ts + "." + METHOD + " " + path + "." + body` in a contract revision (both sides + fixtures).
+5. §C5 signs `ts + "." + body` only, not method or path. `/recompute` refuses an empty body and unknown keys, so a
+   captured `GET /ping` signature or `/grants` / `/officer` body is not accepted there; what remains is that a
+   captured `/recompute` body can be replayed within 60 s, and `/rules {}` and `/recompute {}` sign the same bytes
+   (an extra rules reload or grant re-fetch; no state changes). Mitigations now in place without a contract change:
+   loads are coalesced per player (one in flight + one queued), and the service answers `/internal/*` (and the
+   HMAC `/upload`) only to direct loopback requests without proxy headers, so a captured signature cannot be
+   replayed through the tunnel. **FXServer↔service traffic must stay on loopback** (never cross a network in clear
+   text; §C6 pins `127.0.0.1` both ways). Still proposed for the contract owner: sign
+   `ts + "." + METHOD + " " + path + "." + rawBody` (ideally with a direction tag) in §C5, `hmac.ts`, `http.js` and
+   the fixtures together. Not done here: refusing non-loopback `req.address` in http.js, because the format of
+   FXServer's `req.address` is unverified and a wrong parse would disable the bridge.
 6. §C7's audit-exempt list lacks `fredpd_units` (system copy of `config/units.json`) and names only `last_seen` of
    `fredpd_identities`, while perms.lua also writes `license` and `last_citizenid` there (a cache of which character
    a Discord user plays, whose source is qbx). Suggest adding both to §C7 (contract owner).

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// /ws: session required, foreign Origin refused, /internal/events fan out to logged-in officers only, and a
-// grant change (Discord role removed) stops delivery without reconnecting.
+// /ws: session required, foreign Origin refused, only users with mdt_page:alerts (docs/contracts.md §C13) may open a
+// socket and receive /internal/events (any other grant, or allow mdt_page:* with a deny on mdt_page:alerts, gets
+// 403 and nothing), and a grant change (Discord role removed) stops delivery without reconnecting.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import type { WebSocket } from '@fastify/websocket';
 import { cleanup, GUILD_ID, ids, loginAs, makeApp, seedRole, setupTestDb, signedInject } from './helpers';
@@ -15,6 +16,12 @@ function connect(t: TestApp, headers: Record<string, string> = {}): Promise<WebS
   return t.app.injectWS('/ws', { headers, socket: { remoteAddress: '127.0.0.1' } } as unknown as Parameters<TestApp['app']['injectWS']>[1]);
 }
 
+/** An Alert as fredpd_dispatch posts it (nullable fields that are nil in Lua are absent). */
+const ALERT = {
+  id: 7, code: '10-15', title: 'Skottlossning', priority: 1, source: 'ps-dispatch', status: 'open',
+  createdAt: '2026-09-29T11:00:00Z', units: [], coords: { x: 1, y: 2, z: 3 },
+};
+
 function nextMessage(ws: WebSocket, timeoutMs = 1000): Promise<unknown> {
   return new Promise((resolve, reject) => {
     const timer = setTimeout(() => reject(new Error('no message')), timeoutMs);
@@ -28,17 +35,25 @@ function nextMessage(ws: WebSocket, timeoutMs = 1000): Promise<unknown> {
 describe.skipIf(!database)('/ws live events (DB)', () => {
   let t: TestApp;
   const role = nextId();
+  const armoryRole = nextId();
+  const deniedRole = nextId();
   const officer = nextId();
   const civilian = nextId();
+  const armoryOnly = nextId();
+  const denied = nextId();
   const sockets: WebSocket[] = [];
 
   beforeAll(async () => {
     if (!database) return;
     await cleanup(database, PREFIX);
     await seedRole(database, role, 'Polis', 10, [['mdt_page', 'alerts', 'allow']]);
+    await seedRole(database, armoryRole, 'Vapen', 11, [['weapon', '*', 'allow'], ['tool', 'ram', 'allow'], ['perm', 'rank:inspektor', 'allow']]);
+    await seedRole(database, deniedRole, 'Utan larm', 12, [['mdt_page', '*', 'allow'], ['mdt_page', 'alerts', 'deny']]);
     t = await makeApp({ database });
     t.gateway.addMember({ id: officer, roleIds: [GUILD_ID, role] });
     t.gateway.addMember({ id: civilian, roleIds: [GUILD_ID] });
+    t.gateway.addMember({ id: armoryOnly, roleIds: [GUILD_ID, armoryRole] });
+    t.gateway.addMember({ id: denied, roleIds: [GUILD_ID, deniedRole] });
   });
 
   afterAll(async () => {
@@ -55,17 +70,23 @@ describe.skipIf(!database)('/ws live events (DB)', () => {
     await expect(connect(t, { cookie, origin: 'https://evil.example' })).rejects.toThrow(/403/);
   });
 
-  it('delivers /internal/events to officers, not to members without grants; stops after a role is removed', async () => {
+  it('refuses the upgrade (403) for members whose grants allow no live event', async () => {
+    for (const who of [civilian, armoryOnly, denied]) {
+      const { cookie } = await loginAs(t, database!, who);
+      await expect(connect(t, { cookie }), who).rejects.toThrow(/403/);
+    }
+  });
+
+  it('delivers /internal/events to mdt_page:alerts holders only; stops after the role is removed', async () => {
     const off = await loginAs(t, database!, officer);
-    const civ = await loginAs(t, database!, civilian);
     const wsOfficer = await connect(t, { cookie: off.cookie, origin: 'https://portal.example.test' });
-    const wsCivilian = await connect(t, { cookie: civ.cookie });
-    sockets.push(wsOfficer, wsCivilian);
+    sockets.push(wsOfficer);
 
     const got = nextMessage(wsOfficer);
-    const res = await signedInject(t, { method: 'POST', url: '/internal/events', body: { type: 'alertCreated', payload: { id: 7, code: '10-15' } } });
+    const res = await signedInject(t, { method: 'POST', url: '/internal/events', body: { type: 'alertCreated', payload: ALERT } });
     expect(res.json()).toEqual({ ok: true, delivered: 1 });
-    expect(await got).toEqual({ type: 'alertCreated', payload: { id: 7, code: '10-15' } });
+    // What the browser gets is the parsed Alert: the nulls Lua could not send are filled in.
+    expect(await got).toEqual({ type: 'alertCreated', payload: { ...ALERT, description: null, street: null, closedBy: null, closedAt: null } });
 
     // Discord role removed -> recompute -> the hub drops the officer.
     const before = t.gateway.getMember(officer)!;
@@ -73,6 +94,15 @@ describe.skipIf(!database)('/ws live events (DB)', () => {
     await t.app.fredpd.sync.memberUpdated(before, t.gateway.getMember(officer)!);
     const res2 = await signedInject(t, { method: 'POST', url: '/internal/events', body: { type: 'alertClosed', payload: { id: 7 } } });
     expect(res2.json()).toEqual({ ok: true, delivered: 0 });
+
+    // A deny added to a connected officer's roles (FXServer re-fetch) also stops delivery.
+    t.gateway.addMember({ ...before, roleIds: [GUILD_ID, role] });
+    await t.app.fredpd.sync.memberUpdated({ ...before, roleIds: [GUILD_ID] }, t.gateway.getMember(officer)!);
+    expect((await signedInject(t, { method: 'POST', url: '/internal/events', body: { type: 'alertClosed', payload: { id: 7 } } })).json()).toEqual({ ok: true, delivered: 1 });
+    t.gateway.addMember({ ...before, roleIds: [GUILD_ID, role, deniedRole] });
+    await signedInject(t, { method: 'GET', url: `/internal/grants/${officer}` });
+    expect((await signedInject(t, { method: 'POST', url: '/internal/events', body: { type: 'alertClosed', payload: { id: 7 } } })).json()).toEqual({ ok: true, delivered: 0 });
+    t.gateway.addMember({ ...before, roleIds: [GUILD_ID, role] });
   });
 
   it('logout closes the session sockets', async () => {

@@ -1,0 +1,95 @@
+{
+  "counts": {
+    "activeBolos": 32,
+    "myOpenCases": 3,
+    "onDuty": 5
+  },
+  "me": {
+    "callsign": "LED-01",
+    "citizenid": "MDT10002",
+    "displayName": "Eva L.",
+    "unit": "ledning"
+  },
+  "myCases": [
+    {
+      "caseNumber": "K-12-26",
+      "id": 12,
+      "level": 0,
+      "status": "open",
+      "title": "Rån mot värdetransport",
+      "visibility": "full"
+    },
+    {
+      "contact": {
+        "displayName": "Eva L.",
+        "unit": "ledning"
+      },
+      "visibility": "notice"
+    }
+  ],
+  "recentBolos": [
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 1,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC01D",
+      "reason": "Rån",
+      "subject": "ABC01D · sultan"
+    },
+    {
+      "active": true,
+      "createdAt": "2026-09-29T08:00:00Z",
+      "id": 2,
+      "issuedBy": {
+        "callsign": "IGV-07",
+        "citizenid": "MDT10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      },
+      "kind": "vehicle",
+      "level": 0,
+      "plate": "ABC02D",
+      "reason": "Rån",
+      "subject": "ABC02D · sultan"
+    }
+  ],
+  "roster": [
+    {
+      "callsign": "IGV-07",
+      "citizenid": "MDT10001",
+      "displayName": "Anna B.",
+      "onDuty": true,
+      "unit": "igv"
+    },
+    {
+      "callsign": "IGV-11",
+      "citizenid": "MDT10006",
+      "displayName": "Dan E.",
+      "onDuty": true,
+      "unit": "igv"
+    },
+    {
+      "callsign": "LED-01",
+      "citizenid": "MDT10002",
+      "displayName": "Eva L.",
+      "onDuty": true,
+      "unit": "ledning"
+    },
+    {
+      "callsign": "SPAN-02",
+      "citizenid": "MDT10005",
+      "displayName": "Cia D.",
+      "onDuty": true,
+      "unit": "span"
+    }
+  ],
+  "variant": "ledning"
+}

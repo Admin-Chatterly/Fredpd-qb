@@ -1,0 +1,26 @@
+[
+  {
+    "caseNumber": "K-12-26",
+    "id": 2,
+    "level": 1,
+    "status": "open",
+    "title": "Delad utredning",
+    "visibility": "full"
+  },
+  {
+    "caseNumber": "K-11-26",
+    "id": 1,
+    "level": 0,
+    "status": "open",
+    "title": "Egen patrull",
+    "visibility": "full"
+  },
+  {
+    "caseNumber": "K-13-26",
+    "id": 3,
+    "level": 0,
+    "status": "closed",
+    "title": "Avslutat",
+    "visibility": "full"
+  }
+]

@@ -1,0 +1,17 @@
+{
+  "active": true,
+  "citizenid": "FPD10003",
+  "createdAt": "2026-09-29T10:10:00Z",
+  "expiresAt": "2026-10-01T10:10:00Z",
+  "id": 2,
+  "issuedBy": {
+    "callsign": "SPAN-02",
+    "citizenid": "BOL10002",
+    "displayName": "Bo C.",
+    "unit": "span"
+  },
+  "kind": "person",
+  "level": 1,
+  "reason": "Hot mot tjänsteman",
+  "subject": "Sara Öberg"
+}

@@ -7,6 +7,11 @@
 -- fredpd_grant_cache is used and a warning is logged. The service pushes changes through POST /grants (http.js ->
 -- applyGrants), which also refreshes fredpd_grant_cache and tells the player's client.
 --
+-- Sets only move forward in time: a set (fetched, pushed or read from the cache) whose computedAt is older than the
+-- one already held for that player is ignored, and the fredpd_grant_cache upsert keeps the newer row. So a push
+-- that was resolved before an admin's revocation but arrives after the recompute that revocation triggered cannot
+-- bring the revoked grants back. Loads are coalesced per player (one fetch in flight, at most one queued after it).
+--
 -- fredpd_grant_cache and fredpd_identities are system-maintained caches, not records: they are not audited per row
 -- (the service audits the permission change itself as perms.update).
 
@@ -18,7 +23,8 @@ local M = {}
 
 local Cache = {}     -- [src] = GrantSet (treated as immutable; exports hand out copies)
 local DiscordOf = {} -- [src] = Discord id string
-local Loading = {}   -- [src] = token of the fetch in flight; cleared by a newer push or by playerDropped
+local Loading = {}   -- [src] = token of the load in flight; cleared when it ends or by playerDropped
+local Again = {}     -- [src] = { notify } when another load was asked for while one was in flight (runs after it)
 local Served = {}    -- [src] = client copy last built for fredpd:getMyGrants; dropped whenever Cache[src] changes
 
 local MAX_LIST = 2000
@@ -26,9 +32,12 @@ local GRANT_PATTERN = '^[%l_]+:%S+$'
 local UNIT_PATTERN = '^[%w_%-]+$'
 
 -- computed_at is the set's computedAt as a UTC DATETIME; %s is '?' or UTC_TIMESTAMP() (see M.cacheUpsert). Times are
--- UTC whatever the MariaDB time zone is (docs/contracts.md §C7): never the session clock.
+-- UTC whatever the MariaDB time zone is (docs/contracts.md §C7): never the session clock. A row only moves forward:
+-- an older set leaves it alone; within one second (DATETIME has no fraction) the last write wins. Same rule as the
+-- service's writeGrantCache; the result does not depend on the order MariaDB applies the two assignments.
 M.CACHE_UPSERT_SQL = 'INSERT INTO fredpd_grant_cache (discord_id, grants, computed_at) VALUES (?, ?, %s) '
-    .. 'ON DUPLICATE KEY UPDATE grants = VALUES(grants), computed_at = VALUES(computed_at)'
+    .. 'ON DUPLICATE KEY UPDATE grants = IF(VALUES(computed_at) >= computed_at, VALUES(grants), grants), '
+    .. 'computed_at = GREATEST(computed_at, VALUES(computed_at))'
 M.CACHE_SELECT_SQL = 'SELECT grants FROM fredpd_grant_cache WHERE discord_id = ?'
 M.IDENTITY_SEEN_SQL = 'INSERT INTO fredpd_identities (discord_id, last_seen) VALUES (?, UTC_TIMESTAMP()) '
     .. 'ON DUPLICATE KEY UPDATE last_seen = VALUES(last_seen)'
@@ -119,6 +128,19 @@ function M.isoToDatetime(iso)
     return (Time.toDatetime(iso))
 end
 
+--- computedAt of a set as epoch milliseconds, or nil when it is not a timestamp.
+function M.stampOf(set)
+    return type(set) == 'table' and (Time.toEpochMs(set.computedAt)) or nil
+end
+
+--- True unless `incoming` is provably older than `current` (a set without a readable computedAt is never older).
+function M.isNotOlder(incoming, current)
+    if current == nil then return true end
+    local a, b = M.stampOf(incoming), M.stampOf(current)
+    if a == nil or b == nil then return true end
+    return a >= b
+end
+
 ---------------------------------------------------------------------------------------------------------------
 -- Cache
 
@@ -139,6 +161,13 @@ local function store(src, set, notify)
     end
     -- Server-side hook for other FredPD resources (for example to close pages the player lost access to).
     TriggerEvent('fredpd:grantsChanged', src)
+end
+
+--- store() unless the player already holds a newer set. Returns true when stored.
+local function storeIfNewer(src, set, notify)
+    if not M.isNotOlder(set, Cache[src]) then return false end
+    store(src, set, notify)
+    return true
 end
 
 --- SQL and parameters for the fredpd_grant_cache upsert (UTC_TIMESTAMP() when computedAt is not an ISO string).
@@ -167,13 +196,8 @@ function M.readCache(discordId)
     return (M.validateSet(decoded))
 end
 
---- Fetch the player's grants from the service (fallback: fredpd_grant_cache, then an empty set). Awaits; run it in
---- a thread. Returns true when the service answered.
---- @param src integer
---- @param notify boolean push fredpd:client:grantsChanged to the player
-function M.load(src, notify)
-    src = tonumber(src)
-    if not src then return false end
+--- One load (see M.load). `token` identifies it in Loading[src].
+local function loadOnce(src, notify, token)
     local discordId = Core.discordIdOf(src)
     if not discordId then
         DiscordOf[src] = nil
@@ -182,17 +206,14 @@ function M.load(src, notify)
         return false
     end
     DiscordOf[src] = discordId
-    local token = {}
-    Loading[src] = token
 
     local status, body = Core.fetch('GET', '/internal/grants/' .. discordId)
-    -- Dropped, or superseded by a newer push, while waiting: keep what is there.
+    -- Dropped while waiting (a reconnecting player may even have the same id with a new load): keep out.
     if Loading[src] ~= token then return false end
 
     local set = status == 200 and type(body) == 'table' and M.validateSet(body.grants) or nil
     if set then
-        Loading[src] = nil
-        store(src, set, notify)
+        storeIfNewer(src, set, notify)
         M.writeCache(discordId, set)
         return true
     end
@@ -201,14 +222,48 @@ function M.load(src, notify)
         src, discordId, status)
     local cached = M.readCache(discordId)
     if Loading[src] ~= token then return false end
-    Loading[src] = nil
-    if not cached then Core.warn('no cached grants for discord %s: empty grant set', discordId) end
-    store(src, cached or Grants.empty(), notify)
+    if cached then
+        storeIfNewer(src, cached, notify)
+    elseif Cache[src] == nil then
+        Core.warn('no cached grants for discord %s: empty grant set', discordId)
+        store(src, Grants.empty(), notify)
+    else
+        Core.warn('no cached grants for discord %s: keeping the grants player %d already has', discordId, src)
+    end
     return false
 end
 
+--- Fetch the player's grants from the service (fallback: fredpd_grant_cache, then an empty set). Awaits; run it in
+--- a thread. Returns true when the service answered. A set older than the one the player holds is ignored.
+--- While a load for the player is in flight, another request only queues one more load after it (so a burst of
+--- /recompute calls costs at most one extra fetch per player, and a change committed during the first fetch is
+--- still picked up by the second).
+--- @param src integer
+--- @param notify boolean push fredpd:client:grantsChanged to the player
+function M.load(src, notify)
+    src = tonumber(src)
+    if not src then return false end
+    if Loading[src] then
+        Again[src] = { notify = (Again[src] ~= nil and Again[src].notify) or notify == true }
+        return false
+    end
+    local token = {}
+    Loading[src] = token
+    local ok, result = pcall(loadOnce, src, notify, token)
+    local owner = Loading[src] == token
+    local again = nil
+    if owner then
+        Loading[src] = nil
+        again, Again[src] = Again[src], nil
+    end
+    if again then Core.async('grant reload', M.load, src, again.notify) end
+    if not ok then error(result, 0) end
+    return result
+end
+
 --- Push from the service (POST /grants via http.js). Synchronous: updates every online player of that Discord user
---- and returns how many; the DB write runs in its own thread. Returns false for invalid input.
+--- that does not already hold a newer set and returns how many; the DB write runs in its own thread (and keeps the
+--- newer row too). Returns false for invalid input.
 --- @param discordId string
 --- @param grants table GrantSet
 --- @return integer|false
@@ -222,13 +277,18 @@ function M.applyGrants(discordId, grants)
         Core.warn('applyGrants(%s): invalid GrantSet (%s)', discordId, field)
         return false
     end
-    local sources = sourcesOf(discordId)
-    for _, src in ipairs(sources) do
-        Loading[src] = nil -- a fetch still in flight is older than this push
-        store(src, set, true)
+    -- A fetch still in flight is not cancelled: whichever of the two sets is newer (computedAt) stays.
+    local applied = 0
+    for _, src in ipairs(sourcesOf(discordId)) do
+        if storeIfNewer(src, set, true) then
+            applied = applied + 1
+        else
+            Core.warn('applyGrants(%s): ignored a set computed at %s, older than the one player %d has (%s)',
+                discordId, tostring(set.computedAt), src, tostring(Cache[src].computedAt))
+        end
     end
     Core.async('grant cache write', M.writeCache, discordId, set)
-    return #sources
+    return applied
 end
 
 --- Re-fetch grants for the given Discord ids (nil = every online player). Returns how many loads were started.
@@ -314,8 +374,9 @@ function M.register()
     exports('getGrants', M.getGrants)
     exports('getTier', M.getTier)
     exports('getUnits', M.getUnits)
-    exports('applyGrants', M.applyGrants)
-    exports('recomputeGrants', M.recompute)
+    -- Only for server/http.js (POST /grants, /recompute): refused for every other resource (Core.internalExport).
+    Core.internalExport('applyGrants', M.applyGrants)
+    Core.internalExport('recomputeGrants', M.recompute)
 
     AddEventHandler('playerJoining', function()
         local src = tonumber(source)
@@ -330,7 +391,7 @@ function M.register()
     AddEventHandler('playerDropped', function()
         local src = tonumber(source)
         if not src then return end
-        Cache[src], DiscordOf[src], Loading[src], Served[src] = nil, nil, nil, nil
+        Cache[src], DiscordOf[src], Loading[src], Again[src], Served[src] = nil, nil, nil, nil, nil
         Core.clearRateLimits(src)
     end)
 

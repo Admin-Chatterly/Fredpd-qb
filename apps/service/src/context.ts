@@ -9,6 +9,7 @@ import type { Db } from './db/client';
 import type { DiscordGateway } from './discord/gateway';
 import type { Sync } from './discord/sync';
 import type { FxClient } from './fx';
+import type { FxRetry } from './fx-retry';
 import type { GrantDeps } from './grants';
 import type { Logger } from './log';
 import type { WsHub } from './ws/hub';
@@ -43,6 +44,8 @@ export interface AppContext {
   log: Logger;
   oauth: DiscordOAuth;
   sync: Sync;
+  /** Redelivers grant changes FXServer missed (src/fx-retry.ts). */
+  fxRetry: FxRetry;
   hub: WsHub;
   avatars: AvatarCache;
   background: BackgroundTasks;
@@ -55,7 +58,9 @@ declare module 'fastify' {
     fredpd: AppContext;
   }
   interface FastifyRequest {
-    /** Live portal session from the fredpd_sid cookie, or null. */
+    /** Validly signed fredpd_sid token (onRequest, no DB read yet); the rate limiter keys on it. */
+    sessionToken: string | undefined;
+    /** Live portal session from the fredpd_sid cookie (loaded in preParsing, after the rate limiter), or null. */
     portalSession: SessionInfo | null;
     /** Raw request body as received (JSON bodies), for HMAC verification (§C5). */
     rawBody: string | undefined;

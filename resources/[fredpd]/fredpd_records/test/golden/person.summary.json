@@ -1,0 +1,133 @@
+{
+  "address": "Grove Street 12; Vinewood Hills 3",
+  "bolos": [
+    {
+      "active": true,
+      "citizenid": "RP001",
+      "createdAt": "2026-09-20T08:15:00Z",
+      "id": 3,
+      "issuedBy": {
+        "callsign": "UTR-02",
+        "citizenid": "REC10002",
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "kind": "person",
+      "level": 0,
+      "reason": "Efterlyst för rån",
+      "subject": "Anna Andersson"
+    }
+  ],
+  "cases": [
+    {
+      "caseNumber": "K-7-26",
+      "id": 7,
+      "level": 1,
+      "role": "other",
+      "status": "open",
+      "visibility": "masked"
+    },
+    {
+      "contact": {
+        "unit": "ledning"
+      },
+      "visibility": "notice"
+    },
+    {
+      "caseNumber": "K-4-26",
+      "id": 4,
+      "level": 0,
+      "role": "suspect",
+      "status": "open",
+      "title": "Misshandel på Grove Street",
+      "visibility": "full"
+    },
+    {
+      "contact": {
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "visibility": "notice"
+    },
+    {
+      "contact": {
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "visibility": "notice"
+    },
+    {
+      "caseNumber": "K-2-26",
+      "id": 2,
+      "level": 0,
+      "role": "witness",
+      "status": "closed",
+      "title": "Stöld av moped",
+      "visibility": "masked"
+    }
+  ],
+  "person": {
+    "birthdate": "1990-05-17",
+    "citizenid": "RP001",
+    "firstname": "Anna",
+    "gender": "female",
+    "lastname": "Andersson",
+    "personnummer": "19900517-1234",
+    "phone": "070-123 45 67"
+  },
+  "records": [
+    {
+      "caseNumber": "K-4-26",
+      "chargeCode": "BRB-005",
+      "createdAt": "2026-09-04T12:00:00Z",
+      "fine": 3000,
+      "id": 1,
+      "jailMinutes": 0,
+      "title": "Misshandel"
+    },
+    {
+      "chargeCode": "BRB-004",
+      "createdAt": "2026-09-03T12:00:00Z",
+      "fine": 1500,
+      "id": 2,
+      "jailMinutes": 0,
+      "title": "Ringa misshandel"
+    },
+    {
+      "chargeCode": "BRB-001",
+      "createdAt": "2026-09-02T12:00:00Z",
+      "fine": 0,
+      "id": 3,
+      "jailMinutes": 60,
+      "title": "Mord"
+    },
+    {
+      "caseNumber": "K-8-26",
+      "chargeCode": "BRB-005",
+      "createdAt": "2026-08-01T12:00:00Z",
+      "fine": 2000,
+      "id": 5,
+      "jailMinutes": 0,
+      "title": "Misshandel"
+    },
+    {
+      "chargeCode": "BRB-005",
+      "createdAt": "2026-07-01T12:00:00Z",
+      "fine": 2500,
+      "id": 6,
+      "jailMinutes": 0,
+      "title": "Misshandel"
+    }
+  ],
+  "vehicles": [
+    {
+      "bolo": true,
+      "model": "sultan",
+      "plate": "ABC123"
+    },
+    {
+      "bolo": false,
+      "plate": "XYZ98A"
+    }
+  ]
+}

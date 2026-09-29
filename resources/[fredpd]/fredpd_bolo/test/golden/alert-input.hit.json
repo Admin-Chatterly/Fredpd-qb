@@ -1,0 +1,17 @@
+{
+  "code": "Efterlyst",
+  "coords": {
+    "x": 101.5,
+    "y": 201.25,
+    "z": 30
+  },
+  "description": "ABC12D är efterlyst: Rån mot värdetransport\nKälla: Skyltkontroll",
+  "meta": {
+    "boloId": 1,
+    "hit": "plate_check",
+    "plate": "ABC12D"
+  },
+  "priority": 2,
+  "source": "bolo",
+  "title": "Efterlyst fordon: ABC12D"
+}

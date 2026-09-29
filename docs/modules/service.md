@@ -18,9 +18,11 @@ Node 22 + Fastify 5 + discord.js 14 + drizzle/mysql2, one process (`apps/service
 | `src/discord/bot.ts` | discord.js adapter (intents Guilds + GuildMembers); per-member ordered event handling |
 | `src/discord/sync.ts` | pure helpers (name, avatar, diffs) + orchestration (import, recompute, pushes) |
 | `src/fx.ts` | signed FXServer client (`ping`, `pushGrants`, `recompute`, `pushOfficer`, `pushRulesChanged`), 3 s deadline, never throws |
+| `src/fx-retry.ts` | redelivery of grant pushes/recomputes FXServer missed (one-shot timers 2 s / 10 s / 30 s, then next success) |
 | `src/auth/session.ts`, `oauth.ts` | sessions/CSRF; Discord OAuth (`@fastify/oauth2`) behind `DiscordOAuth` |
 | `src/routes/*.ts` | auth + `/api/session`, admin, internal, upload, avatar, ws |
-| `src/ws/hub.ts`, `src/avatar.ts`, `src/catalog.ts`, `src/units.ts` | WS fan-out, avatar disk cache, admin catalog, units.json |
+| `src/ws/hub.ts`, `src/ws/events.ts` | WS fan-out per event type, socket cap; who may receive what (`LIVE_EVENT_GRANTS`), `/internal/events` payload check |
+| `src/avatar.ts`, `src/catalog.ts`, `src/units.ts` | avatar disk cache, admin catalog, units.json |
 | `db/migrations/009_service.sql` | `fredpd_sessions`, `fredpd_uploads` |
 | `packages/types/src/actions.ts` | shared zod schemas (session, admin, internal, upload, MDT open payload, error codes) |
 
@@ -36,13 +38,23 @@ Errors are always `{ error: <code>, detail? }`; codes and their locale keys are 
 | `POST /auth/logout` | session + CSRF | deletes the row, closes its sockets, audit `auth.logout`; without a session just clears the cookie |
 | `GET /api/session` | – | `{ user: { discordId, displayName, avatarUrl, citizenid, grants } \| null, csrfToken }`; a user who left the guild is logged out here |
 | `GET /api/admin/roles` | session + `perm:admin.permissions` | §C10; roles include `colour` and deleted roles (flagged); catalog = `*` + units (units.json order) + tiers 0–2 + every `MDT_PAGE_KEYS` (nav order) + `KNOWN_PERMS` + tool `ram` + keys in use (see "Admin catalog") |
-| `PUT /api/admin/roles/:id/grants` | + CSRF | 400 on duplicate/invalid rows (≤ 500) and on unit keys that are not `*` or a unit code fredpd_core accepts (`[A-Za-z0-9_-]{1,32}`, `UnitCodeSchema`) or that are neither in `config/units.json` nor already on the role; 404 unknown role; one transaction with `SELECT … FOR UPDATE` on the role + audit `perms.update` (`meta.before/after` as `±type:key`); then every holder is resolved, `fredpd_grant_cache` refreshed, FXServer `/recompute { discordIds }`; `recomputed` = FXServer's `scheduled` |
-| `GET /internal/ping` | HMAC | `{ ok, discord, subscribers }` |
-| `GET /internal/grants/:discordId` | HMAC | `{ discordId, member, grants }`, writes `fredpd_grant_cache`; **503 while the gateway is not ready** (FXServer then uses its cache instead of storing "no grants") |
-| `POST /internal/events` | HMAC | `{ type, payload }` (strict) → `/ws`; `{ ok, delivered }` |
-| `POST /upload` | session + CSRF + ≥ 1 allowed grant (multipart `file`; 403 `forbidden` without a grant, 415 if not multipart) or HMAC (JSON `{ data, citizenid?, discordId? }`) | ≤ 5 MB else 413; `file-type` sniff png/jpeg/webp else 415; `UPLOAD_DIR/<32 hex>.<ext>`, row + audit `upload.create`. Malformed/stale HMAC headers are refused in `onRequest`, before the body is read |
+| `PUT /api/admin/roles/:id/grants` | + CSRF | 400 on duplicate/invalid rows (≤ 500) and on unit keys that are not `*` or a unit code fredpd_core accepts (`[A-Za-z0-9_-]{1,32}`, `UnitCodeSchema`) or that are neither in `config/units.json` nor already on the role; 404 unknown role; one transaction with `SELECT … FOR UPDATE` on the role + audit `perms.update` (`meta.before/after` as `±type:key`); then every holder is resolved, `fredpd_grant_cache` refreshed, FXServer `/recompute { discordIds }`; `recomputed` = FXServer's `scheduled`. When FXServer did not confirm (timeout, network, 5xx, or the gateway was not ready) the answer is `{ ok: true, recomputed: 0, fxPending: true }` and the recompute is redelivered (see "Grant redelivery") |
+| `GET /internal/ping` | HMAC, loopback | `{ ok, discord, subscribers }` |
+| `GET /internal/grants/:discordId` | HMAC, loopback | `{ discordId, member, grants }`, writes `fredpd_grant_cache`; **503 while the gateway is not ready** (FXServer then uses its cache instead of storing "no grants") |
+| `POST /internal/events` | HMAC, loopback | `{ type, payload }` (strict); alert/unit events must match `DispatchInternalEventSchema` after restoring Lua's absent nulls (else 400 `invalid_body`), and the parsed value is what `/ws` sends; `{ ok, delivered }` |
+| `POST /upload` | session + CSRF + ≥ 1 allowed grant (multipart `file`; 403 `forbidden` without a grant, 415 if not multipart) or HMAC from loopback (JSON `{ data, citizenid?, discordId? }`) | ≤ 5 MB else 413; `file-type` sniff png/jpeg/webp else 415; `UPLOAD_DIR/<32 hex>.<ext>`, row + audit `upload.create`. Malformed/stale HMAC headers, and HMAC requests that are proxied or not from loopback, are refused (401) in `onRequest`, before the body is read |
 | `GET /avatar/:discordId` | – | PNG from disk; CDN fetched once per avatar hash; last file if the member is unknown; 404 otherwise; `CORP: cross-origin` for the NUI |
-| `GET /ws` | session, Origin = PUBLIC_URL origin | server → client only; messages are `InternalEvent` |
+| `GET /ws` | session, Origin = PUBLIC_URL origin, a grant for at least one live event type (else 403) | server → client only; messages are `InternalEvent` |
+
+**Loopback only (`/internal/*`).** `requireLoopback` (onRequest, before the body and the rate limiter) answers 404
+`not_found` unless the TCP peer is loopback (`127.0.0.0/8`, `::1`, `::ffff:127.x`) **and** the request carries no
+proxy header (`X-Forwarded-For`, `X-Forwarded-Host`, `X-Forwarded-Proto`, `Forwarded`, `X-Real-IP`,
+`CF-Connecting-IP`, `CF-Ray`, `True-Client-IP`, `Via`). FXServer's `signedFetch` sends none of them. Through
+cloudflared or Caddy on the same host the peer is loopback but a proxy header is present, so `/internal` stays closed
+even when the tunnel points straight at the service (task 7.1) or a Caddy/WAF rule is missing, and a captured
+signature cannot be replayed from outside the host (§C5 does not sign method or path, open question 4). **FXServer
+and the service must run on the same host** (§C6 pins 127.0.0.1 both ways); FXServer↔service traffic must never
+cross a network in clear text.
 
 ## Decisions
 
@@ -60,9 +72,14 @@ Errors are always `{ error: <code>, detail? }`; codes and their locale keys are 
   multipart request cannot pass HMAC (hence the JSON variant of `/upload` for FXServer, e.g. a screenshot-basic
   data URI obtained server-side). Rejections are logged at most once per 10 s with a suppressed count
   (`suppressedSinceLast`), as http.js does, since `/internal` is reachable through the tunnel.
-- **Rate limit** 60/min keyed `user:<discordId>` when a session exists, else `ip:<ip>`. `trustProxy: 'loopback'`
-  (Cloudflare Tunnel/Caddy on the same host). Higher limits: `/internal/*` 1200/min (FXServer bursts on restart),
-  `/avatar` 300/min (rosters).
+- **Rate limit** 60/min keyed `session:<sha256(token), 32 hex>` when the request carries a validly signed session
+  cookie, else `ip:<ip>`. The global `onRequest` hook only unsigns the cookie (no I/O); the session row is loaded in
+  a global `preParsing` hook, i.e. after the limiter's route-level `onRequest` hook, so an over-limit request costs no
+  DB query (test: an app without a database answers 500 for 60 requests with a session cookie, then 429). Sessions
+  are one per user (a new login ends the old one), so this is still per user. The raw token never enters the
+  limiter's store. `trustProxy: 'loopback'` (Cloudflare Tunnel/Caddy on the same host). Higher limits: `/internal/*`
+  1200/min (FXServer bursts on restart), `/avatar` 300/min (rosters). `/upload`'s own `onRequest` runs before the
+  session is loaded and uses the signed-cookie token to pick the portal path.
 - **Admin catalog** (`src/catalog.ts`, §C10/§C12). Always listed, whether or not a role uses them:
   - `mdt_page`: every key of `MDT_PAGE_KEYS`, which now live in `packages/types/src/mdtPages.ts` (`@fredpd/ui`
     re-exports them). They are sorted in nav order (search, alerts, bolos, cases, evidence, intel, charges, roster,
@@ -83,7 +100,22 @@ Errors are always `{ error: <code>, detail? }`; codes and their locale keys are 
 - **Grants** are always resolved live (gateway roles + DB rows). Pushes: member role change → `POST /grants`;
   admin save and role moves → `POST /recompute { discordIds }` (> 2000 ids → `{}` = all online); gateway ready and
   resync (always) and role delete → `/recompute {}`. `fredpd_grant_cache` is written by the service on every resolution
-  it sends (FXServer also writes it on push).
+  it sends (FXServer also writes it on push). **Cache rows only move forward**: `writeGrantCache` keeps the stored
+  row when the new set's `computedAt` is older (`grants = IF(VALUES(computed_at) >= computed_at, …)`,
+  `computed_at = GREATEST(…)`; seconds precision, so within one second the last write wins), the same rule as
+  fredpd_core perms.lua, which also ignores an older set in memory (core.md "Grants runtime").
+- **Grant redelivery** (`src/fx-retry.ts`). A `/grants` push or `/recompute` that gets no answer (timeout, network) or
+  a 5xx marks its Discord ids (or "everyone online") pending. Pending ids go out as **one** `/recompute { discordIds }`
+  (or `{}`), so FXServer re-fetches the live set and a retry can never deliver an outdated one. One-shot timers after
+  2 s, 10 s and 30 s, armed only while something is pending (no idle polling); after the last attempt the ids stay
+  pending and go out with the next FX call that succeeds (any push, including `/officer`) or the next failure's
+  retry. 4xx answers are not retried. `app.close()` stops the timer. Pending ids are in memory only: after a service
+  restart the ready-time `/recompute {}` covers them.
+- **Offline members' cache rows** are re-resolved on `ready` and `resynced` (`sync.refreshGrantCache`: every
+  `discord_id` in `fredpd_grant_cache`, chunks of 500, one rows load): FXServer's fallback (used while the service is
+  down) would otherwise hand a joining player grants that were revoked while the service was down. Members who left
+  the guild get the empty set. A failure there is logged and does not stop start-up. No maximum age on FXServer's
+  fallback rows: with this refresh a row is at most as old as the last service start.
 - **Visibility rules push.** `fx.pushRulesChanged()` sends `POST /fredpd_core/rules` with the body `{}` (exactly
   that: http.js refuses anything else) and fredpd_core reloads `fredpd_visibility_rules`. It never throws, like every
   fx call. There is no caller yet. The future rules editor (a Ledning page) must call it **after** its transaction
@@ -119,8 +151,20 @@ Errors are always `{ error: <code>, detail? }`; codes and their locale keys are 
   of that Discord id (FXServer creates the rows) and audits `officer.identity`; `/officer` is pushed when rows
   changed, and on join (`/internal/grants`) for officers (a row or ≥ 1 allowed grant) so FXServer has the name
   before the character row is created. `character` mode: names are not synced (see open questions).
-- **WS eligibility**: logged-in guild member with ≥ 1 allowed grant, re-evaluated on every recompute of that user.
-  Close code 4401 = session ended (logout, expiry, left guild).
+- **WS access** (docs/contracts.md §C13): per event type, `LIVE_EVENT_GRANTS` in `src/ws/events.ts` — every current
+  type (`alertCreated`, `alertAssigned`, `alertClosed`, `unitsChanged`, and `playerJoined` / `playerDropped`, which
+  have no producer or payload contract yet) needs `mdt_page:alerts`, checked with `hasGrant`, so a deny wins (allow
+  `mdt_page:*` + deny `mdt_page:alerts` → nothing) and other grants (`weapon:*`, `tool:ram`, `perm:rank:x`) give
+  nothing. A user with no live event type gets 403 at the upgrade. The hub keeps the allowed types per Discord id,
+  replaced on every recompute of that user (`/internal/grants`, sync), so a demoted user stops receiving without
+  reconnecting. At most 5 sockets per Discord user: a new one closes that user's oldest with **4429** (the portal
+  must not auto-reconnect on 4429). Close code 4401 = session ended (logout, expiry, left guild).
+- **`/internal/events` payloads**: alert and unit events are parsed with `DispatchInternalEventSchema` after
+  `restoreNulls` (fredpd_dispatch sends nullable fields that are nil in Lua as absent keys, docs/modules/dispatch.md);
+  a mismatch is 400 `invalid_body` with the first issue path, and what `/ws` forwards is the parsed value (nulls
+  filled in, unknown keys stripped). fredpd_dispatch's golden files (`fredpd_dispatch/test/golden/internal.*.json`)
+  are checked in `test/events.test.ts`. `playerJoined` / `playerDropped` pass unchanged until their module pins a
+  schema.
 - **Audit actions written**: `perms.update`, `auth.login`, `auth.logout`, `roles.sync`, `officer.identity`,
   `upload.create` (labels in `locales/pending/service.json`). Not audited per row, as in fredpd_core:
   `fredpd_grant_cache`, `fredpd_identities`, `fredpd_sessions`.
@@ -142,7 +186,10 @@ Errors are always `{ error: <code>, detail? }`; codes and their locale keys are 
 
 DB tests use `fredpd_test_service` (created + migrated by `test/helpers.ts`; per-file id prefixes, parallel-safe)
 and `fredpd_test_service_sync` (sync.test.ts: a role import soft-deletes unknown roles). They skip with a warning
-when MariaDB is unreachable. Files: `catalog` (pure: catalog contents and order, PUT schema over the whole catalog,
+when MariaDB is unreachable. `signedInject` sends from `127.0.0.1` without proxy headers unless told otherwise.
+Files: `events` (pure: live access per grant incl. deny and non-alert grants, hub per-type fan-out, socket cap,
+expiry, payload check incl. the dispatch golden files, `/internal/events` 400/200), `fx-retry` (backoff, pending
+merge, 4xx not retried, redelivery on success, close), `catalog` (pure: catalog contents and order, PUT schema over the whole catalog,
 registry perms/pages, labels), `hmac`, `grants`, `admin` (incl. a PUT of every fixed catalog key; only the fixed
 part of the catalog is asserted, since other files' keys in the shared database may follow it), `fx` (incl.
 `pushRulesChanged`: exactly `{}` to `/rules`, signed; refusal/unreachable → `{ ok: false }`), `upload`, `auth`,
@@ -163,15 +210,17 @@ migration on a shared MariaDB) only gets the runner's warning and never triggers
 3. screenshot-basic's `requestScreenshotUpload` posts from the *client*, which cannot sign HMAC. FXServer should
    use the server-side `requestClientScreenshot` and forward the data URI with `signedFetch('POST', '/upload', …)`
    (≤ 5 MB decoded; http.js `signedFetch` body limits permitting).
-4. §C5 does not sign method or path (see core.md question 5), and `/internal/*` is reachable from the internet
-   through the Cloudflare Tunnel. A captured signature is valid for 60 s on **every route that accepts the same
-   body**: all GETs are signed as `ts + "."`, so a `GET /internal/ping` signature also authorises
-   `GET /internal/grants/<any discordId>` (returns anyone's grant set, writes `fredpd_grant_cache` and triggers a
-   background `/officer` push). Cross-route replay is only blocked for POST bodies (`/internal/events` and
-   `/upload` bodies are strict, disjoint objects; non-JSON bodies are refused). Proposal for the contract owner:
-   sign `ts + "." + METHOD + " " + path + "." + rawBody` in §C5 (packages/types/src/hmac.ts and http.js together).
+4. §C5 does not sign method or path (see core.md question 5). A captured signature is valid for 60 s on **every
+   route that accepts the same body**: all GETs are signed as `ts + "."`, so a `GET /internal/ping` signature (or the
+   service's own `GET /ping` to FXServer) also authorises `GET /internal/grants/<any discordId>`. Since this fix
+   `/internal/*` and the HMAC `/upload` answer only direct loopback requests without proxy headers ("Loopback only"),
+   so such a replay needs a process on the host itself. Cross-route replay of POST bodies stays blocked by the strict,
+   disjoint body schemas. Still proposed for the contract owner: sign
+   `ts + "." + METHOD + " " + path + "." + rawBody` (ideally with a direction tag) in §C5, `hmac.ts`, `http.js` and
+   the fixtures together.
 5. No WebSocket keep-alive ping (no timers): Cloudflare closes idle sockets after ~100 s; the portal must
-   reconnect on close (it already has `portal.live.reconnecting`).
+   reconnect on close (it already has `portal.live.reconnecting`), except after 4401 (session ended) and 4429
+   (too many sockets: another tab of the same user took over), and must not retry a 403 upgrade (no live grant).
 6. Unused dependencies in `apps/service/package.json`: `@fastify/csrf-protection`, `@fastify/formbody`,
    `@fastify/static` (portal hosting is a later task).
 7. Uploads have no per-user quota yet (only 60 requests/min × 5 MB, officers only) and nothing cleans up files
@@ -190,3 +239,9 @@ migration on a shared MariaDB) only gets the runner's warning and never triggers
 10. There is no first-admin bootstrap: on a new database no role holds `perm:admin.permissions`, so nobody can open
     Behörigheter. hosting.md §6 step 7 documents a one-time SQL insert (no audit row). If wanted, a later task could
     add an `.env` key naming a bootstrap role (audited as `perms.update` by the service at start).
+11. `fxPending: true` in the PUT answer is additive to §C10 (`AdminRoleGrantsPutResponseSchema` strips it on parse).
+    The portal owner may show "FXServer has not confirmed yet"; the contract owner may add it to the schema. The
+    reviewer's `recomputed: null` was not used: the pinned schema requires a number.
+12. `playerJoined` / `playerDropped` (§C6 event types) have no producer and no payload schema; they are gated on
+    `mdt_page:alerts` like the rest of /ws (§C13). If a roster module produces them, it should pin a payload and
+    decide whether `mdt_page:roster` fits better (one line in `LIVE_EVENT_GRANTS`).

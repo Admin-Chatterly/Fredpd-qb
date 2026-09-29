@@ -1,0 +1,24 @@
+{
+  "active": false,
+  "citizenid": "FPD10001",
+  "createdAt": "2026-09-29T09:00:00Z",
+  "id": 3,
+  "issuedBy": {
+    "callsign": "IGV-07",
+    "citizenid": "BOL10001",
+    "displayName": "Anna B.",
+    "unit": "igv"
+  },
+  "kind": "person",
+  "level": 0,
+  "reason": "Saknad sedan i går",
+  "resolveNote": "Hittad välbehållen vid Pillbox.",
+  "resolvedAt": "2026-09-29T10:30:00Z",
+  "resolvedBy": {
+    "callsign": "IGV-07",
+    "citizenid": "BOL10001",
+    "displayName": "Anna B.",
+    "unit": "igv"
+  },
+  "subject": "Anna Berg"
+}

@@ -1,0 +1,18 @@
+{
+  "detected": "caseNumber",
+  "hits": [
+    {
+      "case": {
+        "contact": {
+          "displayName": "Olle Utredare",
+          "unit": "utredning"
+        },
+        "visibility": "notice"
+      },
+      "kind": "case"
+    }
+  ],
+  "normalized": "K-1-26",
+  "page": 1,
+  "total": 1
+}

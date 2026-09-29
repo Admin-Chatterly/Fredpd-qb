@@ -1,0 +1,25 @@
+{
+  "$comment": "Tablet NUI Phase 2 pages (tasks 2.3-2.7, docs/modules/ui.md). Read with tx() until merged. Merge with scripts/merge-pending-locales.mjs.",
+  "bolo.create.changeSubject": { "sv": "Byt", "en": "Change" },
+  "bolo.create.levelTooHigh": {
+    "sv": "Du kan inte utfärda en efterlysning med högre sekretessnivå än din egen.",
+    "en": "You cannot issue a BOLO with a higher classification than your own."
+  },
+  "bolo.create.searchPerson": { "sv": "Sök namn eller personnummer", "en": "Search name or personal ID number" },
+  "bolo.create.searchVehicle": { "sv": "Sök registreringsnummer", "en": "Search registration number" },
+  "bolo.create.subjectNotFound": {
+    "sv": "Personen eller fordonet finns inte i registret.",
+    "en": "The person or vehicle is not in the register."
+  },
+  "bolo.create.subjectRequired": { "sv": "Välj en person eller ett fordon.", "en": "Choose a person or a vehicle." },
+  "bolo.expiry.none": { "sv": "Ingen slutdag", "en": "No expiry" },
+  "bolo.field.subject": { "sv": "Avser", "en": "Subject" },
+  "case.notice.subject": { "sv": "ett ärende", "en": "a case" },
+  "common.comingPhase5": { "sv": "Kommer i fas 5", "en": "Coming in phase 5" },
+  "home.myOpenCases": { "sv": "Mina öppna ärenden", "en": "My open cases" },
+  "person.field.address": { "sv": "Adress", "en": "Address" },
+  "vehicle.checkClear": { "sv": "Ingen träff", "en": "No hit" },
+  "vehicle.checkHit": { "sv": "Träff", "en": "Hit" },
+  "visibility.masked.badge": { "sv": "Begränsad insyn", "en": "Restricted view" },
+  "visibility.notice.owner": { "sv": "{name} ({unit})", "en": "{name} ({unit})" }
+}

@@ -1,0 +1,1275 @@
+{
+  "$comment": "Tablet action inputs (docs/contracts.md §C12, §C13, §C16). Valid samples carry the cleaned value zod returns, invalid samples the reason. Checked against the zod schemas by resources/[fredpd]/fredpd_mdt/test/validate.test.ts and against fredpd_mdt/shared/validate.lua by tests/lua/mdt_validate_test.lua. actions.<name>.grant is the grant column of MDT_ACTIONS / DISPATCH_ACTIONS / EVIDENCE_ACTIONS, mirrored by fredpd_mdt/server/dispatch.lua. One SearchInput page is written as 3.0 on purpose (a float in Lua). String lengths are Unicode code points (zod 4.6), so an emoji counts 1. Samples never use null (Lua reads it as an absent field) or [] (Lua reads it as {}).",
+  "actions": {
+    "close": {
+      "shape": "Empty",
+      "grant": null
+    },
+    "getHome": {
+      "shape": "Empty",
+      "grant": null
+    },
+    "search": {
+      "shape": "SearchInput",
+      "grant": [
+        "mdt_page",
+        "search"
+      ]
+    },
+    "getPerson": {
+      "shape": "CitizenInput",
+      "grant": [
+        "mdt_page",
+        "search"
+      ]
+    },
+    "getVehicle": {
+      "shape": "PlateInput",
+      "grant": [
+        "mdt_page",
+        "search"
+      ]
+    },
+    "checkPlate": {
+      "shape": "PlateInput",
+      "grant": [
+        "mdt_page",
+        "search"
+      ]
+    },
+    "listBolos": {
+      "shape": "BoloListInput",
+      "grant": [
+        "mdt_page",
+        "bolos"
+      ]
+    },
+    "createBolo": {
+      "shape": "BoloCreateInput",
+      "grant": [
+        "perm",
+        "bolo.create"
+      ]
+    },
+    "resolveBolo": {
+      "shape": "BoloResolveInput",
+      "grant": [
+        "perm",
+        "bolo.resolve"
+      ]
+    },
+    "listTablets": {
+      "shape": "TabletListInput",
+      "grant": [
+        "perm",
+        "tablets.manage"
+      ]
+    },
+    "setTabletRevoked": {
+      "shape": "TabletRevokeInput",
+      "grant": [
+        "perm",
+        "tablets.manage"
+      ]
+    },
+    "listAlerts": {
+      "shape": "AlertListInput",
+      "grant": [
+        "mdt_page",
+        "alerts"
+      ]
+    },
+    "takeAlert": {
+      "shape": "AlertIdInput",
+      "grant": [
+        "mdt_page",
+        "alerts"
+      ]
+    },
+    "leaveAlert": {
+      "shape": "AlertIdInput",
+      "grant": [
+        "mdt_page",
+        "alerts"
+      ]
+    },
+    "closeAlert": {
+      "shape": "AlertIdInput",
+      "grant": [
+        "mdt_page",
+        "alerts"
+      ]
+    },
+    "getUnits": {
+      "shape": "Empty",
+      "grant": [
+        "mdt_page",
+        "alerts"
+      ]
+    },
+    "listEvidence": {
+      "shape": "EvidenceListInput",
+      "grant": [
+        "mdt_page",
+        "evidence"
+      ]
+    },
+    "getEvidence": {
+      "shape": "EvidenceIdInput",
+      "grant": [
+        "mdt_page",
+        "evidence"
+      ]
+    },
+    "linkEvidence": {
+      "shape": "EvidenceLinkInput",
+      "grant": [
+        "perm",
+        "evidence.link"
+      ]
+    }
+  },
+  "shapes": {
+    "Empty": {
+      "valid": [
+        {
+          "input": {},
+          "output": {}
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "x": 1
+          },
+          "why": "strict: unknown key"
+        },
+        {
+          "input": {
+            "page": 1
+          },
+          "why": "strict: unknown key"
+        },
+        {
+          "input": [
+            1
+          ],
+          "why": "array"
+        },
+        {
+          "input": "text",
+          "why": "not an object"
+        },
+        {
+          "input": 5,
+          "why": "not an object"
+        }
+      ]
+    },
+    "SearchInput": {
+      "valid": [
+        {
+          "input": {
+            "query": "ab"
+          },
+          "output": {
+            "query": "ab",
+            "type": "auto",
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "query": "  Anna Berg  ",
+            "type": "person",
+            "page": 2
+          },
+          "output": {
+            "query": "Anna Berg",
+            "type": "person",
+            "page": 2
+          }
+        },
+        {
+          "input": {
+            "query": "ABC 12D",
+            "type": "vehicle"
+          },
+          "output": {
+            "query": "ABC 12D",
+            "type": "vehicle",
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "query": "K-123-26",
+            "type": "case",
+            "page": 10000
+          },
+          "output": {
+            "query": "K-123-26",
+            "type": "case",
+            "page": 10000
+          }
+        },
+        {
+          "input": {
+            "query": " 　Öberg﻿ "
+          },
+          "output": {
+            "query": "Öberg",
+            "type": "auto",
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "query": "x😀"
+          },
+          "output": {
+            "query": "x😀",
+            "type": "auto",
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "query": "😀😀"
+          },
+          "output": {
+            "query": "😀😀",
+            "type": "auto",
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "output": {
+            "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "type": "auto",
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀"
+          },
+          "output": {
+            "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀",
+            "type": "auto",
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "query": "ab",
+            "page": 3.0
+          },
+          "output": {
+            "query": "ab",
+            "type": "auto",
+            "page": 3
+          }
+        },
+        {
+          "input": {
+            "query": "ab",
+            "extra": "dropped",
+            "nested": {
+              "deep": true
+            }
+          },
+          "output": {
+            "query": "ab",
+            "type": "auto",
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "query": "​ab​"
+          },
+          "output": {
+            "query": "​ab​",
+            "type": "auto",
+            "page": 1
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "query": "a"
+          },
+          "why": "min 2"
+        },
+        {
+          "input": {
+            "query": "   a   "
+          },
+          "why": "min 2 after trim"
+        },
+        {
+          "input": {
+            "query": "é"
+          },
+          "why": "min 2"
+        },
+        {
+          "input": {
+            "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "why": "max 64"
+        },
+        {
+          "input": {
+            "query": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀"
+          },
+          "why": "max 64 code points"
+        },
+        {
+          "input": {
+            "query": "😀"
+          },
+          "why": "min 2 code points (2 UTF-16 units)"
+        },
+        {
+          "input": {
+            "query": "ab",
+            "type": "plate"
+          },
+          "why": "enum"
+        },
+        {
+          "input": {
+            "query": "ab",
+            "page": 0
+          },
+          "why": "page min"
+        },
+        {
+          "input": {
+            "query": "ab",
+            "page": 10001
+          },
+          "why": "page max"
+        },
+        {
+          "input": {
+            "query": "ab",
+            "page": 1.5
+          },
+          "why": "page int"
+        },
+        {
+          "input": {
+            "query": "ab",
+            "page": "1"
+          },
+          "why": "page type"
+        },
+        {
+          "input": {
+            "query": 12
+          },
+          "why": "query type"
+        },
+        {
+          "input": {},
+          "why": "query required"
+        },
+        {
+          "input": {
+            "query": "　 \t\n"
+          },
+          "why": "only white space"
+        }
+      ]
+    },
+    "CitizenInput": {
+      "valid": [
+        {
+          "input": {
+            "citizenid": "ABC12345"
+          },
+          "output": {
+            "citizenid": "ABC12345"
+          }
+        },
+        {
+          "input": {
+            "citizenid": "a_b-C9"
+          },
+          "output": {
+            "citizenid": "a_b-C9"
+          }
+        },
+        {
+          "input": {
+            "citizenid": "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+          },
+          "output": {
+            "citizenid": "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+          }
+        },
+        {
+          "input": {
+            "citizenid": "ABC12345",
+            "x": 1
+          },
+          "output": {
+            "citizenid": "ABC12345"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "citizenid": ""
+          },
+          "why": "min 1"
+        },
+        {
+          "input": {
+            "citizenid": " ABC123"
+          },
+          "why": "no trim, space not allowed"
+        },
+        {
+          "input": {
+            "citizenid": "ÅÄÖ"
+          },
+          "why": "regex"
+        },
+        {
+          "input": {
+            "citizenid": "QQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQQ"
+          },
+          "why": "max 50"
+        },
+        {
+          "input": {
+            "citizenid": 123
+          },
+          "why": "type"
+        },
+        {
+          "input": {},
+          "why": "required"
+        },
+        {
+          "input": {
+            "citizenid": "abc';--"
+          },
+          "why": "regex"
+        }
+      ]
+    },
+    "PlateInput": {
+      "valid": [
+        {
+          "input": {
+            "plate": "ABC12D"
+          },
+          "output": {
+            "plate": "ABC12D"
+          }
+        },
+        {
+          "input": {
+            "plate": "  abc 12d "
+          },
+          "output": {
+            "plate": "abc 12d"
+          }
+        },
+        {
+          "input": {
+            "plate": "1234567890123456"
+          },
+          "output": {
+            "plate": "1234567890123456"
+          }
+        },
+        {
+          "input": {
+            "plate": "ÅÄÖ 1"
+          },
+          "output": {
+            "plate": "ÅÄÖ 1"
+          }
+        },
+        {
+          "input": {
+            "plate": " 😀 "
+          },
+          "output": {
+            "plate": "😀"
+          }
+        },
+        {
+          "input": {
+            "plate": "ABCDEFGHIJKLMNO😀"
+          },
+          "output": {
+            "plate": "ABCDEFGHIJKLMNO😀"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "plate": ""
+          },
+          "why": "min 1"
+        },
+        {
+          "input": {
+            "plate": "   "
+          },
+          "why": "min 1 after trim"
+        },
+        {
+          "input": {
+            "plate": "12345678901234567"
+          },
+          "why": "max 16"
+        },
+        {
+          "input": {
+            "plate": "ABCDEFGHIJKLMNOP😀"
+          },
+          "why": "max 16 code points"
+        },
+        {
+          "input": {
+            "plate": 12
+          },
+          "why": "type"
+        },
+        {
+          "input": {},
+          "why": "required"
+        }
+      ]
+    },
+    "BoloListInput": {
+      "valid": [
+        {
+          "input": {},
+          "output": {
+            "active": true,
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "active": false,
+            "page": 2
+          },
+          "output": {
+            "active": false,
+            "page": 2
+          }
+        },
+        {
+          "input": {
+            "page": 5
+          },
+          "output": {
+            "active": true,
+            "page": 5
+          }
+        },
+        {
+          "input": {
+            "active": true
+          },
+          "output": {
+            "active": true,
+            "page": 1
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "active": "true"
+          },
+          "why": "type"
+        },
+        {
+          "input": {
+            "active": 1
+          },
+          "why": "type"
+        },
+        {
+          "input": {
+            "page": 0
+          },
+          "why": "page min"
+        },
+        {
+          "input": {
+            "page": -1
+          },
+          "why": "page min"
+        }
+      ]
+    },
+    "BoloCreateInput": {
+      "valid": [
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": " ABC 12D ",
+            "reason": "  Rån mot värdetransport "
+          },
+          "output": {
+            "kind": "vehicle",
+            "plate": "ABC 12D",
+            "reason": "Rån mot värdetransport",
+            "level": 0
+          }
+        },
+        {
+          "input": {
+            "kind": "person",
+            "citizenid": "ABC12345",
+            "reason": "Misstänkt för rån",
+            "level": 2,
+            "expiresInHours": 720
+          },
+          "output": {
+            "kind": "person",
+            "citizenid": "ABC12345",
+            "reason": "Misstänkt för rån",
+            "level": 2,
+            "expiresInHours": 720
+          }
+        },
+        {
+          "input": {
+            "kind": "person",
+            "citizenid": "ABC12345",
+            "reason": "abc",
+            "level": 1,
+            "expiresInHours": 1
+          },
+          "output": {
+            "kind": "person",
+            "citizenid": "ABC12345",
+            "reason": "abc",
+            "level": 1,
+            "expiresInHours": 1
+          }
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "XYZ",
+            "reason": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "level": 0
+          },
+          "output": {
+            "kind": "vehicle",
+            "plate": "XYZ",
+            "reason": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "level": 0
+          }
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "XYZ",
+            "reason": "Rad 1\nRad 2",
+            "ignored": "x"
+          },
+          "output": {
+            "kind": "vehicle",
+            "plate": "XYZ",
+            "reason": "Rad 1\nRad 2",
+            "level": 0
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "ABC12D",
+            "citizenid": "ABC12345",
+            "reason": "Rån"
+          },
+          "why": "refine: vehicle with citizenid"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "reason": "Rån mot bank"
+          },
+          "why": "refine: vehicle without plate"
+        },
+        {
+          "input": {
+            "kind": "person",
+            "citizenid": "ABC12345",
+            "plate": "ABC12D",
+            "reason": "Rån"
+          },
+          "why": "refine: person with plate"
+        },
+        {
+          "input": {
+            "kind": "person",
+            "reason": "Rån mot bank"
+          },
+          "why": "refine: person without citizenid"
+        },
+        {
+          "input": {
+            "kind": "car",
+            "plate": "ABC12D",
+            "reason": "Rån"
+          },
+          "why": "kind enum"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "ABC12D",
+            "reason": "ab"
+          },
+          "why": "reason min 3"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "ABC12D",
+            "reason": "  ab  "
+          },
+          "why": "reason min 3 after trim"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "ABC12D",
+            "reason": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "why": "reason max 500"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "ABC12D",
+            "reason": "Rån",
+            "level": 3
+          },
+          "why": "level literal"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "ABC12D",
+            "reason": "Rån",
+            "level": "1"
+          },
+          "why": "level type"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "ABC12D",
+            "reason": "Rån",
+            "level": 1.5
+          },
+          "why": "level literal"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "ABC12D",
+            "reason": "Rån",
+            "expiresInHours": 0
+          },
+          "why": "hours min"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "ABC12D",
+            "reason": "Rån",
+            "expiresInHours": 721
+          },
+          "why": "hours max"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "ABC12D",
+            "reason": "Rån",
+            "expiresInHours": 1.5
+          },
+          "why": "hours int"
+        },
+        {
+          "input": {
+            "kind": "vehicle",
+            "plate": "  ",
+            "reason": "Rån mot bank"
+          },
+          "why": "plate min 1 after trim"
+        },
+        {
+          "input": {
+            "kind": "person",
+            "citizenid": "Å",
+            "reason": "Rån mot bank"
+          },
+          "why": "citizenid regex"
+        },
+        {
+          "input": {
+            "plate": "ABC12D",
+            "reason": "Rån"
+          },
+          "why": "kind required"
+        }
+      ]
+    },
+    "BoloResolveInput": {
+      "valid": [
+        {
+          "input": {
+            "id": 1
+          },
+          "output": {
+            "id": 1,
+            "note": ""
+          }
+        },
+        {
+          "input": {
+            "id": 42,
+            "note": "  Gripen  "
+          },
+          "output": {
+            "id": 42,
+            "note": "Gripen"
+          }
+        },
+        {
+          "input": {
+            "id": 7,
+            "note": "   "
+          },
+          "output": {
+            "id": 7,
+            "note": ""
+          }
+        },
+        {
+          "input": {
+            "id": 9007199254740991,
+            "note": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀"
+          },
+          "output": {
+            "id": 9007199254740991,
+            "note": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa😀"
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "id": 0
+          },
+          "why": "positive"
+        },
+        {
+          "input": {
+            "id": -3
+          },
+          "why": "positive"
+        },
+        {
+          "input": {
+            "id": 1.5
+          },
+          "why": "int"
+        },
+        {
+          "input": {
+            "id": "1"
+          },
+          "why": "type"
+        },
+        {
+          "input": {},
+          "why": "required"
+        },
+        {
+          "input": {
+            "id": 1,
+            "note": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+          },
+          "why": "note max"
+        },
+        {
+          "input": {
+            "id": 9007199254740992
+          },
+          "why": "not a safe integer"
+        },
+        {
+          "input": {
+            "id": 1,
+            "note": 5
+          },
+          "why": "note type"
+        }
+      ]
+    },
+    "TabletListInput": {
+      "valid": [
+        {
+          "input": {},
+          "output": {
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "page": 3
+          },
+          "output": {
+            "page": 3
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "page": 0
+          },
+          "why": "page min"
+        },
+        {
+          "input": {
+            "page": "2"
+          },
+          "why": "page type"
+        }
+      ]
+    },
+    "TabletRevokeInput": {
+      "valid": [
+        {
+          "input": {
+            "serial": "SP-7KQ2-M9XD",
+            "revoked": true
+          },
+          "output": {
+            "serial": "SP-7KQ2-M9XD",
+            "revoked": true
+          }
+        },
+        {
+          "input": {
+            "serial": " x ",
+            "revoked": false
+          },
+          "output": {
+            "serial": " x ",
+            "revoked": false
+          }
+        },
+        {
+          "input": {
+            "serial": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS",
+            "revoked": true
+          },
+          "output": {
+            "serial": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS",
+            "revoked": true
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "serial": "",
+            "revoked": true
+          },
+          "why": "min 1"
+        },
+        {
+          "input": {
+            "serial": "SSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSSS",
+            "revoked": true
+          },
+          "why": "max 32"
+        },
+        {
+          "input": {
+            "serial": "SP-1"
+          },
+          "why": "revoked required"
+        },
+        {
+          "input": {
+            "serial": "SP-1",
+            "revoked": "yes"
+          },
+          "why": "revoked type"
+        },
+        {
+          "input": {
+            "serial": 5,
+            "revoked": true
+          },
+          "why": "serial type"
+        }
+      ]
+    },
+    "TabletIssueInput": {
+      "valid": [
+        {
+          "input": {
+            "targetServerId": 12
+          },
+          "output": {
+            "targetServerId": 12
+          }
+        },
+        {
+          "input": {
+            "targetServerId": 1
+          },
+          "output": {
+            "targetServerId": 1
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "targetServerId": 0
+          },
+          "why": "positive"
+        },
+        {
+          "input": {
+            "targetServerId": "12"
+          },
+          "why": "type"
+        },
+        {
+          "input": {
+            "targetServerId": 1.2
+          },
+          "why": "int"
+        },
+        {
+          "input": {},
+          "why": "required"
+        }
+      ]
+    },
+    "AlertListInput": {
+      "valid": [
+        {
+          "input": {},
+          "output": {
+            "filter": "open",
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "filter": "mine",
+            "page": 2
+          },
+          "output": {
+            "filter": "mine",
+            "page": 2
+          }
+        },
+        {
+          "input": {
+            "filter": "all"
+          },
+          "output": {
+            "filter": "all",
+            "page": 1
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "filter": "closed"
+          },
+          "why": "enum"
+        },
+        {
+          "input": {
+            "filter": "OPEN"
+          },
+          "why": "enum is case sensitive"
+        },
+        {
+          "input": {
+            "page": 0
+          },
+          "why": "page min"
+        }
+      ]
+    },
+    "AlertIdInput": {
+      "valid": [
+        {
+          "input": {
+            "id": 3
+          },
+          "output": {
+            "id": 3
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "id": 0
+          },
+          "why": "positive"
+        },
+        {
+          "input": {},
+          "why": "required"
+        },
+        {
+          "input": {
+            "id": "3"
+          },
+          "why": "type"
+        }
+      ]
+    },
+    "EvidenceListInput": {
+      "valid": [
+        {
+          "input": {},
+          "output": {
+            "unlinked": false,
+            "page": 1
+          }
+        },
+        {
+          "input": {
+            "caseId": 5,
+            "unlinked": true,
+            "page": 2
+          },
+          "output": {
+            "caseId": 5,
+            "unlinked": true,
+            "page": 2
+          }
+        },
+        {
+          "input": {
+            "unlinked": true
+          },
+          "output": {
+            "unlinked": true,
+            "page": 1
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "caseId": 0
+          },
+          "why": "positive"
+        },
+        {
+          "input": {
+            "unlinked": "yes"
+          },
+          "why": "type"
+        },
+        {
+          "input": {
+            "caseId": 1.5
+          },
+          "why": "int"
+        }
+      ]
+    },
+    "EvidenceIdInput": {
+      "valid": [
+        {
+          "input": {
+            "id": 1
+          },
+          "output": {
+            "id": 1
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "id": -1
+          },
+          "why": "positive"
+        },
+        {
+          "input": {},
+          "why": "required"
+        }
+      ]
+    },
+    "EvidenceLinkInput": {
+      "valid": [
+        {
+          "input": {
+            "id": 1,
+            "caseId": 2
+          },
+          "output": {
+            "id": 1,
+            "caseId": 2
+          }
+        }
+      ],
+      "invalid": [
+        {
+          "input": {
+            "id": 1
+          },
+          "why": "caseId required"
+        },
+        {
+          "input": {
+            "caseId": 2
+          },
+          "why": "id required"
+        },
+        {
+          "input": {
+            "id": 1,
+            "caseId": 0
+          },
+          "why": "positive"
+        }
+      ]
+    }
+  }
+}

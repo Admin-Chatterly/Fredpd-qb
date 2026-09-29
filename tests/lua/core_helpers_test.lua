@@ -152,4 +152,36 @@ tests['fetch resolves through the signedFetch export and decodes JSON'] = functi
     t.eq(seen, { 'GET', '/internal/grants/1', nil })
 end
 
+tests['internalExport: only fredpd_core itself, listed resources or no invoker may call it'] = function(t)
+    local exported, invoker, warns = {}, nil, {}
+    local saved = { exports = rawget(_G, 'exports'), inv = rawget(_G, 'GetInvokingResource'),
+        cur = rawget(_G, 'GetCurrentResourceName'), warn = Core.warn }
+    rawset(_G, 'exports', function(name, fn) exported[name] = fn end)
+    rawset(_G, 'GetInvokingResource', function() return invoker end)
+    rawset(_G, 'GetCurrentResourceName', function() return 'fredpd_core' end)
+    Core.warn = function(fmt, ...) warns[#warns + 1] = fmt:format(...) end
+    local ok, err = pcall(function()
+        local calls = 0
+        Core.internalExport('helperDevOnly', function(a, b) calls = calls + 1; return a, b end, { 'fredpd_devtools' })
+        local f = exported.helperDevOnly
+        invoker = 'fredpd_core' -- server/http.js
+        t.eq({ f(1, 2) }, { 1, 2 }, 'arguments and both results pass through')
+        invoker = 'fredpd_devtools'
+        t.eq({ f(3, nil) }, { 3 })
+        invoker = nil -- console / same runtime
+        t.eq(f(4), 4)
+        invoker = 'qb-shady'
+        t.eq(f(5), false)
+        t.eq(f(6), false)
+        t.eq(calls, 3)
+        t.eq(#warns, 1, 'one log line per export and resource')
+        t.ok(warns[1]:find('qb-shady', 1, true), warns[1])
+    end)
+    rawset(_G, 'exports', saved.exports)
+    rawset(_G, 'GetInvokingResource', saved.inv)
+    rawset(_G, 'GetCurrentResourceName', saved.cur)
+    Core.warn = saved.warn
+    if not ok then error(err, 0) end
+end
+
 return tests

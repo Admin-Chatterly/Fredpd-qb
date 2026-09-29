@@ -92,6 +92,17 @@ tests['toEpoch gives UTC unix seconds'] = function(t)
     t.eq(Time.toEpoch(Time.nowIso(1790683200)), 1790683200)
 end
 
+tests['toEpochMs keeps milliseconds for ordering within a second'] = function(t)
+    t.eq(Time.toEpochMs('2026-09-29T12:00:00Z'), 1790683200000)
+    t.eq(Time.toEpochMs('2026-09-29T12:00:00.123Z'), 1790683200123)
+    t.eq(Time.toEpochMs('2026-09-29T12:00:00.5Z'), 1790683200500)
+    t.eq(Time.toEpochMs('2026-09-29T12:00:00.123456Z'), 1790683200123, 'fraction cut to ms')
+    t.eq(Time.toEpochMs('2026-09-29T14:00:00.250+02:00'), 1790683200250)
+    t.ok(Time.toEpochMs('2026-09-29T12:00:00.100Z') < Time.toEpochMs('2026-09-29T12:00:00.900Z'))
+    t.eq(Time.toEpochMs('garbage'), nil)
+    t.eq(Time.toEpochMs(42), nil)
+end
+
 tests['nowIso formats in UTC'] = function(t)
     t.eq(Time.nowIso(1790683200), '2026-09-29T12:00:00Z')
     t.eq(Time.nowIso(0), '1970-01-01T00:00:00Z')
