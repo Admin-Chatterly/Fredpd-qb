@@ -264,12 +264,7 @@ local function makeEnv()
 
     -- The real fredpd_core audit resolves the actor through the framework bridge (docs/contracts.md §C17): load it
     -- with the qbx_core implementation over the `qbx` mock above.
-    env.resources.qbx_core = 'started'
-    local quiet = function() end
-    require('server.bridge').load({ framework = 'qbx_core' }, {
-        stateOf = function(name) return env.resources[name] or 'missing' end,
-        log = { info = quiet, warn = quiet, error = quiet, debug = quiet }, defer = quiet,
-    })
+    require('bridge_harness_test').useQbx()
     return env
 end
 

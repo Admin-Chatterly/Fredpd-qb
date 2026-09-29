@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
-# Module: ui (tasks 0.1 web apps, 1.8 UI, 2.2, 2.3–2.7 NUI pages)
+# Module: ui (tasks 0.1 web apps, 1.8 UI, 2.2, 2.3–2.7, 3.2, 5.2–5.4, 5b.2–5b.3 and Bevis NUI pages)
 
 Shared React layer (`packages/ui`), the tablet NUI shell (`apps/nui`) and the portal shell with the
 "Behörigheter" page (`apps/portal`). Implements IMPLEMENTATION.md §4.4, §4.7, §5.2 (NUI routes), §5.9 (admin UI)
@@ -54,11 +54,12 @@ and scrollbars dark. `apps/nui/test/theme.test.ts` compiles the NUI CSS with Tai
 
 ## apps/nui (tablet)
 
-- **Build.** The app uses Vite 7, Tailwind v4 (`@tailwindcss/vite`) and `vite-plugin-singlefile`, with `base: './'`.
-  The output is a single `dist/index.html` (about 470 kB, with JS, CSS and both locale files inlined), which
-  `scripts/build.mjs` copies to `fredpd_mdt/web/build`. `pnpm --filter @fredpd/nui build:dev` runs
-  `vite build --mode development`. That build keeps the first-paint log and the missing-key warnings
-  (`IS_DEV_BUILD`). Copy it with `node scripts/build.mjs --skip-web`.
+- **Build.** The app uses Vite 7 and Tailwind v4 (`@tailwindcss/vite`) with `base: './'`. Since Phase 3–5b it is
+  **code-split** (no `vite-plugin-singlefile` any more): `dist/index.html` plus hashed chunks in `dist/assets/`,
+  which `scripts/build.mjs` copies to `fredpd_mdt/web/build` (fredpd_mdt's fxmanifest already lists
+  `web/build/**/*`). Every section page is its own lazy chunk and Cytoscape is only in the graph chunk (see
+  "Bundle"). `pnpm --filter @fredpd/nui build:dev` runs `vite build --mode development`. That build keeps the
+  first-paint log and the missing-key warnings (`IS_DEV_BUILD`). Copy it with `node scripts/build.mjs --skip-web`.
 - **NUI messages (Lua to NUI)**, for task 2.1 to send with `SendNUIMessage`:
   - `{ action = 'open', grants = <GrantSet>, unit = 'igv' | nil, me = { citizenid, displayName, callsign | nil } }`
     - The fields sit next to `action`, as in §5.2.
@@ -124,9 +125,8 @@ tablet: `refetchType: 'none'`, refetched on the next open) and on a `grants` pus
 ### Pages
 
 - **Routes.** Hem and the placeholders are eager (Hem is the first paint after open); Sök, Person, Fordon,
-  Efterlysningar and Ledning are `React.lazy` behind one `Suspense` around the layout's `<Outlet>`. With
-  `vite-plugin-singlefile` the lazy chunks are inlined into the one `index.html` (dynamic imports inlined), so lazy
-  loading defers their rendering, not their download. New: `/ledning` (index) and `/ledning/surfplattor`.
+  Efterlysningar and Ledning are `React.lazy` behind one `Suspense` around the layout's `<Outlet>`. Since Phase 3–5b
+  the build is code-split, so each lazy page is a separate chunk fetched on first visit. New: `/ledning` (index) and `/ledning/surfplattor`.
 - **Header search (2.3)** (`components/HeaderSearch.tsx`): a chip shows `detectSearchType` (config/formats.json via
   `@fredpd/types/format`) while typing. **Enter** posts `search { query, type: 'auto', page: 1 }` and opens the top hit
   (person → `/person/:cid`, vehicle → `/fordon/:plate`, case → `/arende/:id`); no hit, a kontaktnotis top hit, an
@@ -170,12 +170,100 @@ tablet: `refetchType: 'none'`, refetched on the next open) and on a `grants` pus
   (commit 82fd2e9) and are now read with the typed `t()`. `src/i18n.ts` still layers any future
   `locales/pending/nui.json` under sv/en through `import.meta.glob` (finds nothing today; no build break).
 
+## Phase 3–5b pages (tasks 3.2, 5.2, 5.3, 5.4, 5b.2, 5b.3, Bevis)
+
+Shapes: `packages/types/src/{dispatch,records,evidence,intel}.ts`; contracts §C13–§C16. `src/api/actions.ts`
+merges `MDT_ACTIONS` + `DISPATCH_ACTIONS` + `EVIDENCE_ACTIONS` + `RECORDS_ACTIONS` + `INTEL_ACTIONS` into
+`TABLET_ACTIONS`, so `useMdtQuery` / `useMdtMutation` / `callMdt` are typed for every action (input/output from the
+zod schemas). `MUTATION_WRITES` writes answers that ARE a query's answer into the cache (`assignCase` → `getCase`,
+`saveReport` → `getReport`, `linkEvidence` → `getEvidence`, …); `MUTATION_INVALIDATES` marks the rest stale.
+Every page is `React.lazy` (routes.tsx).
+
+- **Larm `/larm` (3.2).** `listAlerts { filter: open|mine|all, page }` and the units panel (`getUnits`). Priority
+  chips (1 danger, 2 warning, 3 neutral), status badge, "Tilldelad: IGV-07 · Anna Berg" per unit
+  (`alert.assigned`; `alert.assignedNoCallsign` without callsign). Ta / Lämna / Stäng (close offered on the alert
+  or with perm `alerts.manage`; the server decides). **Live without refetch:** pushes `alerts` (AlertPush) and
+  `units` (UnitsPush) are written into every cached `listAlerts` page / `getUnits` by `src/api/pushes.ts`
+  (`applyAlertChange`: new matching alert on top of page 1, rows that stop matching removed, `total` follows);
+  take/leave/close answers go through the same function. A malformed push only marks the queries stale with
+  `refetchType: 'none'` (never a fetch). `alerts`/`units` are therefore not in `PUSH_INVALIDATES`.
+- **Ärenden `/arenden` (5.2).** `listCases` with tabs Mina / Enhetens / Öppna / Avslutade / Alla and a search
+  (Enter; ≤ 64 chars), 50 per page, CaseRefs (notice row = only the Notice). "Nytt ärende" (perm `cases.create`;
+  title, summary, level ≤ tier) opens the created case.
+- **Ärende `/arende/:id` (5.2).** `getCase`. `notice` → only `<CaseNotice>` (the page reads nothing but `contact`);
+  `masked` → banner, and `title`/`summary`/report titles that are null are not rendered (no placeholder either);
+  read-only. `full` + open → header (number, title, status, level badge), facts, assignees (add through the officer
+  picker with role lead/member, remove), subjects (add through the BOLO subject search picker, person or vehicle,
+  with role), reports (Ny rapport: title, template from `listReportTemplates`, level), evidence (links to
+  `/bevis?id=`; "Koppla bevis" → `/bevis?queue=1`), timeline (`audit.action.<action>` via `tx`, raw action as
+  fallback), Avsluta (resolution 3–2000). Non-numeric ids show "not found" without a call.
+- **Rapport `/rapport/:id` (5.3).** `getReport`. `editable` → editor: title, level, toolbar (Fetstil / Rubrik /
+  Punktlista; pure functions in `src/markdown.ts`, heading/list toggle per line), textarea, live preview through
+  `MarkdownLite` (text nodes only; a test scans the NUI and packages/ui sources for `dangerouslySetInnerHTML`),
+  Spara (`saveReport`). **Autosave** (`src/autosave.ts`, `useDraftAutosave`): each input clears and re-arms ONE
+  `setTimeout(10 s)`; when it fires it saves (`saveReportDraft`) only if the editor wrapper still has focus and the
+  content is dirty; Spara calls `markClean()` (drops the timeout); a failed draft leaves it dirty; unmount clears
+  it. No interval anywhere. Read-only reports show the rendered text. Applied charges list below.
+- **Charge picker (5.3).** Person = a person subject of the case or any person via the search picker; type-ahead
+  over the cached `listCharges` answer (filtered locally: code, title, lagrum, every word), ≤ 8 suggestions, Enter
+  adds the first; lines with quantity 1–20; live per-line and total fine (`formatCurrency`) and jail minutes.
+  "Registrera brott" (`applyCharges`, perm `charges.apply`) and "Utfärda ordningsbot" (`issueFine`, perm
+  `charges.fine`), enabled only when 1–10 lines are all class `ordningsbot` (what the server accepts), with a
+  confirm dialog showing amount and name.
+- **Brottskatalog `/brottskatalog` (5.4).** One `listCharges {}`; search as you type (client-side) and påföljd
+  tabs; `VirtualList` (56 px rows) so the whole catalogue costs a screenful of DOM.
+- **Bevis `/bevis` (Phase 4 UI).** Tabs "Att koppla" (`listEvidence { unlinked: true }`, the Tekniker queue) and
+  Alla; case filter (case picker, `?case=`); row → drawer (`?id=`, `getEvidence`): facts, analysis result (person
+  match only if the server sent a well-formed one), chain of custody (collect / transfer / hand-over / analyse /
+  link lines), "Koppla till ärende" (perm `evidence.link`, open cases only) with the refusal texts of
+  forensics.md (`already_linked`, `case_closed`, not found).
+- **Underrättelser `/intel/*` (5b.2–5b.3).** Sub-tabs Objekt | Källor | Rapporter | Insatser (Källor/Rapporter
+  need perm `intel.read`; without it the tabs are hidden and the routes refuse without a call).
+  - Källor: list by codename; `getSource` full (handler/command) shows identity + notes + edit, masked shows only
+    codename and reliability (identity/handler/notes never rendered), notice → Notice only.
+  - Rapporter: list, detail (Hemlig → "the read is logged" note), notice → Notice only, create.
+  - Objekt: `searchEntities` (Enter, ≥ 2 chars) and the **list-first** entity page (`getEntity`): visible links
+    newest first, `hiddenLinks` only as a count sentence (never described), reports behind the visible links
+    (meta), a kontaktnotis per hidden insats. **Add link in 3 clicks:** "Lägg till koppling" → pick the other
+    entity (search, or create a group/location) → pick the link type (sends `addLink`).
+  - Nätverk tab: `GraphView` is `React.lazy` and imports Cytoscape with `import()` inside an effect.
+    One instance per graph; `layout({ name: 'cose', animate: false })` → `run()` → `stop()` once; nothing ticks
+    afterwards. "Visa kopplingar" on a node fetches `getGraph { entityId, depth: 1 }` through the query cache and
+    `cy.add`s only new elements on a circle around the node (no second layout). `mergeGraph` keeps the shown graph
+    ≤ `GRAPH_NODE_CAP` (150) and marks it truncated; truncated → `intel.graph.truncated` callout.
+  - Insatser: list, detail (lead, members, reports; lead can add members and close), notice → Notice only. The
+    insats's report list (`listIntelReports` / `createIntelReport`, perm `intel.read`) is rendered only with
+    `perm:intel.read`; with `mdt_page:intel` alone the insats opens without it and nothing is called.
+- **Nav.** Unchanged rule: Hem + mdt_page-granted sections, at most 6 slots; with more, the 6th is **Meny**
+  (`nav.menu`, the existing key) holding the rest (the task text's "Mer" is this menu).
+- **Dev mocks.** `src/mock/sections.ts` answers every Phase 3–5b action from the shared Swedish register (cases
+  K-1042-26 full / K-988-26 masked / K-1077-26 notice, the real charges seed `db/seed/charges_sv.sql`, evidence
+  with custody chains, sources/reports/entities/missions with full/masked/notice shapes, a graph that truncates);
+  `test/sections.mocks.test.ts` parses every answer with its zod output schema before and after the Lua wire round
+  trip.
+- **Locale keys.** New strings: `locales/pending/nui-pages.json` (41 keys), read with `tx()` until merged;
+  `test/pages.test.tsx` checks every literal `tx()` key exists in sv.json or the pending file (both languages).
+
 ### Bundle
 
-`pnpm --filter @fredpd/nui build`: `dist/index.html` **583.4 kB** (gzip 177.5 kB; 2026-09-29), up from 472.4 kB
-before Phase 2 (the growth since the first Phase 2 build is the merged locale files). Largest parts:
-react-dom 210 kB, zod 89 kB (already present for the open payload), locale files + app code ~113 kB, react-router
-38 kB, query-core 33 kB, virtual-core 24 kB (new, for the virtualised list), `@fredpd/types` format/mdt ~13 kB.
+`pnpm --filter @fredpd/nui build` (2026-09-29, code-split):
+
+| Chunk | Size | gzip |
+|---|---|---|
+| main `assets/index-*.js` (app code: action schemas, shell, nav, Hem) | 154 kB | 48 kB |
+| `vendor-*.js` (react, react-dom, react-router, TanStack Query, zod; `manualChunks`, modulepreloaded) | 390 kB | 119 kB |
+| `cytoscape.esm-*.js` (only loaded by the Nätverk tab) | 443 kB | 142 kB |
+| `IntelSection` / `ReportPage` / `CasePage` / `EvidencePage` | 24 / 14 / 10 / 8 kB | 6.2 / 4.7 / 2.9 / 3.0 kB |
+| `GraphView` (Cytoscape glue) | 4.3 kB | 2.1 kB |
+| shared `@tanstack/virtual` chunk | 26 kB | 7.9 kB |
+| CSS | 22 kB | 5.3 kB |
+
+The single-file build of the same code was 1131 kB. First paint loads main + vendor (544 kB, 167 kB gzip), smaller
+than the Phase 2 single file (583 kB); the vendor chunk changes only with dependency bumps, so CEF's cache keeps it
+across FredPD releases. `manualChunks` lists only packages the entry imports statically, so cytoscape and
+`@tanstack/virtual` stay in lazy chunks. `chunkSizeWarningLimit` is 600 kB. Possible follow-up: load the per-section
+output schemas lazily (normalizeWire/devValidate only need the called action's schema). `test/bundle.test.ts` fails if any source imports `cytoscape` statically
+or imports a lazy page / GraphView statically.
 
 ## apps/portal
 
@@ -305,9 +393,27 @@ react-dom 210 kB, zod 89 kB (already present for the open payload), locale files
 8. **Jail time** is shown as `time.duration.minutes` because the wire field is `jailMinutes`. If in-game "månader"
    are meant, switch to `charge.jailMonths`.
 9. **Esc** on the results page and in dialogs closes the tablet (§5.2 "Esc always closes" wins); the task text's
-   "Esc" for the results list is therefore the global close. Dialogs do not trap Tab.
+   "Esc" for the results list is therefore the global close. Dialogs wrap Tab / Shift+Tab inside the panel
+   (`packages/ui` Dialog `onKeyDown`), so keyboard focus never reaches the page behind the modal.
 10. **Hem variant** comes from the client unit first (no layout jump, follows grants pushes); the server's
     `variant` is used only without a known unit. The mock server answers `igv` for a member without a unit.
 11. **UNVERIFIED in FiveM:** that fredpd_mdt's `cb(table)` delivers empty Lua tables as `[]`/`{}` in the way
-    `normalizeWire` expects (both are handled), and CEF behaviour of the lazy Suspense fallback on first visit
-    (all chunks are inlined, so it should resolve in the same tick).
+    `normalizeWire` expects (both are handled); that CEF loads the code-split build from `nui://fredpd_mdt/web/build/`
+    (`<script type="module" crossorigin>` + dynamic `import()` of `./assets/*.js`; the ox resources ship Vite
+    multi-file builds the same way); Cytoscape canvas rendering and pointer events inside the NUI iframe.
+12. **`vite-plugin-singlefile`** is no longer used by `apps/nui/vite.config.ts` but stays in `package.json` (removing
+    it needs a lockfile update, not owned here). It can be dropped with the next `pnpm install`.
+13. **Ordningsbot with mixed lines.** "Utfärda ordningsbot" is disabled unless every picked line is class
+    `ordningsbot` (hint `charge.ordningsbot.onlyHint`); it does not silently fine a subset. If the in-game workflow
+    wants "fine the ordningsbot part, report the rest", that is a UI change only.
+14. **Integration requests.** (a) fredpd_mdt: `pushToOpenTablets('alerts'|'units', payload)` must send the
+    AlertPush/UnitsPush shape of dispatch.ts, since the NUI writes it into the cache as-is (a mismatch is only
+    logged and marks the list stale). (b) Timeline labels: every audit action fredpd_records/fredpd_forensics write for a case
+    has an `audit.action.<action>` key in sv.json or a pending file (checked 2026-09-29); a new action needs one
+    (unknown ones show the raw action). (c) Locale owner: merge `locales/pending/nui-pages.json`.
+    (d) **Report drafts are write-only (records/types owners, contract §C14).** `saveReportDraft` writes
+    `fredpd_report_drafts`, but no action returns a draft and `ReportDetail` has no draft field, so after a client
+    or resource restart the autosaved draft is never offered again. Proposal: add `draft: { title, body, savedAt } |
+    null` (the viewer's own draft) to `ReportDetail`, or a `getReportDraft({ id })` action. The editor would then
+    show "Återställ utkast" when the draft is newer than the report. (e) **Plan owner:** IMPLEMENTATION.md line 80
+    still says "Vite, single-file build"; it should read "Vite, code-split build (cytoscape lazy)" (see "Bundle").

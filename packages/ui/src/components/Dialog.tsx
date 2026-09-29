@@ -3,9 +3,10 @@
 // tablet frame, so the dialog never spills over the game around it. The portal can pass `position="fixed"`.
 // Esc is not handled here: in the tablet Esc always closes the tablet (IMPLEMENTATION.md §5.2). Clicking the
 // backdrop (unless `dismissOnBackdrop={false}`, for forms whose input a stray click must not discard) or the close
-// button calls onClose. Focus moves into the dialog on open and back when it closes.
+// button calls onClose. Focus moves into the dialog on open and back when it closes, and Tab / Shift+Tab wrap inside
+// the panel so keyboard focus never reaches the page behind the modal.
 import { useEffect, useId, useRef } from 'react';
-import type { ReactNode } from 'react';
+import type { KeyboardEvent, ReactNode } from 'react';
 import { cn } from '../cn';
 import { useT } from '../i18n';
 import { IconClose } from '../icons';
@@ -29,6 +30,29 @@ export interface DialogProps {
 
 const SIZES: Record<DialogSize, string> = { md: 'max-w-lg', lg: 'max-w-2xl' };
 const FOCUSABLE = '[data-autofocus], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])';
+// Everything Tab can reach, in document order, for the focus wrap.
+const TABBABLE =
+  'a[href], input:not([disabled]):not([type="hidden"]), select:not([disabled]), textarea:not([disabled]), button:not([disabled]), [tabindex]:not([tabindex="-1"])';
+
+function wrapTab(e: KeyboardEvent<HTMLDivElement>) {
+  if (e.key !== 'Tab') return;
+  const items = [...e.currentTarget.querySelectorAll<HTMLElement>(TABBABLE)].filter((el) => el.tabIndex >= 0);
+  if (items.length === 0) {
+    e.preventDefault();
+    return;
+  }
+  const first = items[0]!;
+  const last = items[items.length - 1]!;
+  const active = document.activeElement;
+  const inside = active instanceof Node && e.currentTarget.contains(active);
+  if (e.shiftKey && (!inside || active === first || active === e.currentTarget)) {
+    e.preventDefault();
+    last.focus();
+  } else if (!e.shiftKey && (!inside || active === last)) {
+    e.preventDefault();
+    first.focus();
+  }
+}
 
 export function Dialog({ open, title, onClose, children, footer, size = 'md', position = 'absolute', dismissOnBackdrop = true }: DialogProps) {
   const t = useT();
@@ -60,6 +84,7 @@ export function Dialog({ open, title, onClose, children, footer, size = 'md', po
         aria-modal="true"
         aria-labelledby={titleId}
         tabIndex={-1}
+        onKeyDown={wrapTab}
         className={cn('flex max-h-full w-full flex-col rounded-lg border border-line bg-surface text-fg', SIZES[size])}
       >
         <header className="flex min-h-12 items-center justify-between gap-3 border-b border-line px-4 py-2">

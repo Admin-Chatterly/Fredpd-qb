@@ -9,13 +9,15 @@
 --   FredBridge.doorlock.listDoors() -> { { id, name, locked, coords }, ... } (awaits on ox_doorlock: call in a thread)
 --   FredBridge.doorlock.onDoorChanged(cb(id, locked))
 --   FredBridge.target.impl / .resource / .available(), same for doorlock.
+--   FredBridge.framework.getJob() -> { name, label, type, grade, gradeName, onduty, isboss } | nil (client HINT only,
+--     e.g. canInteract; the server always decides), FredBridge.framework.impl.
 -- It runs inside the calling resource, so target callbacks stay local to it (no export round trip per frame). The
 -- implementation is the one fredpd_core's server chose (replicated convars fredpd_bridge_target / _doorlock, set by
 -- server/bridge.lua); without them 'auto' (first started, ox first). The implementation files are read from
 -- fredpd_core with LoadResourceFile (listed under `files` in its fxmanifest).
 
 local RESOURCE = 'fredpd_core'
-local CONVARS = { target = 'fredpd_bridge_target', doorlock = 'fredpd_bridge_doorlock' }
+local CONVARS = { framework = 'fredpd_bridge_framework', target = 'fredpd_bridge_target', doorlock = 'fredpd_bridge_doorlock' }
 
 local function loadModule(path)
     local src = LoadResourceFile(RESOURCE, path)
@@ -27,6 +29,7 @@ end
 
 local Select = loadModule('bridge/select.lua')
 local Options = loadModule('bridge/target/options.lua')
+local Normalize = loadModule('bridge/framework/normalize.lua')
 
 local warned = {}
 local function warnOnce(key, fmt, ...)
@@ -124,6 +127,57 @@ do
     end
 
     FredBridge.doorlock = doorlock
+end
+
+do
+    -- Client job hint. Both frameworks export GetPlayerData on the client (qb-core client/functions.lua:38-41, exported
+    -- by the loop :1128-1132; qbx_core client/functions.lua:41-45). The job is fetched once and then kept current from
+    -- the client events both frameworks fire: QBCore:Client:OnJobUpdate(job) (qb client/events.lua:183-192; qbx
+    -- server/player.lua:267, :1027), QBCore:Client:SetDuty(onduty) (qb server/events.lua:190; qbx server/player.lua:206),
+    -- QBCore:Player:SetPlayerData(pd) (qbx server/player.lua:1154; qb client/events.lua:186), load/unload.
+    local name = pick('framework')
+    local framework = { impl = name, resource = name }
+    local job = nil -- nil = not fetched, false = no character
+    local warnedFetch = false
+
+    local function fetch()
+        if stateOf(name) ~= 'started' then return nil end
+        local ok, pd = pcall(function() return exports[name]:GetPlayerData() end)
+        if not ok then
+            if not warnedFetch then
+                warnedFetch = true
+                print(('^3[fredpd bridge] %s GetPlayerData failed: %s^0'):format(name, tostring(pd)))
+            end
+            return nil
+        end
+        if type(pd) ~= 'table' or type(pd.citizenid) ~= 'string' then return false end
+        return Normalize.job(pd.job) or false
+    end
+
+    function framework.available() return stateOf(name) == 'started' end
+
+    --- Copy of the current job, or nil (no character / framework down).
+    function framework.getJob()
+        if job == nil then job = fetch() end
+        if not job then return nil end
+        local out = {}
+        for k, v in pairs(job) do out[k] = v end
+        return out
+    end
+
+    RegisterNetEvent('QBCore:Client:OnJobUpdate', function(j)
+        job = Normalize.job(j) or nil
+    end)
+    RegisterNetEvent('QBCore:Client:SetDuty', function(onduty)
+        if job then job.onduty = onduty == true end
+    end)
+    RegisterNetEvent('QBCore:Player:SetPlayerData', function(pd)
+        if type(pd) == 'table' and type(pd.job) == 'table' then job = Normalize.job(pd.job) end
+    end)
+    RegisterNetEvent('QBCore:Client:OnPlayerLoaded', function() job = nil end)
+    RegisterNetEvent('QBCore:Client:OnPlayerUnload', function() job = false end)
+
+    FredBridge.framework = framework
 end
 
 return FredBridge

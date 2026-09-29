@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// The tablet's t(): locales/*.json are bundled into the single-file build (IMPLEMENTATION.md §4.4).
+// The tablet's t(): locales/*.json are bundled into the main chunk of the code-split build (IMPLEMENTATION.md §4.4;
+// the build is no longer single-file, see docs/modules/ui.md "Bundle").
 //
 // Keys added in locales/pending/*.json (this app's nui-pages.json for the Phase 3–5b pages, and the server modules'
 // files, e.g. the audit.action.* labels of the case timeline) are layered under the main files and read with tx().

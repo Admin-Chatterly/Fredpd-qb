@@ -26,8 +26,9 @@ M.EVENTS = {
     doorChanged = 'fredpd:bridge:doorChanged',
 }
 
---- Replicated convars telling bridge/client.lua (in every resource) which client implementation to use.
-M.CONVARS = { target = 'fredpd_bridge_target', doorlock = 'fredpd_bridge_doorlock' }
+--- Replicated convars telling bridge/client.lua (in every resource) which client implementation to use (framework:
+--- only for the client job hint FredBridge.framework.getJob, docs/modules/bridge.md).
+M.CONVARS = { framework = 'fredpd_bridge_framework', target = 'fredpd_bridge_target', doorlock = 'fredpd_bridge_doorlock' }
 
 --- What a call answers while its resource is down (or the call failed).
 local FALLBACK = {
@@ -35,6 +36,7 @@ local FALLBACK = {
     getPlayerByCitizenId = function() return nil end,
     getPlayers = function() return {} end,
     removeMoney = function() return false end,
+    addMoney = function() return false end,
     count = function() return 0 end,
     find = function() return {} end,
     add = function() return false end,
@@ -260,6 +262,16 @@ function M.removeMoney(src, account, amount, reason)
     return M.call('framework', 'removeMoney', src, acc, amt, reason) == true
 end
 
+--- Give money back (a refunded fine). Same validation as removeMoney. true when added. (Not in §C17's list: fredpd_records
+--- refunds a fine whose DB write failed; docs/modules/bridge.md, open question 1.)
+function M.addMoney(src, account, amount, reason)
+    src = validSrc(src)
+    local acc, amt = Normalize.money(account, amount)
+    if not src or not acc then return false end
+    reason = type(reason) == 'string' and reason:sub(1, 200) or 'fredpd'
+    return M.call('framework', 'addMoney', src, acc, amt, reason) == true
+end
+
 --- Internal: fn(src, player) on every PlayerData change the framework reports (mirror). Not a server event: qbx fires
 --- its source event on every money/hunger tick.
 function M.onPlayerUpdated(fn)
@@ -462,6 +474,7 @@ function M.register()
     exports('getPlayerByCitizenId', M.getPlayerByCitizenId)
     exports('getPlayers', M.getPlayers)
     exports('removeMoney', M.removeMoney)
+    exports('addMoney', M.addMoney)
     exports('count', M.count)
     exports('find', M.find)
     exports('add', M.add)

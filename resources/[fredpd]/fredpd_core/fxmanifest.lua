@@ -49,6 +49,7 @@ files {
     -- read by bridge/client.lua with LoadResourceFile in whichever resource includes it
     'bridge/client.lua',
     'bridge/select.lua',
+    'bridge/framework/normalize.lua',
     'bridge/target/*.lua',
     'bridge/doorlock/*.lua',
     'config/formats.json',

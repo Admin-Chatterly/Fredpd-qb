@@ -5,6 +5,7 @@
 --             exports.qbx_core:GetPlayerByCitizenId(cid)   server/functions.lua:98-110
 --             exports.qbx_core:GetQBPlayers() -> { [src] = Player }   server/functions.lua:143-147
 --   money     exports.qbx_core:RemoveMoney(src, type, amount, reason) -> boolean   server/player.lua:1371-1423
+--             exports.qbx_core:AddMoney(src, type, amount, reason) -> boolean      server/player.lua:1320-1364
 --   events (server-local TriggerEvent):
 --     QBCore:Server:PlayerLoaded(Player)      server/player.lua:979
 --     QBCore:Server:OnPlayerUnload(src)       server/player.lua:750 (Logout only; a disconnect is playerDropped)
@@ -57,6 +58,12 @@ function M.server()
         src = tonumber(src)
         if not src or src <= 0 then return false end
         return exports.qbx_core:RemoveMoney(src, account, amount, reason) == true
+    end
+
+    function impl.addMoney(src, account, amount, reason)
+        src = tonumber(src)
+        if not src or src <= 0 then return false end
+        return exports.qbx_core:AddMoney(src, account, amount, reason) == true
     end
 
     function impl.bind(h)

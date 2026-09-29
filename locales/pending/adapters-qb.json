@@ -1,0 +1,5 @@
+{
+  "$comment": "fredpd_core prison adapter xt-prison (docs/modules/adapters-qb.md): notices to the prisoner sent by the server.",
+  "prison.notify.released": { "sv": "Du har släppts från fängelset.", "en": "You have been released from prison." },
+  "prison.notify.timeChanged": { "sv": "Din strafftid är nu {count} min.", "en": "Your sentence is now {count} min." }
+}

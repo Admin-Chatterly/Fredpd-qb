@@ -48,6 +48,14 @@ function H.qbCore(players, calls)
         return {
             PlayerData = pd, Offline = false,
             Functions = {
+                -- server/player.lua:185-207: false for an unknown account, else added.
+                AddMoney = function(moneytype, amount, reason)
+                    calls[#calls + 1] = { 'AddMoney', pd.source, moneytype, amount, reason }
+                    moneytype = moneytype:lower()
+                    if not pd.money[moneytype] then return false end
+                    pd.money[moneytype] = pd.money[moneytype] + amount
+                    return true
+                end,
                 RemoveMoney = function(moneytype, amount, reason)
                     calls[#calls + 1] = { 'RemoveMoney', pd.source, moneytype, amount, reason }
                     moneytype = moneytype:lower()
@@ -113,6 +121,13 @@ function H.qbxCore(players, calls)
             local out = {}
             for src, pd in pairs(players) do out[src] = player(pd) end
             return out
+        end,
+        AddMoney = function(_, identifier, moneyType, amount, reason)
+            calls[#calls + 1] = { 'AddMoney', identifier, moneyType, amount, reason }
+            local pd = players[tonumber(identifier)]
+            if not pd or not pd.money[moneyType] then return false end
+            pd.money[moneyType] = pd.money[moneyType] + amount
+            return true
         end,
         RemoveMoney = function(_, identifier, moneyType, amount, reason)
             calls[#calls + 1] = { 'RemoveMoney', identifier, moneyType, amount, reason }
@@ -191,8 +206,26 @@ function H.with(opts, fn)
         fn(env)
     end)
     for _, name in ipairs(GLOBALS) do rawset(_G, name, saved[name]) end
+    H.reset()
     if not ok then error(err, 0) end
     return env
+end
+
+--- For other server tests that run the real fredpd_core audit/perms over a qbx_core mock: load the bridge with the
+--- qbx_core framework, quiet, resource states from stateOf (default: qbx_core started). Returns the bridge module.
+function H.useQbx(stateOf)
+    local quiet = function() end
+    local Bridge = require('server.bridge')
+    Bridge.load({ framework = 'qbx_core' }, {
+        stateOf = stateOf or function(name) return name == 'qbx_core' and 'started' or 'missing' end,
+        log = { info = quiet, warn = quiet, error = quiet, debug = quiet }, defer = quiet,
+    })
+    return Bridge
+end
+
+--- Leave the bridge with nothing running, so later test files never inherit this file's mocks by accident.
+function H.reset()
+    H.useQbx(function() return 'missing' end)
 end
 
 --- Count log lines of a level that contain `text`.

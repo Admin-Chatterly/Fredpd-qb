@@ -4,7 +4,8 @@
 --   players         QBCore.Functions.GetPlayer(src)                    server/functions.lua:46-52
 --                   QBCore.Functions.GetPlayerByCitizenId(cid)         server/functions.lua:57-59
 --                   QBCore.Functions.GetPlayers() -> ids               server/functions.lua:115-121
---   money           Player.Functions.RemoveMoney(type, amount, reason) server/player.lua:209-243 (true | false | nil;
+--   money           Player.Functions.AddMoney(type, amount, reason)    server/player.lua:185-207
+--                   Player.Functions.RemoveMoney(type, amount, reason) server/player.lua:209-243 (true | false | nil;
 --                   refuses cash/crypto below 0 and bank below Config.Money.MinusLimit, config.lua:11-12)
 --   events (server-local TriggerEvent, never net):
 --     QBCore:Server:PlayerLoaded(Player)          server/player.lua:458 (CreatePlayer; Players[src] already set)
@@ -74,6 +75,13 @@ function M.server()
         local player = rawPlayer(src)
         if not player or type(player.Functions) ~= 'table' or not player.Functions.RemoveMoney then return false end
         return player.Functions.RemoveMoney(account, amount, reason) == true
+    end
+
+    --- Player.Functions.AddMoney (server/player.lua:185-207, wrapped into Functions by buildMethodTable :22-33).
+    function impl.addMoney(src, account, amount, reason)
+        local player = rawPlayer(src)
+        if not player or type(player.Functions) ~= 'table' or not player.Functions.AddMoney then return false end
+        return player.Functions.AddMoney(account, amount, reason) == true
     end
 
     --- Register the upstream event handlers; h = { loaded(src, player), unloaded(src), job(src, job), duty(src, onduty),

@@ -35,6 +35,28 @@ describe('Dialog', () => {
     expect(document.activeElement).toBe(screen.getByRole('textbox', { name: 'Anledning' }));
   });
 
+  it('wraps Tab and Shift+Tab inside the panel', () => {
+    wrap(
+      <Dialog open title="T" onClose={() => {}} footer={<button type="button">Spara</button>}>
+        <input aria-label="Fält" />
+      </Dialog>,
+    );
+    const dialog = screen.getByRole('dialog');
+    const field = screen.getByRole('textbox', { name: 'Fält' });
+    const close = screen.getByRole('button', { name: 'Stäng' });
+    const save = screen.getByRole('button', { name: 'Spara' });
+    // Document order: header close button, body field, footer button.
+    save.focus();
+    fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(document.activeElement).toBe(close);
+    fireEvent.keyDown(dialog, { key: 'Tab', shiftKey: true });
+    expect(document.activeElement).toBe(save);
+    field.focus();
+    const tab = fireEvent.keyDown(dialog, { key: 'Tab' });
+    expect(tab).toBe(true); // a middle item keeps the browser's own Tab
+    expect(document.activeElement).toBe(field);
+  });
+
   it('closes from the close button and the backdrop, not from a click inside', () => {
     const onClose = vi.fn();
     wrap(

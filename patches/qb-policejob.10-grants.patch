@@ -1,3 +1,18 @@
+diff --git a/client/interactions.lua b/client/interactions.lua
+index 3910c5d..7a4b29e 100644
+--- a/client/interactions.lua
++++ b/client/interactions.lua
+@@ -154,7 +154,9 @@ RegisterNetEvent('police:client:JailPlayer', function()
+             }
+         })
+         if tonumber(dialog['jailtime']) > 0 then
+-            TriggerServerEvent('police:server:JailPlayer', playerId, tonumber(dialog['jailtime']))
++            -- FredPD: own event name, so xt-prison's compat handler of police:server:JailPlayer does not jail a second
++            -- time without the FredPD grant check (server/interactions.lua)
++            TriggerServerEvent('police:server:fredpdJailPlayer', playerId, tonumber(dialog['jailtime']))
+         else
+             QBCore.Functions.Notify(Lang:t('error.time_higher'), 'error')
+         end
 diff --git a/client/job.lua b/client/job.lua
 index 7536455..89f5f04 100644
 --- a/client/job.lua
@@ -267,10 +282,10 @@ index 0000000..fde05cb
 +end)
 diff --git a/fredpd/server.lua b/fredpd/server.lua
 new file mode 100644
-index 0000000..0e96b03
+index 0000000..e939bdb
 --- /dev/null
 +++ b/fredpd/server.lua
-@@ -0,0 +1,739 @@
+@@ -0,0 +1,746 @@
 +-- SPDX-License-Identifier: GPL-3.0-only
 +-- FredPD bridge for qb-policejob, added by FredPD's patches/qb-policejob.10-grants.patch (docs/modules/police-qb.md in
 +-- the FredPD repository). Listed in fxmanifest.lua right after server/main.lua; sets the global `FredPD`.
@@ -617,6 +632,13 @@ index 0000000..0e96b03
 +function M.isLeo(player)
 +    local job = type(player) == 'table' and player.PlayerData and player.PlayerData.job
 +    return type(job) == 'table' and job.type == 'leo'
++end
++
++--- true while xt-prison runs. It handles the net event police:server:JailPlayer itself (xt-prison
++--- bridge/compat/server.lua:20-31) and enters the prison from the client event prison:client:Enter
++--- (bridge/compat/client.lua:4-7), which qb-policejob's police:client:SendToJail raises (client/main.lua:211-218).
++function M.xtPrison()
++    return GetResourceState('xt-prison') == 'started'
 +end
 +
 +--- Does the built-in evidence of qb-policejob stay on? Off only while fredpd_core runs and reports the FredPD
@@ -1352,7 +1374,7 @@ index 43ed921..9ea70d9 100644
  end)
  
 diff --git a/server/interactions.lua b/server/interactions.lua
-index cd50cb0..cd77527 100644
+index cd50cb0..e4b3ac2 100644
 --- a/server/interactions.lua
 +++ b/server/interactions.lua
 @@ -5,7 +5,7 @@ RegisterNetEvent('police:server:SearchPlayer', function()
@@ -1383,7 +1405,7 @@ index cd50cb0..cd77527 100644
          TriggerClientEvent('police:client:GetEscorted', EscortPlayer.PlayerData.source, Player.PlayerData.source)
      else
          TriggerClientEvent('QBCore:Notify', src, Lang:t('error.not_cuffed_dead'), 'error')
-@@ -118,7 +119,14 @@ RegisterNetEvent('police:server:BillPlayer', function(playerId, price)
+@@ -118,15 +119,25 @@ RegisterNetEvent('police:server:BillPlayer', function(playerId, price)
  
      local Player = exports['qb-core']:GetPlayer(src)
      local OtherPlayer = exports['qb-core']:GetPlayer(playerId)
@@ -1399,7 +1421,20 @@ index cd50cb0..cd77527 100644
  
      OtherPlayer.Functions.RemoveMoney('bank', price, 'paid-bills')
      exports['qb-banking']:AddMoney('police', price, 'Fine paid')
-@@ -135,7 +143,13 @@ RegisterNetEvent('police:server:JailPlayer', function(playerId, time)
+     TriggerClientEvent('QBCore:Notify', OtherPlayer.PlayerData.source, Lang:t('info.fine_received', { fine = price }))
+ end)
+ 
+-RegisterNetEvent('police:server:JailPlayer', function(playerId, time)
+-    local src = source
++-- FredPD: the handler body is a function so that two events can use it. The patched client (client/interactions.lua)
++-- sends police:server:fredpdJailPlayer; xt-prison, when started, also handles police:server:JailPlayer itself (its QB
++-- compat handler, xt-prison bridge/compat/server.lua:20-31, gated by its own job list only), so that name is served
++-- here only while xt-prison is not started (otherwise one jail request would enter the prison twice).
++local function JailPlayer(src, playerId, time)
+     local playerPed = GetPlayerPed(src)
+     local targetPed = GetPlayerPed(playerId)
+     local playerCoords = GetEntityCoords(playerPed)
+@@ -135,7 +146,13 @@ RegisterNetEvent('police:server:JailPlayer', function(playerId, time)
  
      local Player = exports['qb-core']:GetPlayer(src)
      local OtherPlayer = exports['qb-core']:GetPlayer(playerId)
@@ -1414,7 +1449,25 @@ index cd50cb0..cd77527 100644
  
      local currentDate = os.date('*t')
      if currentDate.day == 31 then
-@@ -161,7 +175,9 @@ RegisterNetEvent('police:server:SeizeCash', function(playerId)
+@@ -149,6 +166,17 @@ RegisterNetEvent('police:server:JailPlayer', function(playerId, time)
+     })
+     TriggerClientEvent('police:client:SendToJail', OtherPlayer.PlayerData.source, time)
+     TriggerClientEvent('QBCore:Notify', src, Lang:t('info.sent_jail_for', { time = time }))
++end
++
++RegisterNetEvent('police:server:fredpdJailPlayer', function(playerId, time)
++    local src = source
++    JailPlayer(src, playerId, time)
++end)
++
++RegisterNetEvent('police:server:JailPlayer', function(playerId, time)
++    local src = source
++    if FredPD.xtPrison() then return end -- xt-prison's own handler serves this event name
++    JailPlayer(src, playerId, time)
+ end)
+ 
+ RegisterNetEvent('police:server:SeizeCash', function(playerId)
+@@ -161,7 +189,9 @@ RegisterNetEvent('police:server:SeizeCash', function(playerId)
      local Player = exports['qb-core']:GetPlayer(src)
      local SearchedPlayer = exports['qb-core']:GetPlayer(playerId)
      if not Player or not SearchedPlayer then return end
@@ -1425,7 +1478,7 @@ index cd50cb0..cd77527 100644
      local moneyAmount = SearchedPlayer.PlayerData.money['cash']
      local info = { cash = moneyAmount }
      SearchedPlayer.Functions.RemoveMoney('cash', moneyAmount, 'police-cash-seized')
-@@ -179,7 +195,10 @@ RegisterNetEvent('police:server:SeizeDriverLicense', function(playerId)
+@@ -179,7 +209,10 @@ RegisterNetEvent('police:server:SeizeDriverLicense', function(playerId)
      if #(playerCoords - targetCoords) > 2.5 then return DropPlayer(src, 'Attempted exploit abuse') end
  
      local SearchedPlayer = exports['qb-core']:GetPlayer(playerId)

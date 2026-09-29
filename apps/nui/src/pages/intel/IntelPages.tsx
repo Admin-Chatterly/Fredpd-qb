@@ -547,6 +547,7 @@ export function MissionDetail({ mission }: { mission: MissionView }) {
   const { t, tx } = i18n;
   const { me } = useSession();
   const canCommand = usePerm(PERMS.intelCommand);
+  const canReadReports = usePerm(PERMS.intelRead);
   const addMember = useMdtMutation('addMissionMember');
   const close = useMdtMutation('closeMission');
   if (mission.visibility === 'notice') {
@@ -602,7 +603,8 @@ export function MissionDetail({ mission }: { mission: MissionView }) {
           </div>
         )}
       </Card>
-      <IntelReportList missionId={mission.id} canCreate={mission.status === 'open'} />
+      {/* listIntelReports / createIntelReport need intel.read; mdt_page:intel alone only opens the insats. */}
+      {canReadReports && <IntelReportList missionId={mission.id} canCreate={mission.status === 'open'} />}
     </div>
   );
 }

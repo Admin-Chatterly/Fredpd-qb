@@ -54,6 +54,28 @@ describe('mergeGraph (pure)', () => {
     expect(graph.nodes[0]?.root).toBe(true);
     expect(graph.truncated).toBe(true);
   });
+
+  it('never grows past the node cap: adds what fits, drops edges to the rest and marks the graph truncated', () => {
+    const node = (id: number) => ({ id, type: 'person' as const, ref: null, label: `N${id}`, root: id === 1 });
+    const base = { nodes: [1, 2, 3].map(node), edges: [], truncated: false };
+    const more = {
+      nodes: [2, 4, 5, 6].map(node),
+      edges: [
+        { id: 1, from: 2, to: 4, type: 'associate', confidence: 50 },
+        { id: 2, from: 2, to: 6, type: 'associate', confidence: 50 },
+      ],
+      truncated: false,
+    };
+    const { graph, addedNodes, addedEdges } = mergeGraph(base, more, 4);
+    expect(addedNodes.map((n) => n.id)).toEqual([4]);
+    expect(addedEdges.map((e) => e.id)).toEqual([1]);
+    expect(graph.nodes).toHaveLength(4);
+    expect(graph.truncated).toBe(true);
+    // Already at the cap: nothing more is added.
+    expect(mergeGraph(graph, { nodes: [node(7)], edges: [], truncated: false }, 4).addedNodes).toEqual([]);
+    // Everything fits: not truncated.
+    expect(mergeGraph(base, { nodes: [node(4)], edges: [], truncated: false }, 4).graph.truncated).toBe(false);
+  });
 });
 
 describe('sources', () => {
@@ -179,6 +201,16 @@ describe('missions and intel reports', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Avsluta insatsen' }));
     await waitFor(() => expect(calls.mock.calls.find(([a]) => a === 'closeMission')?.[1]).toEqual({ id: 21 }));
     await waitFor(() => expect(screen.getByText('Avslutad')).toBeTruthy());
+  });
+
+  it('without perm intel.read an insats opens but never lists or offers intel reports', async () => {
+    const { calls } = installMockRegister();
+    renderAt('/intel/insatser/21', ['mdt_page:*']);
+    expect(await screen.findByRole('heading', { level: 1, name: 'Insats Nattfjäril' })).toBeTruthy();
+    expect(screen.getByRole('region', { name: 'Deltagare' })).toBeTruthy();
+    expect(calls.mock.calls.some(([a]) => a === 'listIntelReports')).toBe(false);
+    expect(document.body.textContent).not.toContain('KORPEN uppger');
+    expect(screen.queryByRole('button', { name: 'Ny rapport' })).toBeNull();
   });
 
   it('a Hemlig report says the read is logged; a notice report is only the Notice', async () => {

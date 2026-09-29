@@ -103,6 +103,10 @@ tests['qb-core: removeMoney validates and follows qb-core rules'] = function(t)
         t.eq(B.removeMoney(2, 'bank', 5, 'x'), false, 'offline')
         t.eq(B.removeMoney(1, 'bank', 10.6), true, 'rounded, default reason')
         t.eq(calls[#calls], { 'RemoveMoney', 1, 'bank', 11, 'fredpd' })
+        t.eq(B.addMoney(1, 'bank', 11, 'police-fine-refund'), true, 'refund')
+        t.eq(calls[#calls], { 'AddMoney', 1, 'bank', 11, 'police-fine-refund' })
+        t.eq(B.addMoney(1, 'gold', 1, 'x'), false, 'unknown account')
+        t.eq(B.addMoney(1, 'bank', 0, 'x'), false, 'validated like removeMoney')
     end)
 end
 
@@ -119,6 +123,8 @@ tests['qbx_core: same interface over exports.qbx_core'] = function(t)
         t.eq(calls[#calls], { 'RemoveMoney', 4, 'bank', 100, 'fine' })
         t.eq(players[4].money.bank, 900)
         t.eq(B.removeMoney(4, 'cash', 1000, 'fine'), false)
+        t.eq(B.addMoney(4, 'bank', 100, 'refund'), true)
+        t.eq(players[4].money.bank, 1000)
     end)
 end
 
@@ -259,14 +265,15 @@ end
 
 tests['exports registered on fredpd_core (contract names) and the capability report line'] = function(t)
     H.with(qbEnv({}), function(env)
-        for _, name in ipairs({ 'getPlayer', 'getPlayerByCitizenId', 'getPlayers', 'removeMoney', 'count', 'find', 'add',
+        for _, name in ipairs({ 'getPlayer', 'getPlayerByCitizenId', 'getPlayers', 'removeMoney', 'addMoney', 'count', 'find', 'add',
             'remove', 'registerUsable', 'getDoor', 'setLocked', 'hasFeature', 'bridgeInfo', 'useItem' }) do
             t.ok(type(env.exported[name]) == 'function', 'export ' .. name)
         end
         t.eq(#env.logs.info, 1, 'one info line')
         t.eq(env.logs.info[1], 'bridge: framework=qb-core, inventory=qb-inventory (hooks: no), target=qb-target, '
             .. 'doorlock=qb-doorlock (needs its FredPD patch); evidence: off (needs ox_inventory + ox_target + evidences)')
-        t.eq(env.convars, { fredpd_bridge_target = 'qb-target', fredpd_bridge_doorlock = 'qb-doorlock' })
+        t.eq(env.convars, { fredpd_bridge_framework = 'qb-core', fredpd_bridge_target = 'qb-target',
+            fredpd_bridge_doorlock = 'qb-doorlock' })
         t.eq(env.exported.bridgeInfo(), { framework = 'qb-core', inventory = 'qb-inventory', target = 'qb-target',
             doorlock = 'qb-doorlock', hooks = false, evidence = false })
     end)

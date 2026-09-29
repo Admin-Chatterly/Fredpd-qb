@@ -1,0 +1,34 @@
+diff --git a/server.lua b/server.lua
+index 9e74d6c..d195ab5 100644
+--- a/server.lua
++++ b/server.lua
+@@ -128,7 +128,7 @@ QBCore.Functions.CreateCallback('qb-garages:server:spawnvehicle', function(sourc
+         cb(nil, nil, nil)
+         return
+     end
+-    local ownedVehicle = MySQL.single.await('SELECT vehicle, mods FROM player_vehicles WHERE plate = ? AND citizenid = ? LIMIT 1', { plate, Player.PlayerData.citizenid })
++    local ownedVehicle = MySQL.single.await('SELECT vehicle, mods, garage FROM player_vehicles WHERE plate = ? AND citizenid = ? LIMIT 1', { plate, Player.PlayerData.citizenid })
+     if not ownedVehicle then
+         cb(nil, nil, nil)
+         return
+@@ -145,6 +145,9 @@ QBCore.Functions.CreateCallback('qb-garages:server:spawnvehicle', function(sourc
+     local vehProps = {}
+     if ownedVehicle.mods then vehProps = json.decode(ownedVehicle.mods) end
+     OutsideVehicles[plate] = { netID = netId, entity = veh }
++    -- FredPD (patches/qb-garages.10-fredpd-events.patch): server-only event after the ownership check and the
++    -- server-side spawn; the garage is the one stored in player_vehicles (the client does not send it here).
++    TriggerEvent('fredpd:garage:takenOut', Player.PlayerData.citizenid, plate, ownedVehicle.garage, source)
+     cb(netId, vehProps, plate)
+ end)
+ 
+@@ -170,6 +173,10 @@ QBCore.Functions.CreateCallback('qb-garages:server:canDeposit', function(source,
+     end
+     if state == 1 then
+         MySQL.update('UPDATE player_vehicles SET state = ?, garage = ? WHERE plate = ?', { state, garage, plate })
++        -- FredPD (patches/qb-garages.10-fredpd-events.patch): server-only event after the ownership check; the garage
++        -- name comes from the client, so only a configured garage is passed on (`type` is a parameter here).
++        TriggerEvent('fredpd:garage:parked', Player.PlayerData.citizenid, plate,
++            (garage ~= nil and Config.Garages[garage]) and garage or nil, source)
+         cb(true)
+     else
+         cb(false)
