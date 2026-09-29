@@ -1,0 +1,21 @@
+node_modules/
+dist/
+build/
+coverage/
+*.log
+.env
+.env.*
+!.env.example
+# upstream resources are fetched by scripts/fetch-deps.sh, never committed
+resources/[[]upstream[]]/
+# built NUI bundle and copied locales/config are produced by scripts/build.sh
+resources/[[]fredpd[]]/*/web/build/
+resources/[[]fredpd[]]/*/locales/
+resources/[[]fredpd[]]/fredpd_core/config/
+apps/service/data/
+server.cfg
+secrets.cfg
+playwright-report/
+test-results/
+.DS_Store
+Thumbs.db

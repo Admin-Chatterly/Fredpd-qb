@@ -1,0 +1,174 @@
+# FredPD — shared contracts
+
+Binding interface decisions that several modules depend on. `IMPLEMENTATION.md` is the plan; this file pins the
+details the plan leaves open so that modules built in parallel fit together. Change a contract here first, then in code.
+
+`PLAN.md` (FredPD-PLAN.md) is not in the repo yet. Where the plan refers to PLAN §5d (visibility) or §10 (glossary),
+the assumptions below apply until PLAN.md is added; each assumption is marked **ASSUMED**.
+
+---
+
+## C1. Lua module conventions
+
+- Pure shared modules live in `resources/[fredpd]/fredpd_core/shared/*.lua`, are written as `local M = {} … return M`,
+  use only plain Lua 5.4 plus the global `json` (FiveM provides it; `tests/lua/run.lua` provides rxi/json.lua) and
+  touch no FiveM natives at load time. They are unit-tested outside the game by `tests/lua/*_test.lua`
+  (`pnpm test:lua`, which does `require('shared.format')` etc. with `package.path` rooted at `fredpd_core/`).
+- Inside resources, modules are loaded with ox_lib `require` (`require 'shared.format'` within fredpd_core,
+  `require '@fredpd_core.shared.format'` from another resource). fredpd_core's fxmanifest lists `shared/*.lua`
+  and `config/*.json` under `files`.
+- Write plain Lua 5.4 (no cfxlua compound operators, no backtick hashes) so `luac5.4 -p` in `pnpm lint` passes.
+- No `while true` and no `Citizen.CreateThread` polling (lint rejects them). Use events, `SetTimeout`, `lib.zones`,
+  `lib.onCache`, and ox_lib callbacks.
+- Every server net event/callback: `local src = source` → grant check → rate limit (`lib` cooldown) → work.
+
+## C2. Grants (`packages/types/src/grants.ts` ⇄ `fredpd_core/shared/grants.lua`)
+
+Grant key string: `"<type>:<key>"`, type ∈ `weapon | vehicle | armory | tool | mdt_page | intel_tier | unit | perm`.
+Wildcard `"<type>:*"` allows every key of that type. Deny always wins over allow, wildcard deny included.
+
+Input rows (DB column names camelCased):
+
+```ts
+type RoleRow = { discordRoleId: string; name: string; position: number; deleted: boolean };
+type RoleGrantRow = { discordRoleId: string; grantType: GrantType; grantKey: string; effect: 'allow' | 'deny' };
+type ResolveInput = { memberRoleIds: string[]; roles: RoleRow[]; grants: RoleGrantRow[]; unitOrder: string[] };
+```
+
+Output, identical JSON on the wire (`/internal/grants`, `/fredpd_core/grants` push), in `fredpd_grant_cache.grants`
+and in the Lua cache:
+
+```ts
+type GrantSet = {
+  grants: string[];      // allowed "type:key", sorted, deduped (deny NOT subtracted for wildcards; see denied)
+  denied: string[];      // denied "type:key", sorted, deduped
+  tier: 0 | 1 | 2;       // max allowed, non-denied intel_tier key parsed as int, clamped 0..2, default 0
+  units: string[];       // allowed, non-denied unit keys, ordered by unitOrder, unknown units after, alphabetical
+  rank: { roleId: string; key: string } | null; // highest-position role holding an allowed perm:rank:<key>
+  computedAt: string;    // ISO-8601 UTC
+};
+```
+
+- Roles with `deleted = true` and role ids not in `memberRoleIds` are ignored.
+- `hasGrant(set, type, key)`: `(grants ∋ type:key or grants ∋ type:*) and not (denied ∋ type:key or denied ∋ type:*)`.
+- TS exports: `GrantTypeSchema`, `GrantSetSchema` (zod), `resolveGrants(input)`, `hasGrant(set, type, key)`,
+  `emptyGrantSet()`. Lua exports: `M.resolve(input)`, `M.has(set, type, key)`, `M.empty()`.
+- Shared fixtures: `packages/types/test/fixtures/grants.fixtures.json` (≥ 20 cases, `computedAt` excluded from
+  comparison).
+
+## C3. Visibility (`canView.ts` ⇄ `shared/canview.lua`; server wrapper `fredpd_core/server/canview.lua`)
+
+Result order: `none < notice < masked < full`. `notice` = kontaktnotis (the record exists; contact the owner/unit).
+`masked` = content visible with parts above the viewer's tier and source fields stripped.
+
+```ts
+type Viewer = { citizenid: string | null; tier: 0 | 1 | 2; units: string[]; grants: GrantSet };
+type VisRecord = {
+  type: 'case' | 'report' | 'evidence' | 'poi' | 'bolo' | 'mission' | 'intel_report' | 'intel_source';
+  id: string | number; level: 0 | 1 | 2; status: 'open' | 'closed';
+  unit?: string | null; assignees?: string[]; ownerCitizenid?: string | null; handlerCitizenid?: string | null;
+};
+type VisibilityRule = {   // table fredpd_visibility_rules
+  id: number; recordType: string /* or '*' */; level: 0 | 1 | 2 | null /* null = any */;
+  recordStatus: 'open' | 'closed' | 'any';
+  viewerCondition: 'any' | 'assigned' | 'handler' | 'unit' | 'tier_gte' | 'perm';
+  conditionValue: string | null; result: 'full' | 'masked' | 'notice' | 'none'; priority: number; enabled: boolean;
+};
+canView(viewer, record, rules): 'full' | 'masked' | 'notice' | 'none'
+```
+
+- Conditions: `assigned` = viewer.citizenid ∈ assignees or = ownerCitizenid; `handler` = viewer.citizenid =
+  handlerCitizenid; `unit` = viewer.units ∋ (conditionValue ?? record.unit); `tier_gte` = viewer.tier ≥ record.level;
+  `perm` = hasGrant(viewer.grants, 'perm', conditionValue); `any` = true.
+- Evaluation: enabled rules whose recordType/level/status match, sorted by priority desc then id asc; first rule
+  whose condition holds gives the result; no match → `none`.
+- Hard caps applied after the rules (not overridable by config):
+  1. `intel_source`: `full` only if (handler and perm `intel.handler`) or perm `intel.command`; otherwise at most `masked`.
+  2. `record.level > viewer.tier` and the viewer is not assigned/owner/handler and lacks perm `intel.command` →
+     at most `notice`.
+- **ASSUMED (PLAN §5d)** default rules, seeded by `db/seed/visibility_rules_default.sql`: permissive for IGV lookups,
+  strict for sources and missions. Open case: assigned/unit → full, anyone else → notice. Closed case: tier_gte →
+  masked, assigned → full. Perm `records.admin` → full on everything but intel. Missions: members (assigned) and
+  `intel.command` → full, others → notice. Intel reports: author/assigned and (`intel.read` + tier_gte) → full, else
+  none. Intel sources: handler → full, `intel.read` → masked, else none. BOLO level 0 → full for everyone.
+- Shared fixtures: `packages/types/test/fixtures/canView.fixtures.json` = `{ rules: VisibilityRule[], cases: [{ name,
+  viewer, record, expected }] }`, ≥ 20 cases, also run in game by `/fredpd_selftest`.
+
+## C4. Formats (`packages/types/src/format.ts` ⇄ `shared/format.lua`, config `config/formats.json`)
+
+- `formatId(template, ctx)`; ctx: `{ seq?, n?, unit?, case?, date? }` (`date` ISO string, `yy`/`yyyy` derived from it
+  in Europe/Stockholm). `{{n:3}}` zero-pads to width 3. Unknown placeholder or missing value → error.
+- `templateToRegex(name, formats)` → anchored pattern string for `caseNumber`, `reportNumber`, `evidenceTag`,
+  `callsign` (`{{seq}}`/`{{n}}` → `\d+`, `{{n:k}}` → `\d{k,}`, `{{yy}}` → `\d{2}`, `{{yyyy}}` → `\d{4}`,
+  `{{unit}}` → `[A-Z]+`, `{{case}}` → the caseNumber pattern without anchors, literals escaped).
+- `detectSearchType(query, formats)` → `{ type: 'plate' | 'caseNumber' | 'personId' | 'name', normalized }`
+  (trim; plate uppercased with the inner space removed; personId digits with a dash before the last four).
+- `formatDate(isoUtc)`, `formatTime(isoUtc)`, `formatCurrency(amount)` per formats.json. Lua has no tz database:
+  the Lua port implements the EU DST rule for Europe/Stockholm (CET/CEST switching at 01:00 UTC on the last Sunday
+  of March/October).
+- The Lua port needs a small regex engine (`shared/regex.lua`) covering what formats.json uses: `^ $ . [...] [^...]`
+  ranges, `\d \s \w`, escapes, quantifiers `? * + {n} {n,} {n,m}`. Unsupported syntax errors at compile time.
+- Shared fixtures: `packages/types/test/fixtures/format.fixtures.json`, ≥ 15 cases, run by Vitest and Lua.
+
+## C5. HMAC (`packages/types/src/hmac.ts` ⇄ `fredpd_core/server/http.js`)
+
+Headers `X-FredPD-Ts` (unix seconds) and `X-FredPD-Sig` = hex(hmac_sha256(secret, ts + "." + rawBody)). A GET is
+signed with an empty rawBody. Reject when |now − ts| > 60 s or the signature mismatches (constant-time compare) →
+HTTP 401 `{ "error": "unauthorized" }`. Secret: convar `fredpd_hmac_secret` / env `FREDPD_HMAC_SECRET`; refuse to
+start the bridge if it is empty or shorter than 32 chars. Vectors: `packages/types/test/fixtures/hmac.fixtures.json`.
+
+## C6. HTTP endpoints
+
+FXServer (`SetHttpHandler` in fredpd_core, reached at `http://127.0.0.1:30120/fredpd_core/<path>`, all HMAC-signed):
+
+| Method | Path | Body | Effect |
+|---|---|---|---|
+| GET | `/ping` | – | `{ ok: true, players: n }` |
+| POST | `/grants` | `{ discordId, grants: GrantSet }` | `applyGrants` → cache, `fredpd_grant_cache`, `fredpd:client:grantsChanged` to that player |
+| POST | `/recompute` | `{ discordIds?: string[] }` | re-fetch grants from the service for those (or all) online players |
+| POST | `/officer` | `{ discordId, displayName, avatarUrl }` | refresh the in-memory officer name used for rosters |
+
+Service (Fastify, `FREDPD_SERVICE_URL`, default `http://127.0.0.1:3000`; convar `fredpd_service_url` on FXServer):
+
+| Method | Path | Auth | Purpose |
+|---|---|---|---|
+| GET | `/internal/ping` | HMAC | health |
+| GET | `/internal/grants/:discordId` | HMAC | `{ discordId, member: boolean, grants: GrantSet }` |
+| POST | `/internal/events` | HMAC | `{ type, payload }`, type ∈ `alertCreated, alertAssigned, alertClosed, unitsChanged, playerJoined, playerDropped` → WebSocket fan-out |
+| GET | `/auth/discord`, `/auth/discord/callback`, `POST /auth/logout` | – | Discord OAuth2, session cookie |
+| * | `/api/*` | session + CSRF on writes | portal API, same action names and zod schemas as the NUI |
+| POST | `/upload` | session or HMAC | ≤ 5 MB, MIME sniffed, png/jpeg/webp |
+| GET | `/avatar/:discordId`, `/share/:token`, `/ws` | – / token / session | see §4.9, §4.6 |
+
+Lua → service: `exports.fredpd_core:signedFetch(method, path, bodyTable|nil, cb)` (JS export; `cb(status, bodyString)`).
+Lua wraps it as `Core.fetch(method, path, body)` returning `status, decoded` inside a coroutine (promise + Citizen.Await).
+
+## C7. Database
+
+- Migrations: `db/migrations/NNN_name.sql`, table `fredpd_migrations (id VARCHAR(64) PK = filename, checksum
+  CHAR(64), applied_at)`. Statements end with `;` at end of line; no procedures/triggers/DELIMITER. A statement may be
+  preceded by `-- @if-table-exists <table>` to run only when that (non-FredPD) table exists (for `player_vehicles`).
+  A changed checksum for an applied migration is an error, never a silent re-run.
+- Runners: canonical `fredpd_core/server/db.lua` (oxmysql; the build copies `db/migrations` into
+  `fredpd_core/migrations/` with an `index.json`) and `scripts/migrate.mjs` (mysql2; dev/CI/service tests). Both
+  implement the same algorithm and are tested against MariaDB.
+- File ownership: `001`–`008` as listed in IMPLEMENTATION.md §6; `009_service.sql` (`fredpd_sessions`,
+  `fredpd_uploads`) belongs to apps/service.
+- Test DB: env `FREDPD_TEST_DB_URL`, default `mysql://fredpd:fredpd@127.0.0.1:3306/fredpd_test`. DB tests skip (with
+  a console warning) when it is unreachable. `db/dev/qbx_stub.sql` creates minimal `players`/`player_vehicles` for tests.
+- Every table: InnoDB, utf8mb4, `utf8mb4_swedish_ci`, `created_at DATETIME DEFAULT CURRENT_TIMESTAMP` (UTC).
+
+## C8. Locale
+
+- `locales/sv.json` and `locales/en.json`: flat objects with dotted keys (`"mdt.search.placeholder": "…"`), identical
+  key sets. Named placeholders `{name}`. Lua: `L(key, vars)` from `fredpd_core/shared/locale.lua` (wraps ox_lib
+  `locale()`, then substitutes `{name}`). TS: `t(key, vars)` from `@fredpd/ui`.
+- `packages/types/src/locale-keys.ts` is generated by `pnpm gen:locale-keys` (type `LocaleKey`).
+- Modules that need new strings while another agent owns the locale files add
+  `locales/pending/<module>.json` = `{ "<key>": { "sv": "…", "en": "…" } }`; `node scripts/merge-pending-locales.mjs`
+  merges and deletes them.
+
+## C9. Server exports and events
+
+As IMPLEMENTATION.md §4.3. fredpd_core additionally exports `signedFetch`, `getOfficer(src)`, `isOnDuty(src)`,
+`getCitizenId(src)`, `L(key, vars)`. Other resources never read `Grants[src]` directly.

@@ -1,0 +1,10 @@
+{
+  "$comment": "Unit codes in primary-unit order (IMPLEMENTATION.md §4.9: a member with several unit grants gets the first one listed here as primary). labelKey points into locales/*.json; home selects the Hem page variant.",
+  "units": [
+    { "code": "ledning",   "callsign": "LED", "labelKey": "unit.ledning",   "home": "ledning" },
+    { "code": "span",      "callsign": "SPAN", "labelKey": "unit.span",     "home": "span" },
+    { "code": "utredning", "callsign": "UTR", "labelKey": "unit.utredning", "home": "utredning" },
+    { "code": "tekniker",  "callsign": "TEK", "labelKey": "unit.tekniker",  "home": "tekniker" },
+    { "code": "igv",       "callsign": "IGV", "labelKey": "unit.igv",       "home": "igv" }
+  ]
+}

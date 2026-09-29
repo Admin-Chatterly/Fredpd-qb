@@ -1,0 +1,14 @@
+{
+  "$schema": "https://raw.githubusercontent.com/LuaLS/vscode-lua/master/setting/schema.json",
+  "runtime.version": "Lua 5.4",
+  "runtime.nonstandardSymbol": ["/**/", "`", "+=", "-=", "*=", "/=", "<<=", ">>=", "&=", "|=", "^="],
+  "diagnostics.globals": [
+    "lib", "cache", "locale", "json", "exports", "source", "vector3", "vector4", "vec3", "vec4",
+    "Citizen", "CreateThread", "Wait", "SetTimeout", "AddEventHandler", "RegisterNetEvent", "TriggerEvent",
+    "TriggerClientEvent", "TriggerServerEvent", "RegisterNUICallback", "SendNUIMessage", "SetNuiFocus",
+    "GetCurrentResourceName", "GetResourcePath", "LoadResourceFile", "GetConvar", "GetConvarInt",
+    "GetPlayerIdentifierByType", "GetPlayerName", "MySQL", "RegisterCommand", "Config", "PerformHttpRequest"
+  ],
+  "workspace.library": ["resources/[upstream]/ox_lib"],
+  "workspace.checkThirdParty": false
+}

@@ -1,0 +1,13 @@
+{
+  "$comment": "Identifier templates and patterns (IMPLEMENTATION.md §4.8, §9). Changing a value needs a resource restart; existing identifiers are never rewritten.",
+  "callsign": "{{unit}}-{{n:2}}",
+  "caseNumber": "K-{{seq}}-{{yy}}",
+  "reportNumber": "{{case}}/{{n}}",
+  "evidenceTag": "B-{{case}}-{{n:3}}",
+  "plate": "^[A-Z]{3}\\s?\\d{2}[A-Z0-9]$",
+  "personId": "^\\d{6,8}-?\\d{4}$",
+  "date": "YYYY-MM-DD",
+  "time": "HH:mm",
+  "tz": "Europe/Stockholm",
+  "currency": { "symbol": "kr", "decimals": 0, "thousandsSeparator": " ", "position": "suffix" }
+}

@@ -1,0 +1,90 @@
+{
+  "secret": "fredpd-test-secret-0123456789abcdef",
+  "vectors": [
+    {
+      "name": "valid POST",
+      "ts": "1790000000",
+      "rawBody": "{\"discordId\":\"1\"}",
+      "now": 1790000000,
+      "sig": "fc9097c7f82ffd2cb582345e238553e1742e7285a6e18f1ef052b8138ee0288a",
+      "ok": true
+    },
+    {
+      "name": "valid GET empty body",
+      "ts": "1790000000",
+      "rawBody": "",
+      "now": 1790000000,
+      "sig": "6ec436a4246cb7ba1fb4553b2ba14ff4efeddc0979635a7db82e4c213a7b47df",
+      "ok": true
+    },
+    {
+      "name": "valid unicode body",
+      "ts": "1790000030",
+      "rawBody": "{\"namn\":\"Åsa Öberg\"}",
+      "now": 1790000000,
+      "sig": "8fa5c550d920bc99238d352fadef77101d3b2eb8f5d0cdedef3b79aea1df6cde",
+      "ok": true
+    },
+    {
+      "name": "skew +61s",
+      "ts": "1790000061",
+      "rawBody": "",
+      "now": 1790000000,
+      "sig": "02be363de84781d2bb4eda9ce7d080feb896b71fdc20394e383210b884bf16c8",
+      "ok": false,
+      "reason": "skew"
+    },
+    {
+      "name": "skew -61s",
+      "ts": "1789999939",
+      "rawBody": "",
+      "now": 1790000000,
+      "sig": "53140e79f4b4055593e24fee4267130b4a8c949df031bb825572bf64c960bf6d",
+      "ok": false,
+      "reason": "skew"
+    },
+    {
+      "name": "edge 60s ok",
+      "ts": "1790000060",
+      "rawBody": "x",
+      "now": 1790000000,
+      "sig": "bac1787a869d156491689d43a6fc66c08d6f08b9e629a23238a1373786d0d3bc",
+      "ok": true
+    },
+    {
+      "name": "tampered body",
+      "ts": "1790000000",
+      "rawBody": "{\"discordId\":\"2\"}",
+      "now": 1790000000,
+      "sig": "fc9097c7f82ffd2cb582345e238553e1742e7285a6e18f1ef052b8138ee0288a",
+      "ok": false,
+      "reason": "signature"
+    },
+    {
+      "name": "missing sig",
+      "ts": "1790000000",
+      "rawBody": "",
+      "now": 1790000000,
+      "sig": "",
+      "ok": false,
+      "reason": "missing"
+    },
+    {
+      "name": "non-numeric ts",
+      "ts": "abc",
+      "rawBody": "",
+      "now": 1790000000,
+      "sig": "1d79bdc8a3f72996002b366856d946d711c59c208469dd112b3a654019c9b307",
+      "ok": false,
+      "reason": "missing"
+    },
+    {
+      "name": "uppercase hex accepted",
+      "ts": "1790000000",
+      "rawBody": "",
+      "now": 1790000000,
+      "sig": "6EC436A4246CB7BA1FB4553B2BA14FF4EFEDDC0979635A7DB82E4C213A7B47DF",
+      "ok": true
+    }
+  ]
+}
