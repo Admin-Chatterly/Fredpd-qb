@@ -9,7 +9,9 @@
 -- collations" exactly as on a server (see "Joining qbx tables" in docs/modules/db.md).
 --
 -- Deliberate difference: player_vehicles has no index on plate here (upstream: UNIQUE KEY plate), so tests see
--- 002_index.sql add it.
+-- 002_index.sql add it. players.last_updated keeps upstream's TIMESTAMP ... ON UPDATE CURRENT_TIMESTAMP on purpose:
+-- it mirrors qbx_core, and the UTC rules of docs/contracts.md §C7 cover fredpd_* tables only (TIMESTAMP is stored
+-- as UTC by MariaDB anyway).
 
 CREATE TABLE IF NOT EXISTS players (
   id INT(11) NOT NULL AUTO_INCREMENT,

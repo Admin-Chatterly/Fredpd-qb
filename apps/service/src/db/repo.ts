@@ -3,6 +3,9 @@
 // Writes that change what an officer may do or see are audited in the same transaction (fredpd_audit, §4.5).
 // Not audited per row, as in fredpd_core (docs/modules/core.md "Audit exemption"): fredpd_grant_cache and
 // fredpd_identities (caches of data audited at its source) and fredpd_sessions (login/logout are audited instead).
+// Times (docs/contracts.md §C7): Date values are written as UTC by drizzle/mysql2; updated_at is set to
+// UTC_TIMESTAMP() by every update()/onDuplicateKeyUpdate() through the schema's $onUpdate; SQL never uses the
+// session clock (comparisons take the injected clock's Date).
 import { and, eq, gt, inArray, sql } from 'drizzle-orm';
 import type { GrantSet, GrantType, RoleGrantRow, RoleRow } from '@fredpd/types/grants';
 import type { Db } from './client';

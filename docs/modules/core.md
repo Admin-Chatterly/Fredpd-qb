@@ -20,6 +20,7 @@ and the migration runner (`server/db.lua`) belong to other modules; this one cal
 | `server/mirror.lua` | `fredpd_persons` / `fredpd_vehicles_idx`: qbx events, backfill, plate refresh, dev seeding |
 | `server/officers.lua` | officer names from Discord, `fredpd_officers` rows, callsign on first duty, `fredpd_units` sync |
 | `shared/locale.lua` | `L(key, vars)` over ox_lib `locale()`; pure `substitute` |
+| `shared/time.lua` | UTC timestamps (§C7, §C12): `isoSelect`, `toIsoUtc`, `toDatetime`, `toEpoch`, `nowIso` (see "Timestamps") |
 | `adapters/` | housing/garage/prison interfaces, `none` + stubs, loader (see `adapters/README.md`) |
 | `fredpd_devtools/` | `/fredpd_selftest`, `/fredpd_backfill`, `/fredpd_seed`, `/fredpd_fakeunits` (dev only) |
 | `server.cfg.example` | convars, ACE lines, ensure order |
@@ -98,7 +99,8 @@ callsign, `fredpd:devtools:fakeUnits(units|nil)` per fake-unit tick. `fredpd:rul
   no row → empty set. No Discord identifier → empty set + warning. Until loaded every check fails closed.
 - A push (`applyGrants`) that arrives while a fetch is in flight wins: the older fetch result is discarded.
 - `fredpd_grant_cache.grants` is written with a hand-built encoder so empty lists are `[]` (FiveM's json may encode
-  `{}`); `computed_at` = the set's `computedAt` as UTC DATETIME (or `NOW()` when it is not a `…Z` ISO string).
+  `{}`); `computed_at` = the set's `computedAt` as UTC DATETIME (`Time.toDatetime`; an offset is converted), or
+  `UTC_TIMESTAMP()` when it is not an ISO timestamp. `fredpd_identities.last_seen` = `UTC_TIMESTAMP()`.
 - `lib.callback 'fredpd:getMyGrants'` returns the player's own copy; never nil. Rate limit 250 ms per player: a
   limited call gets the copy built last time (memoised per player, dropped on every grant change), so a spamming
   client never makes the server copy anything and the NUI never sees nil as "no grants". No grant check: it only
@@ -114,7 +116,25 @@ callsign, `fredpd:devtools:fakeUnits(units|nil)` per fake-unit tick. `fredpd:rul
   `os.clock()`: on Linux `os.clock` is CPU time, not wall time. `os.clock` stays as the non-FiveM fallback.
   State is cleared on `playerDropped`.
 - `Core.bindRow` / `Core.buildInsert`: nil values become a literal `NULL` in the SQL instead of holes in the
-  parameter array (a Lua array with nil holes does not reach oxmysql as an array).
+  parameter array (a Lua array with nil holes does not reach oxmysql as an array). `buildInsert(tbl, cols, rows,
+  update, touch)`: with `touch = 'updated_at'` the upsert maintains that column, moving it to `UTC_TIMESTAMP()` only
+  when an `update` column really changes (docs/modules/db.md "Time zones"); mirrors and the units sync use it.
+
+## Timestamps (`shared/time.lua`, docs/contracts.md §C7/§C12)
+
+- Stored UTC whatever the MariaDB zone; SQL writes `UTC_TIMESTAMP()`, never the session clock; `updated_at` is set
+  by the writer (`RELINK_SQL`, `CALLSIGN_SQL`, units deactivation, `buildInsert` touch, `db.nextSeq`).
+- Reading a DATETIME for the wire: `'SELECT ' .. Time.isoSelect('b.created_at', 'createdAt') .. ' FROM …'` →
+  `'2026-09-29T12:00:00Z'`. Never read DATETIME columns bare through oxmysql: it returns epoch ms computed in the
+  FXServer host's local zone (1–2 h off on a Stockholm host). `Time.toIsoUtc` rejects such numbers with that
+  explanation; it also normalises `YYYY-MM-DD HH:MM:SS` text (e.g. from `DATE_FORMAT(…, '%Y-%m-%d %H:%i:%s')`).
+- `Time.toDatetime(iso)` binds a wire timestamp into a DATETIME parameter; `Time.toEpoch(v)` compares with
+  `os.time()`; `Time.nowIso()` is `os.date('!…')` (UTC, zone-independent).
+- No existing core read exposes a DATETIME column yet (officers, perms cache, mirror and rules select none); the
+  audit archive cutoff is computed with `UTC_TIMESTAMP()` and logged in the audit meta as ISO UTC.
+- `/fredpd_selftest` adds a `time` suite: pure checks plus, in game, `isoSelect(UTC_TIMESTAMP())` through oxmysql
+  compared with the Lua UTC clock (must be a string, within 60 s) and the session zone printed. UNVERIFIED until run
+  on FXServer.
 - `Core.getPlayerData(src)` always asks `exports.qbx_core:GetPlayer(src)`, so the actor is never taken from the
   client or a stale cache (§4.6).
 
@@ -182,7 +202,8 @@ callsign, `fredpd:devtools:fakeUnits(units|nil)` per fake-unit tick. `fredpd:rul
   `^[%w_][%w_.:-]*$` ≤ 64, target type ≤ 32, target id ≤ 64 (numbers stringified), meta JSON ≤ 16 KB (else replaced
   by `{ truncated, bytes }`). Inserts are fire-and-forget (`MySQL.insert` with callback).
 - `fredpd_audit_archive [days]` (ACE `group.admin`, console or in game; default 90): one fixed cutoff
-  (`NOW() - INTERVAL days DAY`, same clock as `created_at DEFAULT CURRENT_TIMESTAMP`), batches of 5000, each batch
+  (`UTC_TIMESTAMP() - INTERVAL days DAY`, the same UTC clock as `created_at DEFAULT (UTC_TIMESTAMP())`, whatever
+  the session zone), batches of 5000, each batch
   one transaction (copy then delete the same ids). Writes an `audit.archive` row. Run by hand monthly; no timer.
 
 ## Adapters (task 0.6)
@@ -206,7 +227,8 @@ Commands (all `lib.addCommand … restricted = 'group.admin'`, also usable from 
 production (`server.cfg.example` has it commented out).
 
 - `/fredpd_selftest`: runs `grants`, `canView` (cases + engine cases) and `format` (cases + regex) fixtures through
-  `server/selftest.lua`; prints per-suite counts and failures, notifies the caller. Outside the game
+  `server/selftest.lua`, plus the `time` suite (UTC probe through oxmysql, in a one-shot thread); prints per-suite
+  counts and failures, notifies the caller. Outside the game
   `core_devtools_test` runs the same runner over the same fixture files and requires every case to pass.
 - `/fredpd_backfill`, `/fredpd_seed [n=200]` (via core exports; DEV prefix; ≤ 5000), `/fredpd_fakeunits [n=20]
   [seconds=60]`: a `SetTimeout` chain that ticks every 5 s and ends at its deadline, on `/fredpd_fakeunits 0` or on
@@ -224,11 +246,13 @@ production (`server.cfg.example` has it commented out).
 - Type check: `pnpm exec tsc -p "resources/[fredpd]/fredpd_core/test/tsconfig.json"`. `resources/` is not a
   workspace package, so `pnpm -r typecheck` does not run it: **the owner of `package.json` should add this command
   to `pnpm lint`** (or cover it with typed ESLint).
-- `lua5.4 tests/lua/run.lua core_` and `locale_test`. `core_db_test.lua` runs against MariaDB through
+- `lua5.4 tests/lua/run.lua core_`, `locale_test` and `time_test`. `core_db_test.lua` runs against MariaDB through
   `tests/lua/mysql_shim.lua` in database `fredpd_test_core_lua` (reset once per run; skipped with a notice when
-  unreachable): backfill/idempotency/FULLTEXT EXPLAIN, refreshPlate, seeding, grant cache JSON round trip,
-  identities, seed rules loaded == fixtures, audit archive, units sync, callsign allocation incl. a forced race,
-  `ensureRow` repeated (one `officer.create`) and relinked. Its `withDb` emulates oxmysql's `CLIENT_FOUND_ROWS` for
+  unreachable), **every session at time_zone `+02:00`**: backfill/idempotency/FULLTEXT EXPLAIN, refreshPlate,
+  seeding, grant cache JSON round trip (+ UTC fallback), identities (UTC last_seen/created_at), seed rules loaded ==
+  fixtures, audit archive (incl. a row 30 min inside the window that a session-clock cutoff would move), units sync,
+  callsign allocation incl. a forced race, `ensureRow` repeated (one `officer.create`) and relinked, and updated_at
+  maintenance (mirror upserts move it only for changed rows, units, relink, callsign). Its `withDb` emulates oxmysql's `CLIENT_FOUND_ROWS` for
   `INSERT … ON DUPLICATE KEY UPDATE` (an unchanged match reports 1, not the CLI's 0), so a count read from such an
   upsert cannot pass here and fail in FXServer. `core_officers_test` mocks the same semantics.
 - Task 1.4 timing (manual, same DB, 203 persons): `MATCH … AGAINST ('+Andersson' IN BOOLEAN MODE)` 0.6 ms,

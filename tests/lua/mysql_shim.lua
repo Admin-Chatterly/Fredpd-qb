@@ -18,6 +18,7 @@
 -- Also a CLI used by packages/types/test/migrations.test.ts (run from the repo root):
 --   lua5.4 tests/lua/mysql_shim.lua migrate <database> [--reset] [--stub] [--no-seed]   -> last line: RESULT <json>
 --                                   [--migrations-dir=<dir>]   (instead of db/migrations; an error goes to stderr, exit 1)
+--                                   [--time-zone=<zone>]       (every session runs SET time_zone first, e.g. +02:00)
 --   lua5.4 tests/lua/mysql_shim.lua split <file.sql> ...                                -> one JSON object
 --   lua5.4 tests/lua/mysql_shim.lua consts                                              -> db.lua SQL constants
 local M = {}
@@ -382,17 +383,26 @@ local function cli(args)
         print(json.encode(result))
         return 0
     elseif cmd == 'migrate' then
-        local database = assert(args[2], 'usage: migrate <database> [--reset] [--stub] [--no-seed] [--migrations-dir=<dir>]')
+        local database = assert(args[2],
+            'usage: migrate <database> [--reset] [--stub] [--no-seed] [--migrations-dir=<dir>] [--time-zone=<zone>]')
         local flags, installOpts = {}, { database = database }
         for k = 3, #args do
             local dir = args[k]:match('^%-%-migrations%-dir=(.+)$')
-            if dir then installOpts.migrationsDir = dir else flags[args[k]] = true end
+            local zone = args[k]:match('^%-%-time%-zone=(.+)$')
+            if dir then
+                installOpts.migrationsDir = dir
+            elseif zone then
+                installOpts.sessionTimeZone = zone
+            else
+                flags[args[k]] = true
+            end
         end
         local ok, reason = M.available()
         if not ok then
             io.stderr:write('database unreachable: ' .. tostring(reason) .. '\n')
             return 2
         end
+        M.sessionTimeZone = installOpts.sessionTimeZone
         if flags['--reset'] then M.resetDatabase(database, flags['--stub']) end
         M.install(installOpts)
         local db = require('server.db')
@@ -404,7 +414,8 @@ local function cli(args)
         print('RESULT ' .. json.encode(result))
         return 0
     end
-    io.stderr:write('usage: lua5.4 tests/lua/mysql_shim.lua consts | split <file>... | migrate <database> [--reset] [--stub] [--no-seed] [--migrations-dir=<dir>]\n')
+    io.stderr:write('usage: lua5.4 tests/lua/mysql_shim.lua consts | split <file>... | migrate <database> [--reset] [--stub] '
+        .. '[--no-seed] [--migrations-dir=<dir>] [--time-zone=<zone>]\n')
     return 64
 end
 

@@ -1,0 +1,129 @@
+{
+  "$comment": "Pinned upstream resources (IMPLEMENTATION.md §3, §8.2; verified in task 0.3, see docs/deps-verification.md). Keys are the resource folder names as ensured in server.cfg. scripts/fetch-deps.mjs clones repo@commit into resources/[upstream]/<key> (mode REFERENCE is skipped). 'tag' + 'release' are set where the upstream's documented install path is a release zip (built web UI / dist not in git): the commit is the tag's commit and the server must run the release zip of that tag, the git checkout only serves patches and review. Never track 'latest'; bump commit (+tag/release) and re-run fetch-deps + apply-patches.",
+  "resources": {
+    "oxmysql": {
+      "repo": "https://github.com/overextended/oxmysql",
+      "commit": "f0385c455c701fda2921313004a55d50e87b7b44",
+      "date": "2026-05-04T12:28:06+00:00",
+      "license": "LGPL-3.0-or-later",
+      "mode": "REUSE",
+      "tag": "v2.14.1",
+      "release": "https://github.com/overextended/oxmysql/releases/download/v2.14.1/oxmysql.zip",
+      "notes": "Release zip is the documented install (README, Qbox txAdmin recipe); git has no built dist/. HEAD 030d3bd (2026-07-03) is 21 commits ahead, incl. a TINY/BIT typecast change (887d841). DATETIME -> epoch ms parsed in the FXServer host's local zone (src/utils/typeCast.ts:30-39), TINYINT(1) -> boolean."
+    },
+    "ox_lib": {
+      "repo": "https://github.com/overextended/ox_lib",
+      "commit": "08bac37f3b56d4c3c56d6a0b3749ec3d527de9d6",
+      "date": "2026-07-13T06:42:23+00:00",
+      "license": "LGPL-3.0-or-later",
+      "mode": "REUSE",
+      "tag": "v3.39.0",
+      "release": "https://github.com/overextended/ox_lib/releases/download/v3.39.0/ox_lib.zip",
+      "notes": "Release zip is the documented install (web/build not in git). overextended chosen over CommunityOx: every CommunityOx HEAD is an ancestor of overextended HEAD. HEAD b8f5a04 (2026-09-04) is 8 commits ahead incl. 'refactor(require): support ox_lib modules v2' - not pinned."
+    },
+    "ox_inventory": {
+      "repo": "https://github.com/overextended/ox_inventory",
+      "commit": "952c128fdff056fd7506d924faa6c07fb80892e9",
+      "date": "2026-07-13T06:41:50+00:00",
+      "license": "GPL-3.0-or-later",
+      "mode": "PATCH",
+      "tag": "v2.47.9",
+      "release": "https://github.com/overextended/ox_inventory/releases/download/v2.47.9/ox_inventory.zip",
+      "notes": "Release zip is the documented install (web/build not in git). PATCH = data/items.lua entries (pd_tablet, pd_ram, evidences items). The Qbox txAdmin recipe overwrites data/items.lua with Qbox's own list, so a patch made against upstream will not apply to a recipe-installed server (open question in docs/deps-verification.md)."
+    },
+    "ox_target": {
+      "repo": "https://github.com/overextended/ox_target",
+      "commit": "abe153aa337074d16f0cf38044f8dc60350f1361",
+      "date": "2026-04-25T00:12:19+00:00",
+      "license": "MIT",
+      "mode": "REUSE",
+      "tag": "v1.18.1",
+      "release": "https://github.com/overextended/ox_target/releases/download/v1.18.1/ox_target.zip",
+      "notes": "Release zip is the documented install (README, recipe). HEAD bf03d52 only changes README.md. evidences only recommends (does not require) the noobsystems ox_target fork."
+    },
+    "ox_doorlock": {
+      "repo": "https://github.com/overextended/ox_doorlock",
+      "commit": "7d72ff77a253cc8e9ad84d651554d01be389357e",
+      "date": "2026-04-25T00:00:30+00:00",
+      "license": "GPL-3.0-or-later",
+      "mode": "REUSE",
+      "tag": "v1.22.1",
+      "release": "https://github.com/overextended/ox_doorlock/releases/download/v1.22.1/ox_doorlock.zip",
+      "notes": "README: 'The UI needs to be built - use the latest release'. createDoor/removeDoor exports exist only after the tag (HEAD 4e56b7e); getDoor, getAllDoors, getDoorFromName, setDoorState, registerHook are in v1.22.1."
+    },
+    "qbx_core": {
+      "repo": "https://github.com/Qbox-project/qbx_core",
+      "commit": "f0553b6cb3e8de75b654a063588f02bdcd1c8715",
+      "date": "2026-09-26T05:43:45+02:00",
+      "license": "GPL-3.0-or-later",
+      "mode": "REUSE",
+      "notes": "HEAD of main; the Qbox txAdmin recipe installs main (download_github ref main). Latest tag v1.24.0 (c1c3ca1, 2026-08-22) is 16 commits behind. Rami's server already runs qbx_core: this pin is the version FredPD was verified against, not something to overwrite blindly."
+    },
+    "qbx_policejob": {
+      "repo": "https://github.com/Qbox-project/qbx_police",
+      "commit": "7fa438fc175443692e87739a9140f0c6b770f98f",
+      "date": "2026-09-26T05:43:49+02:00",
+      "license": "GPL-3.0-only",
+      "mode": "PATCH",
+      "notes": "Folder name from fxmanifest name/README title 'qbx_policejob'. The Qbox txAdmin recipe clones it to resources/[qbx]/qbx_police (resource name = folder name): server.cfg and the prison adapter must use whichever folder Rami's server has. No release tags; LICENSE is bare GPLv3 text (no or-later notice). Patch targets: server/main.lua IsLeoAndOnDuty (13-18), evidence:server:* (435-557), FlaggedPlateTriggered (345-362)."
+    },
+    "qbx_prison": {
+      "repo": "https://github.com/Qbox-project/qbx_prison",
+      "commit": "977634bbaf1757dba3e6d95f0b7dd3be693e11ae",
+      "date": "2026-07-09T02:20:51+02:00",
+      "license": "GPL-3.0-only",
+      "mode": "REUSE",
+      "notes": "Exists; exports JailPlayer(src, minutes) / ReleasePlayer(src). Effectively unmaintained: last functional commit 2024-06-23, the 2026 commit is repo-template chore. The current Qbox txAdmin recipe ships xt-prison instead (qbx_police has xt-prison compat). Use only if Rami's server runs it (docs/deps-verification.md Decisions)."
+    },
+    "qbx_vehicles": {
+      "repo": "https://github.com/Qbox-project/qbx_vehicles",
+      "commit": "571282900c229a5caf75b1aff679ba4ec0456eb0",
+      "date": "2026-09-26T05:43:12+02:00",
+      "license": "GPL-3.0-only",
+      "mode": "REUSE",
+      "notes": "HEAD of main (recipe installs main; tag v1.4.2 is 6 commits behind). Server event qbx_vehicles:server:vehicleSaved(vehicleId); hooks via exports.qbx_vehicles:registerHook('createPlayerVehicle'|'changeVehicleOwner', fn). Required by qbx_garages."
+    },
+    "qbx_garages": {
+      "repo": "https://github.com/Qbox-project/qbx_garages",
+      "commit": "3dcd90313212d3867fd92b5b40447424dc42dc9e",
+      "date": "2026-09-26T03:15:06+02:00",
+      "license": "GPL-3.0-only",
+      "mode": "REUSE",
+      "notes": "HEAD of main (recipe installs main; tag v1.1.4 is 20 commits behind). exports.qbx_garages:registerHook('parkVehicle'|'spawnVehicle'|'spawnedVehicle', fn) covers task 3.4 without a patch."
+    },
+    "evidences": {
+      "repo": "https://github.com/noobsystems/evidences",
+      "commit": "0d15876e9a08fd89976ffd64acc5b1338558d92e",
+      "date": "2026-08-18T21:33:01+02:00",
+      "license": "GPL-3.0-or-later",
+      "mode": "REUSE",
+      "tag": "v1.3.1",
+      "release": "https://github.com/noobsystems/evidences/releases/download/v1.3.1/evidences.zip",
+      "notes": "Tag v1.3.1 = HEAD of main. Release zip is the documented install (html/dui/laptop/dist is built, not in git); item images: releases/download/v1.3.1/item_images.zip; items from .github/setup/en_items.lua go into ox_inventory data/items.lua. No sv locale upstream. Works with upstream ox_target (the noobsystems fork is only recommended)."
+    },
+    "ps-dispatch": {
+      "repo": "https://github.com/Project-Sloth/ps-dispatch",
+      "commit": "d488316ae7f579740c93f8bd873fc552a48a7038",
+      "date": "2026-08-12T18:21:40-04:00",
+      "license": "GPL-3.0-only",
+      "mode": "PATCH",
+      "notes": "HEAD of main = tag 3.0.0 (8de73dd) + a README-only commit; no release zip (html/ is committed). Qbox support is through qbx_core's qb-core bridge. fxmanifest hard-includes @PolyZone files that the code never uses (lib.zones): install PolyZone or patch those 3 lines. lsn-radar is not referenced by any code (optional). Patch: TriggerEvent('fredpd:alertCreated', data) in server/main.lua before broadcastCall (line 335) and a broadcast/keybind switch (no NUI-off config flag exists)."
+    },
+    "screenshot-basic": {
+      "repo": "https://github.com/citizenfx/screenshot-basic",
+      "commit": "5e89d4afb3e28b490344e84b5e2b5ac8cc5d9c75",
+      "date": "2022-01-06T22:29:19+01:00",
+      "license": "MIT",
+      "mode": "REUSE",
+      "notes": "Only commit on master since 2022; git clone is the documented install and FXServer builds dist/ at start through the cfx-server-data yarn + webpack builder resources. Current Qbox recipe servers run itschip/screencapture (AGPL-3.0, provide 'screenshot-basic', same requestScreenshotUpload signature) instead: never run both."
+    },
+    "bub-mdt": {
+      "repo": "https://github.com/BubbleDK/bub-mdt",
+      "commit": "85607d654c9f0fdfca98e75f650ea4ad9661cdf3",
+      "date": "2025-07-20T10:41:13+02:00",
+      "license": "GPL-3.0-or-later",
+      "mode": "REFERENCE",
+      "notes": "Reference only (not fetched, never started): web/src/utils/fetchNui.ts, debugData.ts, server/ SQL shapes. No commits in 2026. Copied code keeps its GPL header."
+    }
+  }
+}

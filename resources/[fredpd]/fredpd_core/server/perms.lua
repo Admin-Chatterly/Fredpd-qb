@@ -26,7 +26,7 @@ local GRANT_PATTERN = '^[%l_]+:%S+$'
 local UNIT_PATTERN = '^[%w_%-]+$'
 
 -- computed_at is the set's computedAt as a UTC DATETIME; %s is '?' or UTC_TIMESTAMP() (see M.cacheUpsert). Times are
--- UTC whatever the MariaDB time zone is (docs/contracts.md §C7): never NOW() or CURRENT_TIMESTAMP.
+-- UTC whatever the MariaDB time zone is (docs/contracts.md §C7): never the session clock.
 M.CACHE_UPSERT_SQL = 'INSERT INTO fredpd_grant_cache (discord_id, grants, computed_at) VALUES (?, ?, %s) '
     .. 'ON DUPLICATE KEY UPDATE grants = VALUES(grants), computed_at = VALUES(computed_at)'
 M.CACHE_SELECT_SQL = 'SELECT grants FROM fredpd_grant_cache WHERE discord_id = ?'

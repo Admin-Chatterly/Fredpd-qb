@@ -19,9 +19,23 @@ const jsonText = <T>(name: string) =>
     fromDriver: (value) => (typeof value === 'string' ? (JSON.parse(value) as T) : (value as T)),
   })(name);
 
-/** DATETIME holding UTC (docs/contracts.md §C7); drizzle maps it to a Date via "YYYY-MM-DD HH:MM:SS" + 'Z'. */
+/**
+ * DATETIME holding UTC (docs/contracts.md §C7); drizzle writes a Date as its UTC "YYYY-MM-DD HH:MM:SS" text and
+ * reads the text back + 'Z', so the MariaDB session zone never matters.
+ */
 const utc = (name: string) => datetime(name, { mode: 'date' });
-const createdAt = () => utc('created_at').notNull().default(sql`CURRENT_TIMESTAMP`);
+/** DB-side default, as in the migrations: `(UTC_TIMESTAMP())`, never the session clock. */
+const utcNow = sql`(UTC_TIMESTAMP())`;
+const createdAt = () => utc('created_at').notNull().default(utcNow);
+/**
+ * The tables have no ON UPDATE clause (MariaDB has none in UTC), so every drizzle update() and
+ * onDuplicateKeyUpdate() sets updated_at = UTC_TIMESTAMP() through $onUpdate. Raw SQL writers must set it themselves.
+ */
+const updatedAt = () =>
+  utc('updated_at')
+    .notNull()
+    .default(utcNow)
+    .$onUpdate(() => sql`UTC_TIMESTAMP()`);
 
 // 001_core.sql -------------------------------------------------------------------------------------------------
 
@@ -31,7 +45,7 @@ export const roles = mysqlTable('fredpd_roles', {
   colour: int('colour', { unsigned: true }).notNull().default(0),
   position: int('position').notNull().default(0),
   deleted: boolean('deleted').notNull().default(false),
-  updatedAt: utc('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: updatedAt(),
   createdAt: createdAt(),
 });
 
@@ -85,7 +99,7 @@ export const units = mysqlTable('fredpd_units', {
   home: varchar('home', { length: 32 }),
   sortOrder: smallint('sort_order').notNull().default(0),
   active: boolean('active').notNull().default(true),
-  updatedAt: utc('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+  updatedAt: updatedAt(),
   createdAt: createdAt(),
 });
 
@@ -99,7 +113,7 @@ export const officers = mysqlTable(
     callsign: varchar('callsign', { length: 16 }),
     unit: varchar('unit', { length: 32 }),
     rankRoleId: varchar('rank_role_id', { length: 20 }),
-    updatedAt: utc('updated_at').notNull().default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: updatedAt(),
     createdAt: createdAt(),
   },
   (t) => [uniqueIndex('uq_discord_citizen').on(t.discordId, t.citizenid), uniqueIndex('uq_unit_callsign').on(t.unit, t.callsign)],

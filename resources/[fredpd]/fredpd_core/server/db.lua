@@ -44,7 +44,7 @@ M.SEED_PATTERN = '^[^.].*%.sql$'
 
 --- Atomic {{seq}} allocation (fredpd_sequences, 001_core.sql). The statement's insert id is the new value:
 --- LAST_INSERT_ID(expr) sets it both on first insert and on the duplicate-key update. updated_at is set here
---- because FredPD tables have no ON UPDATE clause (docs/contracts.md §C7: UTC_TIMESTAMP(), never NOW()).
+--- because FredPD tables have no ON UPDATE clause (docs/contracts.md §C7: UTC_TIMESTAMP(), never the session clock).
 M.NEXT_SEQ_SQL = 'INSERT INTO fredpd_sequences (seq_type, year, value) VALUES (?, ?, LAST_INSERT_ID(1)) '
     .. 'ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1), updated_at = UTC_TIMESTAMP()'
 

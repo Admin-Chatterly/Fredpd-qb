@@ -2,9 +2,11 @@
 // Database migrations (docs/contracts.md §C7, docs/modules/db.md): scripts/migrate.mjs (Node, mysql2) and
 // fredpd_core/server/db.lua (Lua, run through tests/lua/mysql_shim.lua) must split, hash and apply
 // db/migrations identically. DB tests use fredpd_test_db (Node) and fredpd_test_db_lua (Lua) on the server from
-// FREDPD_TEST_DB_URL and are skipped with a warning when it is unreachable; Lua parity tests need lua5.4.
+// FREDPD_TEST_DB_URL and are skipped with a warning when it is unreachable; Lua parity tests need lua5.4. The time
+// zone regression test (docs/contracts.md §C7: UTC whatever the server zone) uses fredpd_test_utc_node and
+// fredpd_test_utc_lua and briefly sets the server's GLOBAL time_zone to '+02:00' (restored afterwards).
 import { spawnSync } from 'node:child_process';
-import { cpSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -16,6 +18,8 @@ const SEED_DIR = join(ROOT, 'db', 'seed');
 const STUB_FILE = join(ROOT, 'db', 'dev', 'qbx_stub.sql');
 const NODE_DB = 'fredpd_test_db';
 const LUA_DB = 'fredpd_test_db_lua';
+const UTC_NODE_DB = 'fredpd_test_utc_node';
+const UTC_LUA_DB = 'fredpd_test_utc_lua';
 const DB_TIMEOUT = 60_000;
 
 type Statement = { sql: string; ifTableExists: string | null; line: number };
@@ -23,14 +27,11 @@ type MigrateResult = { applied: string[]; seeded: string[]; skipped: string[] };
 type Row = Record<string, unknown>;
 type Conn = { query(sql: string, values?: unknown[]): Promise<[unknown, unknown]>; end(): Promise<void> };
 type MigrateOptions = {
-  url?: string; connection?: Conn; migrationsDir?: string; seedDir?: string; seed?: boolean; allowNonUtc?: boolean;
-  log?: (m: string) => void;
+  url?: string; connection?: Conn; migrationsDir?: string; seedDir?: string; seed?: boolean; log?: (m: string) => void;
 };
 type MigrateModule = {
   splitStatements(sql: string): Statement[];
   checksum(content: string | Buffer): string;
-  timeZoneProblem(row: Row | null | undefined): string | null;
-  TIME_ZONE_SQL: string;
   listSqlFiles(dir: string, re: RegExp): string[];
   migrate(opts: MigrateOptions): Promise<MigrateResult>;
   status(opts: MigrateOptions): Promise<{ id: string; state: string }[]>;
@@ -241,37 +242,59 @@ describe('scripts/migrate.mjs CLI', () => {
   });
 });
 
-// --- time zone check -----------------------------------------------------------------------------------------
+// --- time zone independence (static) --------------------------------------------------------------------------
 
-// TIME_ZONE_SQL rows as MariaDB returns them (the same rows are in tests/lua/db_test.lua).
-const TZ_ROWS: Row[] = [
-  { tz: 'SYSTEM', system_tz: 'UTC', now_offset: 0, jan_skew: 0, jul_skew: 0 },
-  { tz: '+00:00', system_tz: 'CEST', now_offset: '0', jan_skew: '0', jul_skew: '0' },
-  { tz: 'SYSTEM', system_tz: 'CEST', now_offset: 120, jan_skew: -3600, jul_skew: -7200 },
-  { tz: 'Europe/London', system_tz: 'UTC', now_offset: 0, jan_skew: 0, jul_skew: -3600 },
-  { tz: '-05:30', system_tz: 'UTC', now_offset: -330, jan_skew: 19800, jul_skew: 19800 },
-  {},
-];
+describe('UTC storage (docs/contracts.md §C7)', () => {
+  const SESSION_CLOCK = /\b(CURRENT_TIMESTAMP|NOW\(\)|LOCALTIME|LOCALTIMESTAMP|SYSDATE\(|CURDATE\(|CURTIME\()/i;
 
-describe('timeZoneProblem (scripts/migrate.mjs)', () => {
-  it('accepts only a zone that is UTC all year', () => {
-    expect(mig.timeZoneProblem(TZ_ROWS[0])).toBeNull();
-    expect(mig.timeZoneProblem(TZ_ROWS[1])).toBeNull();
-    expect(mig.timeZoneProblem(TZ_ROWS[2])).toBe(
-      'MariaDB sessions do not use UTC (time_zone=SYSTEM, system_time_zone=CEST; UTC offset now +120 min, January +60, ' +
-        'July +120). docs/contracts.md §C7 requires every DATETIME DEFAULT CURRENT_TIMESTAMP in UTC. ' +
-        "Set default-time-zone='+00:00' under [mysqld] in my.ini (my.cnf on Linux) and restart MariaDB; see docs/modules/db.md.",
-    );
-    expect(mig.timeZoneProblem(TZ_ROWS[3])).toContain('now +0 min, January +0, July +60');
-    expect(mig.timeZoneProblem(TZ_ROWS[4])).toContain('now -330 min, January -330, July -330');
-    expect(mig.timeZoneProblem(null)).toContain('time_zone=nil, system_time_zone=nil; UTC offset now ? min, January ?, July ?');
+  it('migrations and seeds default to (UTC_TIMESTAMP()) and never use the session clock or ON UPDATE', () => {
+    const offenders: string[] = [];
+    for (const [dir, files] of [[MIGRATIONS_DIR, migrationFiles], [SEED_DIR, seedFiles]] as const) {
+      for (const f of files) {
+        for (const s of mig.splitStatements(readFileSync(join(dir, f), 'utf8'))) {
+          if (SESSION_CLOCK.test(s.sql)) offenders.push(`${f}:${s.line}: session clock`);
+          if (/ON UPDATE\s+(UTC|CURRENT|NOW)/i.test(s.sql)) offenders.push(`${f}:${s.line}: ON UPDATE timestamp`);
+          if (/DEFAULT\s+UTC_TIMESTAMP/i.test(s.sql)) offenders.push(`${f}:${s.line}: write DEFAULT (UTC_TIMESTAMP())`);
+        }
+      }
+    }
+    expect(offenders).toEqual([]);
+    expect(mig.MIGRATIONS_TABLE_DDL).toContain('applied_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP())');
   });
 
-  it.skipIf(!LUA)('db.lua judges every row with the same text and uses the same probe SQL', () => {
-    const out = JSON.parse(lua(['tzproblem', JSON.stringify(TZ_ROWS)])) as { problem?: string }[];
-    expect(out.map((o) => o.problem ?? null)).toEqual(TZ_ROWS.map((r) => mig.timeZoneProblem(r)));
-    const consts = JSON.parse(lua(['consts'])) as { timeZoneSql: string };
-    expect(consts.timeZoneSql).toBe(mig.TIME_ZONE_SQL);
+  it('FredPD code never writes the session clock into SQL (Lua, service, scripts)', () => {
+    // NOW() in upper case only (a lower-case now() is a JS/Lua clock call); the other names in any case.
+    const CODE_CLOCK = [/(?<![\w.$])NOW\(\)/, /\b(?:CURRENT_TIMESTAMP|LOCALTIMESTAMP)\b|\b(?:SYSDATE|CURDATE|CURTIME)\s*\(/i];
+    const roots = [join(ROOT, 'resources', '[fredpd]'), join(ROOT, 'apps', 'service', 'src'), join(ROOT, 'scripts')];
+    const skip = new Set(['node_modules', 'migrations', 'build', 'dist', 'locales', 'fixtures', 'config', 'test']);
+    const offenders: string[] = [];
+    const walk = (dir: string) => {
+      if (!existsSync(dir)) return;
+      for (const name of readdirSync(dir)) {
+        const path = join(dir, name);
+        if (statSync(path).isDirectory()) {
+          if (!skip.has(name)) walk(path);
+        } else if (/\.(lua|js|mjs|ts|tsx)$/.test(name)) {
+          readFileSync(path, 'utf8').split('\n').forEach((line, i) => {
+            for (const re of CODE_CLOCK) {
+              const m = re.exec(line);
+              if (m) offenders.push(`${path.slice(ROOT.length)}:${i + 1}: ${m[0]}`);
+            }
+          });
+        }
+      }
+    };
+    roots.forEach(walk);
+    expect(offenders).toEqual([]);
+  });
+
+  it('the runners have no time zone check left', () => {
+    const js = readFileSync(MIGRATE_PATH, 'utf8');
+    const lua = readFileSync(join(ROOT, 'resources', '[fredpd]', 'fredpd_core', 'server', 'db.lua'), 'utf8');
+    for (const text of [js, lua]) {
+      expect(text).not.toMatch(/allowNonUtc|allow-non-utc|timeZoneProblem|TIME_ZONE_SQL|SET time_zone/);
+      expect(text).not.toMatch(SESSION_CLOCK);
+    }
   });
 });
 
@@ -374,8 +397,13 @@ describe.skipIf(!admin)('migrations against MariaDB', () => {
     const byTable = new Map(created.map((c) => [String(c.t), c]));
     for (const t of expected) {
       expect(byTable.get(t)?.d, t).toBe('datetime');
-      expect(String(byTable.get(t)?.def).toLowerCase(), t).toMatch(/^current_timestamp/);
+      expect(String(byTable.get(t)?.def).toLowerCase(), t).toBe('utc_timestamp()');
     }
+    // No DATETIME default reads the session clock and nothing updates itself (writers set updated_at, §C7).
+    const clocks = await rows(conn,
+      "SELECT CONCAT(table_name, '.', column_name) AS c, column_default AS def, extra AS x FROM information_schema.columns WHERE table_schema = DATABASE() AND table_name LIKE 'fredpd\\_%' AND data_type IN ('datetime', 'timestamp')");
+    expect(clocks.filter((c) => c.def !== null && !['utc_timestamp()', 'null'].includes(String(c.def).toLowerCase())).map((c) => `${String(c.c)} ${String(c.def)}`)).toEqual([]);
+    expect(clocks.filter((c) => /on update/i.test(String(c.x ?? ''))).map((c) => c.c)).toEqual([]);
     const keys = await rows(conn,
       "SELECT table_name AS t, index_name AS i, GROUP_CONCAT(column_name ORDER BY seq_in_index) AS cols, MAX(non_unique) AS nu, MAX(index_type) AS type FROM information_schema.statistics WHERE table_schema = DATABASE() GROUP BY table_name, index_name");
     const key = (t: string, i: string) => keys.find((k) => k.t === t && k.i === i);
@@ -419,22 +447,20 @@ describe.skipIf(!admin)('migrations against MariaDB', () => {
     }
   });
 
-  it('checks the server default time zone, writes in UTC on a caller connection and restores its zone', { timeout: DB_TIMEOUT }, async () => {
+  it('writes UTC on a caller connection at +02:00 and leaves its zone alone', { timeout: DB_TIMEOUT }, async () => {
     const conn = await mig.connect(nodeUrl);
     connections.push(conn);
-    const [[probe]] = (await conn.query(mig.TIME_ZONE_SQL)) as [Row[], unknown];
-    expect(mig.timeZoneProblem(probe)).toBeNull(); // connect() sets the session to UTC
     const id = '008_tablets.sql';
     await conn.query('DELETE FROM fredpd_migrations WHERE id = ?', [id]); // so migrate() writes a row
     await conn.query("SET time_zone = '+02:00'");
-    // Passes although this session is +02:00: the check reads the default (UTC on the test server).
     const r = await mig.migrate({ connection: conn, log: noop, seed: true });
     expect(r).toEqual({ applied: [id], seeded: [], skipped: [] });
     expect(await rows(conn, 'SELECT @@session.time_zone AS tz')).toEqual([{ tz: '+02:00' }]);
-    // applied_at (DEFAULT CURRENT_TIMESTAMP) was written in UTC, not in the caller's +02:00.
-    await conn.query("SET time_zone = '+00:00'");
-    const [skew] = await rows(conn, 'SELECT TIMESTAMPDIFF(MINUTE, applied_at, UTC_TIMESTAMP()) AS m FROM fredpd_migrations WHERE id = ?', [id]);
-    expect(Math.abs(Number(skew?.m))).toBeLessThanOrEqual(1);
+    // applied_at (DEFAULT (UTC_TIMESTAMP())) is UTC although the session is +02:00.
+    const [skew] = await rows(conn,
+      'SELECT TIMESTAMPDIFF(SECOND, applied_at, UTC_TIMESTAMP()) AS utc, TIMESTAMPDIFF(MINUTE, applied_at, NOW()) AS session FROM fredpd_migrations WHERE id = ?', [id]);
+    expect(Math.abs(Number(skew?.utc))).toBeLessThanOrEqual(60);
+    expect(Number(skew?.session)).toBeGreaterThanOrEqual(119);
   });
 
   it('tolerates a migration recorded concurrently with the same checksum, rejects another', { timeout: DB_TIMEOUT }, async () => {
@@ -565,5 +591,74 @@ describe.skipIf(!admin)('migrations against MariaDB', () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  // Regression for docs/contracts.md §C7: a Windows MariaDB defaults to SYSTEM = Europe/Stockholm. Both runners
+  // must migrate there, and every default must still be UTC. The GLOBAL zone is what oxmysql and every new
+  // session inherit, so it is switched for the duration of this test (restored in finally; if this user may not
+  // set it, only the sessions are switched and a warning says so).
+  it('migrates with global and session time_zone +02:00 and every created_at default is UTC (both runners)', { timeout: DB_TIMEOUT }, async () => {
+    if (!admin) throw new Error('no database');
+    const [[before]] = (await admin.query('SELECT @@global.time_zone AS tz')) as [Row[], unknown];
+    const original = String(before?.tz);
+    let global = true;
+    try {
+      await admin.query("SET GLOBAL time_zone = '+02:00'");
+    } catch (err) {
+      global = false;
+      console.warn(`[migrations.test] cannot SET GLOBAL time_zone (${(err as Error).message}); testing +02:00 sessions only`);
+    }
+    const checked: Row[] = [];
+    try {
+      for (const db of [UTC_NODE_DB, UTC_LUA_DB]) {
+        await admin.query(`DROP DATABASE IF EXISTS \`${db}\``);
+        await admin.query(`CREATE DATABASE \`${db}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_swedish_ci`);
+      }
+      // Node runner on a connection of its own (the global zone) or on a +02:00 caller connection.
+      const nodeConn = await mig.connect(urlFor(UTC_NODE_DB));
+      connections.push(nodeConn);
+      if (!global) await nodeConn.query("SET time_zone = '+02:00'");
+      const r = await mig.migrate(global ? { url: urlFor(UTC_NODE_DB), log: noop, seed: true } : { connection: nodeConn, log: noop, seed: true });
+      expect(r.applied).toEqual(migrationFiles);
+      // Lua runner: every shim query is a new session, as with oxmysql's pool.
+      if (LUA) {
+        const out = lua(['migrate', UTC_LUA_DB, '--reset', '--stub', ...(global ? [] : ['--time-zone=+02:00'])]);
+        const lr = JSON.parse(out.split('\n').find((l) => l.startsWith('RESULT '))?.slice(7) ?? 'null') as MigrateResult;
+        expect(lr.applied).toEqual(migrationFiles);
+      }
+      for (const db of LUA ? [UTC_NODE_DB, UTC_LUA_DB] : [UTC_NODE_DB]) {
+        const conn = await mig.connect(urlFor(db));
+        connections.push(conn);
+        if (!global) await conn.query("SET time_zone = '+02:00'");
+        const [zone] = await rows(conn, 'SELECT @@global.time_zone AS g, @@session.time_zone AS s, TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), NOW()) AS off');
+        expect({ s: zone?.s, off: Number(zone?.off) }).toEqual({ s: '+02:00', off: 120 });
+        if (global) expect(zone?.g).toBe('+02:00');
+        // Rows the migration wrote through defaults, plus one fresh insert per kind of table.
+        await conn.query("INSERT INTO fredpd_audit (action) VALUES ('test.utc')");
+        await conn.query("INSERT INTO fredpd_tablets (serial) VALUES ('UTC-1')");
+        await conn.query("INSERT INTO fredpd_roles (discord_role_id, name) VALUES ('1', 'utc')");
+        const probes = [
+          'SELECT applied_at AS t FROM fredpd_migrations', 'SELECT created_at AS t FROM fredpd_migrations',
+          'SELECT created_at AS t FROM fredpd_charges', 'SELECT updated_at AS t FROM fredpd_charges',
+          'SELECT created_at AS t FROM fredpd_visibility_rules', "SELECT created_at AS t FROM fredpd_audit WHERE action = 'test.utc'",
+          "SELECT issued_at AS t FROM fredpd_tablets WHERE serial = 'UTC-1'", "SELECT created_at AS t FROM fredpd_tablets WHERE serial = 'UTC-1'",
+          "SELECT updated_at AS t FROM fredpd_roles WHERE discord_role_id = '1'", "SELECT created_at AS t FROM fredpd_roles WHERE discord_role_id = '1'",
+        ];
+        for (const q of probes) {
+          const [skew] = await rows(conn,
+            `SELECT COUNT(*) AS n, MAX(ABS(TIMESTAMPDIFF(SECOND, x.t, UTC_TIMESTAMP()))) AS utc, MIN(TIMESTAMPDIFF(MINUTE, x.t, NOW())) AS session FROM (${q}) x`);
+          checked.push({ db, q, ...skew });
+          expect(Number(skew?.n), `${db}: ${q}`).toBeGreaterThan(0);
+          expect(Number(skew?.utc), `${db}: ${q} is UTC`).toBeLessThanOrEqual(60);
+          expect(Number(skew?.session), `${db}: ${q} is not session time`).toBeGreaterThanOrEqual(119);
+        }
+      }
+    } finally {
+      if (global) await admin.query('SET GLOBAL time_zone = ?', [original]);
+    }
+    const [after] = await rows(admin, 'SELECT @@global.time_zone AS tz');
+    expect(after?.tz).toBe(original);
+    expect(checked.length).toBeGreaterThanOrEqual(10);
+    for (const db of [UTC_NODE_DB, UTC_LUA_DB]) await admin.query(`DROP DATABASE IF EXISTS \`${db}\``);
   });
 });

@@ -209,8 +209,8 @@ tests['migrations and seeds never use the session clock (docs/contracts.md §C7)
             end
             t.ok(not upper:find('ON UPDATE%s+UTC') and not upper:find('ON UPDATE%s+CURRENT'),
                 ('%s line %d: ON UPDATE timestamp (writers set updated_at themselves)'):format(path, st.line))
-            -- A default must be the parenthesised expression; a bare UTC_TIMESTAMP() default is a syntax error.
-            t.ok(not upper:find('DEFAULT%s+UTC_TIMESTAMP'), ('%s line %d: DEFAULT UTC_TIMESTAMP() needs parentheses'):format(path, st.line))
+            -- One spelling: the parenthesised expression default (MariaDB accepts both, MySQL 8 only this one).
+            t.ok(not upper:find('DEFAULT%s+UTC_TIMESTAMP'), ('%s line %d: write DEFAULT (UTC_TIMESTAMP())'):format(path, st.line))
         end
     end
 end

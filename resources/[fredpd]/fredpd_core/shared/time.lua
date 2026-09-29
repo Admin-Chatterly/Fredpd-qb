@@ -76,7 +76,7 @@ end
 
 --- Parse 'YYYY-MM-DD HH:MM:SS' / 'YYYY-MM-DDTHH:MM:SS' with an optional fraction and an optional zone
 --- ('Z', '+HH:MM', '+HHMM', '-…'; none = UTC, as MariaDB DATETIME text is UTC in FredPD). Returns the UTC parts
---- { y, m, d, h, mi, s, frac } or nil and a reason.
+--- { y, m, d, h, mi, s, frac }, false for MariaDB's zero date, or nil and a reason.
 local function parse(v)
     local y, mo, d, h, mi, s, rest = v:match('^(%d%d%d%d)%-(%d%d)%-(%d%d)[T ](%d%d):(%d%d):(%d%d)(.*)$')
     if not y then return nil, 'not a YYYY-MM-DD HH:MM:SS timestamp' end

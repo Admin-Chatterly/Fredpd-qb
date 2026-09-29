@@ -1,6 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// mysql2 pool + drizzle. Every connection runs in UTC (docs/contracts.md §C7): DATETIME values are UTC, and the
-// CURRENT_TIMESTAMP defaults must be UTC too, whatever the server's default zone is.
+// mysql2 pool + drizzle. DATETIME columns hold UTC (docs/contracts.md §C7) whatever the MariaDB server or session
+// time zone is: defaults are (UTC_TIMESTAMP()) and SQL never reads the session clock, so sessions keep the server's
+// zone. `timezone: 'Z'` makes mysql2 write JS Dates as UTC text and read DATETIME into Dates as UTC (raw pool
+// queries); drizzle reads DATETIME as text and appends 'Z' itself (schema.ts `utc()`). test/utc.test.ts proves the
+// round trip with the session at +02:00.
 import { drizzle } from 'drizzle-orm/mysql2';
 import type { MySql2Database } from 'drizzle-orm/mysql2';
 import mysql from 'mysql2/promise';
@@ -24,10 +27,6 @@ export function createDatabase(url: string, opts: { connectionLimit?: number } =
     // Pool connections are opened lazily, so a test that never queries never connects.
     waitForConnections: true,
     enableKeepAlive: true,
-  });
-  // 'connection' hands over the callback-style core connection of each new pooled connection.
-  pool.on('connection', (conn) => {
-    conn.query("SET time_zone = '+00:00'");
   });
   const db = drizzle({ client: pool, schema, mode: 'default' });
   return { db, pool, close: () => pool.end() };

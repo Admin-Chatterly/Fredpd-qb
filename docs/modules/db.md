@@ -10,26 +10,47 @@ Implements docs/contracts.md §C7. Owned files:
 | `db/dev/qbx_stub.sql` | minimal qbx `players` / `player_vehicles` for tests (never on a server) |
 | `resources/[fredpd]/fredpd_core/server/db.lua` | canonical runner (oxmysql) + query helpers |
 | `resources/[fredpd]/fredpd_core/shared/sha256.lua` | pure Lua SHA-256 for checksums |
+| `resources/[fredpd]/fredpd_core/shared/time.lua` | UTC timestamps: `isoSelect`, `toIsoUtc`, `toDatetime`, `toEpoch`, `nowIso` |
 | `scripts/migrate.mjs` | same runner on mysql2 (dev, CI, service tests) |
-| `tests/lua/db_test.lua`, `tests/lua/mysql_shim.lua` | Lua tests; fake `MySQL` global backed by the `mariadb` CLI |
+| `tests/lua/db_test.lua`, `tests/lua/time_test.lua`, `tests/lua/mysql_shim.lua` | Lua tests; fake `MySQL` global backed by the `mariadb` CLI |
 | `packages/types/test/migrations.test.ts` | Node tests + Lua/Node parity |
 
-> **First install: MariaDB must run in UTC, or FredPD creates no tables.** Both runners refuse to migrate while
-> the server's default time zone is not UTC (Windows MariaDB defaults to `SYSTEM` = Stockholm). fredpd_core's
-> `main.lua` calls `Db.migrate()` without options and only logs the error, so the resource starts with every
-> `fredpd_*` table missing. Put `default-time-zone = '+00:00'` under `[mysqld]` in `my.ini` **before** the first
-> start (details in "Using it"). Hand-off, not done by this module: the hosting doc and the phase-1 test
-> checklist should lead with this step, and fredpd_core should read a convar (e.g. `fredpd_db_allow_non_utc`) and
-> pass it as `Db.migrate({ allowNonUtc = … })`.
+## Time zones: UTC storage on any server
+
+docs/contracts.md §C7. FredPD stores every DATETIME as **UTC** and does not care which time zone the MariaDB server
+or session uses (a Windows MariaDB defaults to `SYSTEM` = Europe/Stockholm; nothing has to change in `my.ini`, and
+other resources on the same server keep their local-time data):
+
+- **Defaults** are `DEFAULT (UTC_TIMESTAMP())`: an expression default (MariaDB 10.2+). MariaDB also takes it without
+  the parentheses, MySQL 8 does not, so the parenthesised form is the one convention (linted). Never
+  `CURRENT_TIMESTAMP`/`NOW()` (session clock).
+- **No `ON UPDATE`.** MariaDB has no `ON UPDATE UTC_TIMESTAMP()`, so every writer sets `updated_at = UTC_TIMESTAMP()`
+  itself. Lua upserts use `Core.buildInsert(..., touch = 'updated_at')`, which puts
+  `updated_at = IF(BINARY a <=> BINARY VALUES(a) AND …, updated_at, UTC_TIMESTAMP())` **first** in the
+  `ON DUPLICATE KEY UPDATE` list (MariaDB assigns left to right, so it still sees the old values): like the old
+  `ON UPDATE`, only a real change (byte comparison, so a case-only change counts) moves it. `charges_sv.sql` does
+  the same by hand. Plain `UPDATE`s add `, updated_at = UTC_TIMESTAMP()` and a `WHERE` that skips unchanged rows
+  where that matters (units sync, officer relink). The service's drizzle schema sets it through `$onUpdate`.
+- **Writes** use `UTC_TIMESTAMP()` (and `UTC_TIMESTAMP() - INTERVAL n DAY` for cutoffs); a timestamp from the wire
+  is bound as `Time.toDatetime(iso)` (Lua) or a JS `Date` (mysql2 `timezone: 'Z'` writes it as UTC text).
+- **Reads in Lua**: oxmysql turns DATETIME into epoch milliseconds read in the FXServer host's **local** zone (off
+  by 1–2 h on a Stockholm host). Select DATETIME as text instead: `Time.isoSelect('b.created_at', 'createdAt')` →
+  `DATE_FORMAT(b.created_at, '%Y-%m-%dT%H:%i:%sZ') AS createdAt` (identifiers validated; the `%` means the finished
+  SQL must not go through `string.format`). `Time.toIsoUtc(v)` normalises `YYYY-MM-DD HH:MM:SS`/ISO text (numbers
+  raise, with that explanation). `Time.nowIso()` = `os.date('!%Y-%m-%dT%H:%M:%SZ')`.
+- **Reads in Node**: mysql2 with `timezone: 'Z'` (service pool, `migrate.mjs`), drizzle reads text and appends `Z`.
+- The runners never check or set the time zone. `db/dev/qbx_stub.sql` keeps upstream qbx's `TIMESTAMP … ON UPDATE
+  CURRENT_TIMESTAMP` (it mirrors a table FredPD does not own; `TIMESTAMP` is stored zone-independently anyway).
+- Guards: db_test.lua and migrations.test.ts reject `CURRENT_TIMESTAMP`, `NOW()`, `LOCALTIME…`, `SYSDATE/CURDATE/
+  CURTIME(`, `ON UPDATE <clock>` and an unparenthesised `DEFAULT UTC_TIMESTAMP` in every migration/seed statement,
+  and migrations.test.ts rejects the session-clock functions in all FredPD Lua/JS/TS code (`resources/[fredpd]`,
+  `apps/service/src`, `scripts`; upper-case `NOW()` only, since `x.now()` is a clock call).
 
 ## Runner algorithm (both runners)
 
-0. Time zone check (`TIME_ZONE_SQL`, judged by `timeZoneProblem`, same text in both runners): the zone must be
-   UTC now and in January and July, else an error **before anything runs** (`allowNonUtc` / `--allow-non-utc`
-   downgrades it to a logged warning). db.lua checks its own oxmysql session (= the server default); migrate.mjs
-   sets its session to UTC, so it checks the server **default** (`SET time_zone = DEFAULT`, then restores).
-   migrate.mjs then writes in a UTC session even on a caller-supplied `connection` (its zone is restored
-   afterwards), so `applied_at` and seeded `created_at` are UTC whatever zone the caller's session had.
+No time zone step: `applied_at`, `created_at` and seeded rows get `(UTC_TIMESTAMP())` defaults in any session, and a
+caller-supplied `connection` (migrate.mjs) is used as it is.
+
 1. `CREATE TABLE IF NOT EXISTS fredpd_migrations` (`MIGRATIONS_TABLE_DDL`, byte-identical to the first statement of
    001; a test checks all three copies).
 2. Migrations: file names matching `^\d{3}_.+\.sql$` (≤ 64 chars), sorted by bytes. Node reads `db/migrations`;
@@ -64,21 +85,6 @@ wasteful; avoid running `migrate.mjs` against the live database while FXServer i
 
 ## Using it
 
-**MariaDB must run in UTC.** docs/contracts.md §C7 stores every `created_at` (and every other `CURRENT_TIMESTAMP`
-default) as UTC, and oxmysql never sets a session time zone, so FXServer writes in the server's default zone. A
-Windows install defaults to `time_zone = SYSTEM` (Europe/Stockholm): both runners then refuse to migrate. Remedy,
-once per host, in `my.ini` (Windows, e.g. `C:\Program Files\MariaDB 10.11\data\my.ini`) or `my.cnf`:
-
-```ini
-[mysqld]
-default-time-zone = '+00:00'
-```
-
-then restart MariaDB and check with `SELECT @@global.time_zone` (`+00:00`). Side effect: other resources on the
-same server that write local time through `NOW()` / `CURRENT_TIMESTAMP` into DATETIME columns start writing UTC
-(qbx_core's `TIMESTAMP` columns are zone-independent and unaffected). If that is unacceptable, run with
-`allowNonUtc` and accept that FredPD times are local, contrary to the contract; do not mix both on one database.
-
 Lua (fredpd_core owner): fxmanifest needs `'@oxmysql/lib/MySQL.lua'` in `server_scripts` and the build-copied
 `migrations/` folder on disk. Do **not** list `migrations/` under `files`: server-side `LoadResourceFile` reads
 any file of the resource, and `files` would only stream the schema and seeds to every client. Load with
@@ -91,19 +97,19 @@ MySQL.ready(function()
 end)
 ```
 
-`db.migrate(opts)`: `opts.seed` (default true), `opts.allowNonUtc` (default false), `opts.log`, `opts.resource`.
+`db.migrate(opts)`: `opts.seed` (default true), `opts.log`, `opts.resource`.
 Helpers: `db.query/scalar/single/
 insert/update/transaction` (thin `MySQL.*.await` wrappers, coroutine only), `db.nextSeq(seqType, year)` (atomic
 `{{seq}}` counter; the insert id of `INSERT … LAST_INSERT_ID(value + 1)`; verified through mysql2, which oxmysql uses),
-`db.splitStatements`, `db.checksum`, `db.normalize`, `db.sortNames`, `db.timeZoneProblem`. The helpers are raw access: gameplay writes to
+`db.splitStatements`, `db.checksum`, `db.normalize`, `db.sortNames`. The helpers are raw access: gameplay writes to
 `fredpd_*` must still go through the audited core helpers.
 
-Node: `node scripts/migrate.mjs [--url mysql://…] [--seed] [--status] [--allow-non-utc]` (`FREDPD_DB_URL`).
+Node: `node scripts/migrate.mjs [--url mysql://…] [--seed] [--status]` (`FREDPD_DB_URL`).
 `--status` is read-only (on a database without `fredpd_migrations` it reports everything pending and creates
 nothing); exit 1 when an applied migration changed. The CLI runs when the real path of `argv[1]` is this file, so
 a symlinked checkout, a Windows junction or a `subst` drive work too.
 Exports `migrate`, `status`, `connect`, `splitStatements`, `checksum`, `normalizeBytes`, `listSqlFiles`,
-`timeZoneProblem`, `MIGRATIONS_TABLE_DDL`, `TIME_ZONE_SQL`, … The root package does not depend on mysql2, so
+`MIGRATIONS_TABLE_DDL`, … (`connect()` keeps the server's session zone; `timezone: 'Z'` for Dates). The root package does not depend on mysql2, so
 migrate.mjs falls back to `apps/service`'s copy and says `run pnpm install` when neither resolves (open questions).
 
 ### Joining qbx tables
@@ -127,8 +133,10 @@ qbx_core `players` and qbx_vehicles `player_vehicles` are `utf8mb4_unicode_ci`; 
 ## Writing a new migration
 
 `NNN_name.sql`, never edit one that has been applied anywhere. `CREATE TABLE IF NOT EXISTS`, `ADD COLUMN IF NOT
-EXISTS`, `CREATE INDEX IF NOT EXISTS`, InnoDB + `utf8mb4_swedish_ci` + `created_at` (db_test.lua lints 001–008 for
-this). No `DELIMITER`, procedures or triggers. No `?` anywhere in a statement, not even in a string or comment:
+EXISTS`, `CREATE INDEX IF NOT EXISTS`, InnoDB + `utf8mb4_swedish_ci` + `created_at DATETIME NOT NULL DEFAULT
+(UTC_TIMESTAMP())` (db_test.lua lints 001–008 for this), no `ON UPDATE`, no session-clock function (linted in every
+file). 001–009 were edited in place for the UTC change before anything was deployed (checksums changed; the test
+databases rebuild themselves, see Tests). No `DELIMITER`, procedures or triggers. No `?` anywhere in a statement, not even in a string or comment:
 oxmysql binds every `?` to NULL when a statement has no parameters (both test suites reject it).
 
 ## Seeds are the source of truth
@@ -148,7 +156,8 @@ A seed re-runs whenever its file changes (Lua: on the next FXServer start). Cons
 ## Schema decisions
 
 - **Types**: `citizenid VARCHAR(50)` (qbx_core), Discord ids `VARCHAR(20)`, units `VARCHAR(32)`, levels `TINYINT
-  UNSIGNED CHECK (level <= 2)`, JSON columns (MariaDB `LONGTEXT` + `json_valid`). Times are `DATETIME`, meant as UTC.
+  UNSIGNED CHECK (level <= 2)`, JSON columns (MariaDB `LONGTEXT` + `json_valid`). Times are `DATETIME` in UTC
+  (see "Time zones").
 - **FKs** only between FredPD tables. Attachments cascade (assignees, subjects, drafts, alert units, mission members,
   role grants, graph links); records are kept (reports, charges applied, evidence, intel reports reference with the
   default RESTRICT, or SET NULL for optional links such as `template_id`).
@@ -195,29 +204,40 @@ bands (ordningsbot up to 30 km/h over, bot above). `law_ref` values are best eff
 
 ## Tests
 
-- `lua5.4 tests/lua/run.lua tests/lua/db_test` — sha256 vectors, splitter, conventions lint, and real
-  `db.migrate()` runs on `fredpd_test_db_lua` via the shim (skipped with a notice when MariaDB is unreachable).
+- `lua5.4 tests/lua/run.lua tests/lua/db_test` — sha256 vectors, splitter, conventions and session-clock lint, and
+  real `db.migrate()` runs on `fredpd_test_db_lua` via the shim, one of them with every session at `+02:00`
+  (defaults and a re-applied seed's `applied_at` are UTC; skipped with a notice when MariaDB is unreachable).
+  `run.lua time_test` covers shared/time.lua (plus a DATE_FORMAT round trip in a `+02:00` session).
   The expected seed list is read from `db/seed`, so other modules may add seeds. (`run.lua db_test` also matches
   core_db_test.)
 - `pnpm exec vitest run --project types migrations` — splitter cases (also fed through db.lua for parity), seed
-  checks, CLI through a symlinked path, Node runner on `fredpd_test_db` (read-only status, fresh, no-op rerun,
-  drift, UTC writes on a caller connection, FULLTEXT/EXPLAIN, schema), Lua runner via
+  checks, session-clock lint of all FredPD code, CLI through a symlinked path, Node runner on `fredpd_test_db`
+  (read-only status, fresh, no-op rerun, drift, UTC writes on a `+02:00` caller connection, FULLTEXT/EXPLAIN, schema
+  incl. every DATETIME default = `utc_timestamp()` and no `on update`), Lua runner via
   `lua5.4 tests/lua/mysql_shim.lua migrate`, then identical `fredpd_migrations` rows, columns, indexes, FKs, checks
   and seed data in both databases, and the same `<file>: line N: …` error from both for a malformed file. The last
-  test leaves both test databases holding only an empty `fredpd_migrations`.
+  test on `fredpd_test_db*` leaves both holding only an empty `fredpd_migrations`. The **time zone regression**
+  then sets the server's `GLOBAL time_zone` to `+02:00` (restored in `finally`; falls back to `+02:00` sessions with a
+  warning if the user lacks the privilege), runs both runners on `fredpd_test_utc_node` / `fredpd_test_utc_lua` and
+  checks that `applied_at`, `created_at` (migrations, charges, rules, fresh audit/tablet/role rows), `issued_at` and
+  `updated_at` defaults are within a minute of `UTC_TIMESTAMP()` and two hours off the session clock, then drops both.
 - Server/credentials from `FREDPD_TEST_DB_URL` (default `mysql://fredpd:fredpd@127.0.0.1:3306/fredpd_test`); the
-  tests drop and recreate `fredpd_test_db` and `fredpd_test_db_lua`. The test server's default time zone must be
-  UTC (see "Using it"), otherwise every runner test fails with the time zone message, as production would.
+  tests drop and recreate `fredpd_test_db` and `fredpd_test_db_lua`; `fredpd_test_core_lua` is reset once per Lua
+  run; the service's `setupTestDb` drops and rebuilds its database when an applied migration's checksum changed or
+  its file is gone (under a per-database `GET_LOCK`, so parallel test files rebuild it once). Any server time zone
+  works.
 - The shim keeps the server's default session time zone like oxmysql; `shim.sessionTimeZone = '+02:00'` (or
-  `install({ sessionTimeZone = … })`) simulates a non-UTC server.
+  `install({ sessionTimeZone = … })`, CLI `--time-zone=+02:00`) simulates a non-UTC server. core_db_test.lua runs
+  all its sessions at `+02:00`.
 
 ## Open questions
 
 - Add `mysql2` as a root devDependency so `scripts/migrate.mjs` does not borrow `apps/service`'s copy (needs
   `pnpm add -Dw mysql2`, which this module may not run).
-- UTC is enforced (hard error unless `allowNonUtc`), which breaks a default Windows install on first start. For
-  the core and hosting owners: lead docs/hosting.md and the phase-1 checklist with the `my.ini` step, and add a
-  convar for `allowNonUtc` in fredpd_core (main.lua calls `Db.migrate()` without options). See the box at the top.
+- IMPLEMENTATION.md §6 still says `created_at DATETIME DEFAULT CURRENT_TIMESTAMP`; docs/contracts.md §C7 (UTC
+  defaults) supersedes it. Not edited here (not owned).
+- The time zone regression briefly changes the test server's `GLOBAL time_zone`. FredPD code does not care, but
+  a non-FredPD process on the same test server that opens a session in that window gets `+02:00`.
 - fredpd_core's fxmanifest lists `'migrations/*'` under `files`; the core owner should remove it (see "Using it").
 - A per-seed apply-once mode (e.g. a `-- @seed-once` header) would stop re-inserting deleted visibility rules, but
   extends the §C7 directive grammar and means new default rules need a migration; not done, disable-not-delete

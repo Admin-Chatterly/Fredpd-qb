@@ -147,11 +147,17 @@ export function testDbUrl(database: string = TEST_DB): string {
   return u.toString();
 }
 
-type MigrateModule = { migrate(opts: { url: string; log?: (m: string) => void }): Promise<unknown> };
+type MigrateModule = {
+  migrate(opts: { url: string; log?: (m: string) => void }): Promise<unknown>;
+  status(opts: { url: string }): Promise<{ id: string; state: string }[]>;
+};
 
 /**
  * Create (if needed) and migrate fredpd_test_service (or another test database); null with a warning when MariaDB
- * is unreachable, so DB tests skip. migrate() takes a server-side lock, so parallel test files do not race.
+ * is unreachable, so DB tests skip. A test database whose applied migrations no longer match db/migrations (an
+ * edited migration, or one that disappeared) is dropped and rebuilt, since the runner rightly refuses drift. The
+ * check-drop-migrate runs under a server-side lock per database, so the first of the parallel test files rebuilds
+ * it and the others find it current.
  */
 export async function setupTestDb(tag: string, database: string = TEST_DB): Promise<Database | null> {
   const admin = new URL(BASE_URL);
@@ -163,14 +169,23 @@ export async function setupTestDb(tag: string, database: string = TEST_DB): Prom
     console.warn(`[${tag}] database unreachable at ${admin.host} (${(err as Error).message}); skipping DB tests`);
     return null;
   }
-  try {
-    await conn.query(`CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_swedish_ci`);
-  } finally {
-    await conn.end();
-  }
   const migratePath: string = join(ROOT, 'scripts', 'migrate.mjs');
   const mig = (await import(migratePath)) as MigrateModule;
-  await mig.migrate({ url: testDbUrl(database), log: () => {} });
+  const lock = `fredpd_test_setup_${database}`.slice(0, 64);
+  try {
+    const [[got]] = (await conn.query('SELECT GET_LOCK(?, 120) AS ok', [lock])) as unknown as [[{ ok: number }]];
+    if (Number(got.ok) !== 1) throw new Error(`[${tag}] could not lock ${database} for setup`);
+    await conn.query(`CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_swedish_ci`);
+    const states = await mig.status({ url: testDbUrl(database) });
+    if (states.some((s) => (s.state === 'changed' || s.state === 'missing') && !s.id.startsWith('seed/'))) {
+      await conn.query(`DROP DATABASE \`${database}\``);
+      await conn.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_swedish_ci`);
+    }
+    await mig.migrate({ url: testDbUrl(database), log: () => {} });
+  } finally {
+    await conn.query('SELECT RELEASE_LOCK(?)', [lock]).catch(() => {});
+    await conn.end();
+  }
   return createDatabase(testDbUrl(database), { connectionLimit: 4 });
 }
 
@@ -201,7 +216,7 @@ export async function rows<T = Record<string, unknown>>(database: Database, sql:
 
 export async function seedRole(database: Database, id: string, name: string, position: number, grants: [string, string, 'allow' | 'deny'][] = [], deleted = false): Promise<void> {
   await database.pool.query(
-    'INSERT INTO fredpd_roles (discord_role_id, name, position, deleted) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), position = VALUES(position), deleted = VALUES(deleted)',
+    'INSERT INTO fredpd_roles (discord_role_id, name, position, deleted) VALUES (?, ?, ?, ?) ON DUPLICATE KEY UPDATE name = VALUES(name), position = VALUES(position), deleted = VALUES(deleted), updated_at = UTC_TIMESTAMP()',
     [id, name, position, deleted ? 1 : 0],
   );
   for (const [type, key, effect] of grants) {

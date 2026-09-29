@@ -12,7 +12,7 @@ Node 22 + Fastify 5 + discord.js 14 + drizzle/mysql2, one process (`apps/service
 | `src/config.ts` | zod-validated env (`.env.example` lists all); short secrets and every `.env.example` placeholder refused (secrets, Discord credentials, all-zero ids, DB password); `SESSION_SECRET` ≠ `FREDPD_HMAC_SECRET` |
 | `src/app.ts` | `buildApp(deps)`: plugins, hooks, routes; deps = config, db, gateway, fx, clock, oauth?, fetch?, discordTokenHost?, log?, unitOrder? |
 | `src/main.ts` | real deps, schema check, listen, bot login; SIGINT/SIGTERM or a fatal bot error → bot, HTTP, pool |
-| `src/db/schema.ts`, `client.ts`, `repo.ts` | drizzle mirror of 001/009 tables; UTC pool; every SQL statement |
+| `src/db/schema.ts`, `client.ts`, `repo.ts` | drizzle mirror of 001/009 tables; mysql2 `timezone: 'Z'` pool; every SQL statement |
 | `src/grants.ts` | `computeGrants` = gateway member roles + DB rows → `resolveGrants` |
 | `src/discord/gateway.ts` | `DiscordGateway` / `GatewayEvents` interfaces (tests fake them) |
 | `src/discord/bot.ts` | discord.js adapter (intents Guilds + GuildMembers); per-member ordered event handling |
@@ -102,7 +102,13 @@ Errors are always `{ error: <code>, detail? }`; codes and their locale keys are 
 - **Audit actions written**: `perms.update`, `auth.login`, `auth.logout`, `roles.sync`, `officer.identity`,
   `upload.create` (labels in `locales/pending/service.json`). Not audited per row, as in fredpd_core:
   `fredpd_grant_cache`, `fredpd_identities`, `fredpd_sessions`.
-- **DB time**: pool sessions `SET time_zone = '+00:00'`; comparisons use the injected clock, not `NOW()`.
+- **DB time** (docs/contracts.md §C7): DATETIME is UTC whatever the MariaDB server/session zone, and the pool no
+  longer sets a session zone. mysql2 runs with `timezone: 'Z'` (Dates written and raw-read as UTC); drizzle reads
+  DATETIME as text + `Z`. Schema defaults are `(UTC_TIMESTAMP())`; `updated_at` columns have
+  `$onUpdate(() => sql\`UTC_TIMESTAMP()\`)`, so every drizzle `update()` and `onDuplicateKeyUpdate()` sets it (the
+  tables have no ON UPDATE clause; raw SQL writers must set it themselves). Comparisons use the injected clock's
+  Date, never the session clock. `test/utc.test.ts` proves it with every session at `+02:00` and the Node process
+  in Europe/Stockholm.
 - `main.ts` refuses to start if `fredpd_sessions` is missing (run `node scripts/migrate.mjs` or start FXServer
   once) and exits (for NSSM to restart) if the Discord login fails or the bot reports a fatal error.
 
@@ -112,7 +118,10 @@ DB tests use `fredpd_test_service` (created + migrated by `test/helpers.ts`; per
 and `fredpd_test_service_sync` (sync.test.ts: a role import soft-deletes unknown roles). They skip with a warning
 when MariaDB is unreachable. Files: `hmac`, `grants`, `admin`, `upload`, `auth`, `oauth` (real @fastify/oauth2
 against a local token endpoint), `ws`, `sync`, `bot` (discord.js packet handlers on a Client that never logs in),
-`avatar`, `fx`, `config`, `schema` (drizzle vs information_schema), `actions`, `ratelimit`.
+`avatar`, `fx`, `config`, `schema` (drizzle vs information_schema), `actions`, `ratelimit`, `utc` (own database
+`fredpd_test_utc_service`, sessions at `+02:00`: Date round trip via drizzle and raw mysql2, stored wall time,
+SQL comparison, UTC defaults, `updated_at` on upsert/update). `setupTestDb` drops and rebuilds a test database whose
+applied migrations no longer match `db/migrations` (checksum changed or file gone), under a per-database lock.
 
 ## Open questions
 
