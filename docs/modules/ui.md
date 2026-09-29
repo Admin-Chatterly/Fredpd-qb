@@ -166,12 +166,14 @@ tablet: `refetchType: 'none'`, refetched on the next open) and on a `grants` pus
 - **Ledning → Surfplattor:** `listTablets` (50 per page), revoke asks (`tablet.revokeConfirm`), reinstate is direct,
   result `tablet.revokedNotice` / `tablet.reinstatedNotice`. Without perm `tablets.manage` the page shows
   `errors.unauthorized` and calls nothing.
-- **Locale keys:** new ones are in `locales/pending/nui.json` (16 keys) and read with `tx()`. `src/i18n.ts` layers
-  that file under sv/en through `import.meta.glob`, which finds nothing after the merge deletes it (no build break).
+- **Locale keys:** the 16 Phase 2 keys from `locales/pending/nui.json` are merged into `locales/sv.json`/`en.json`
+  (commit 82fd2e9) and are now read with the typed `t()`. `src/i18n.ts` still layers any future
+  `locales/pending/nui.json` under sv/en through `import.meta.glob` (finds nothing today; no build break).
 
 ### Bundle
 
-`pnpm --filter @fredpd/nui build`: `dist/index.html` **575.7 kB** (gzip 174 kB), up from 472.4 kB. Largest parts:
+`pnpm --filter @fredpd/nui build`: `dist/index.html` **583.4 kB** (gzip 177.5 kB; 2026-09-29), up from 472.4 kB
+before Phase 2 (the growth since the first Phase 2 build is the merged locale files). Largest parts:
 react-dom 210 kB, zod 89 kB (already present for the open payload), locale files + app code ~113 kB, react-router
 38 kB, query-core 33 kB, virtual-core 24 kB (new, for the virtualised list), `@fredpd/types` format/mdt ~13 kB.
 
@@ -289,7 +291,7 @@ react-dom 210 kB, zod 89 kB (already present for the open payload), locale files
 6. **Phase 2 locale keys.** `locales/pending/nui.json` (16 keys: `bolo.create.*` picker/refusal texts,
    `bolo.expiry.none`, `bolo.field.subject`, `case.notice.subject`, `common.comingPhase5`, `home.myOpenCases`,
    `person.field.address`, `vehicle.checkHit/checkClear`, `visibility.masked.badge`, `visibility.notice.owner`).
-   `merge-pending-locales.mjs --dry-run` accepts them. After the merge, the `tx()` calls can become `t()`.
+   Merged (82fd2e9); the literal-key `tx()` calls are now `t()`. `tx()` remains only for data-built keys.
 7. **BOLO kontaktnotis** (bolo.md open question 1): `BoloSchema` has no `visibility`, so a notice-shaped BOLO is
    shown as a normal row whose reason is the notice text (issuer etc. absent, so not rendered). A `visibility`
    field would let the NUI render it with `<Notice>` like case refs.
