@@ -63,6 +63,7 @@ jobs:
           # Tests apply the patches themselves to temporary copies; give them pristine checkouts back.
           node scripts/fetch-deps.mjs --force
       - run: pnpm gen:locale-keys --check
+      - run: node scripts/gen-install-sql.mjs --check
       - run: pnpm lint
       - run: pnpm test
       - name: Build web apps and copy shared files into resources

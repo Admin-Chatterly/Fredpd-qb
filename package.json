@@ -13,7 +13,8 @@
     "lint": "eslint . && pnpm -r typecheck && node scripts/lint-lua.mjs",
     "test": "vitest run && node scripts/test-lua.mjs",
     "test:lua": "node scripts/test-lua.mjs",
-    "gen:locale-keys": "node scripts/gen-locale-keys.mjs"
+    "gen:locale-keys": "node scripts/gen-locale-keys.mjs",
+    "gen:install-sql": "node scripts/gen-install-sql.mjs"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",

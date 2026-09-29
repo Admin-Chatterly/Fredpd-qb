@@ -7,7 +7,7 @@ behörigheter via Discord-roller.
 Swedish police MDT and job suite for a Qbox (qbx_core) FiveM server, with a web portal and a Discord bot that maps
 Discord roles to in-game permissions. Licence: **GPL-3.0-only** (see `LICENSE`).
 
-- Plan: [`IMPLEMENTATION.md`](IMPLEMENTATION.md) · Contracts: [`docs/contracts.md`](docs/contracts.md) ·
+- **Setup: [`docs/SETUP.md`](docs/SETUP.md)** (HeidiSQL: `db/install.sql`) · Plan: [`IMPLEMENTATION.md`](IMPLEMENTATION.md) · Contracts: [`docs/contracts.md`](docs/contracts.md) ·
   Agent rules: [`CLAUDE.md`](CLAUDE.md) · Glossary: [`docs/glossary.md`](docs/glossary.md)
 - Module notes: [`docs/modules/`](docs/modules) · Upstream pins: [`deps.lock.json`](deps.lock.json),
   [`docs/deps-verification.md`](docs/deps-verification.md) · Hosting: [`docs/hosting.md`](docs/hosting.md)
