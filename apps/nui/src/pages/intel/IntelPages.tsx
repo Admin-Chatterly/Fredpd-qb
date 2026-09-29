@@ -300,7 +300,6 @@ function NewIntelReportDialog({ sourceId, missionId, onClose }: { sourceId?: num
 
 function IntelReportRow({ report }: { report: IntelReportView }) {
   const i18n = useI18n();
-  const { t } = i18n;
   if (report.visibility === 'notice') {
     return (
       <div className="p-2">

@@ -83,7 +83,7 @@ interface MockCaseExtra {
 }
 type CaseTimeline = Extract<CaseDetail, { visibility: 'full' }>['timeline'][number];
 
-interface MockEntity extends Entity {}
+type MockEntity = Entity;
 interface MockLink {
   id: number;
   fromId: number;

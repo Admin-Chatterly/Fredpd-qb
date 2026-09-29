@@ -261,6 +261,15 @@ local function makeEnv()
     env.entities[5002] = { netId = 78, type = 1, coords = { x = 100.0, y = 201.0, z = 30.0 } } -- a ped
     env.entities[5003] = { netId = 79, type = 2, plate = 'ZZZ 99Z', coords = { x = 300.0, y = 200.0, z = 30.0 } }
     env.entities[5004] = { netId = 80, type = 2, plate = '        ', coords = { x = 101.0, y = 200.0, z = 30.0 } }
+
+    -- The real fredpd_core audit resolves the actor through the framework bridge (docs/contracts.md §C17): load it
+    -- with the qbx_core implementation over the `qbx` mock above.
+    env.resources.qbx_core = 'started'
+    local quiet = function() end
+    require('server.bridge').load({ framework = 'qbx_core' }, {
+        stateOf = function(name) return env.resources[name] or 'missing' end,
+        log = { info = quiet, warn = quiet, error = quiet, debug = quiet }, defer = quiet,
+    })
     return env
 end
 
