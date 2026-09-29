@@ -1,0 +1,34 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+@import "tailwindcss";
+@import "@fredpd/ui/theme.css";
+
+@layer base {
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  /* Transparent: the game shows around the tablet frame. */
+  body {
+    margin: 0;
+    overflow: hidden;
+    background: transparent;
+    color: var(--color-fg);
+    font-family: var(--font-sans);
+  }
+
+  /*
+   * Dark form controls and scrollbars inside the tablet only. Never on html/:root/body: a used color-scheme that
+   * differs from FiveM's root NUI page makes Chromium paint this iframe's canvas opaque over the whole game
+   * (packages/ui/src/theme.css, test/theme.test.ts).
+   */
+  #fredpd-tablet {
+    color-scheme: dark;
+  }
+
+  /* Browser dev mode only (src/mock/dev.ts): something to look at instead of the game. */
+  body[data-dev-backdrop] {
+    background: #2b3038;
+  }
+}

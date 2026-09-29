@@ -1,0 +1,543 @@
+{
+  "$comment": "Shared fixtures for resolveGrants/hasGrant (docs/contracts.md §C2). Run by packages/types/test/grants.test.ts and tests/lua/grants_test.lua. A case may override the top-level roles/unitOrder. computedAt is not compared. checks = hasGrant(result, type, key). unvalidatedCases hold rows ResolveInputSchema rejects (DB/JSON callers); both ports ignore them and the result still passes GrantSetSchema.",
+  "roles": [
+    {"discordRoleId": "101", "name": "Polis", "position": 1, "deleted": false},
+    {"discordRoleId": "102", "name": "IGV", "position": 5, "deleted": false},
+    {"discordRoleId": "103", "name": "Span", "position": 6, "deleted": false},
+    {"discordRoleId": "104", "name": "Utredning", "position": 7, "deleted": false},
+    {"discordRoleId": "105", "name": "Underrättelse", "position": 8, "deleted": false},
+    {"discordRoleId": "106", "name": "Ledning", "position": 10, "deleted": false},
+    {"discordRoleId": "107", "name": "Avstängd", "position": 0, "deleted": false},
+    {"discordRoleId": "108", "name": "Kommissarie", "position": 15, "deleted": false},
+    {"discordRoleId": "109", "name": "Inspektör", "position": 12, "deleted": false},
+    {"discordRoleId": "110", "name": "Assistent", "position": 3, "deleted": false},
+    {"discordRoleId": "199", "name": "Borttagen roll", "position": 20, "deleted": true}
+  ],
+  "unitOrder": ["igv", "span", "utredning", "tekniker", "ledning"],
+  "cases": [
+    {
+      "name": "empty input: no roles, no rows, no unit order",
+      "roles": [],
+      "unitOrder": [],
+      "memberRoleIds": [],
+      "grants": [],
+      "expected": {"grants": [], "denied": [], "tier": 0, "units": [], "rank": null},
+      "checks": [
+        {"type": "weapon", "key": "pistol", "expected": false},
+        {"type": "perm", "key": "rank:assistent", "expected": false}
+      ]
+    },
+    {
+      "name": "member without any grant rows",
+      "memberRoleIds": ["101"],
+      "grants": [],
+      "expected": {"grants": [], "denied": [], "tier": 0, "units": [], "rank": null},
+      "checks": [{"type": "mdt_page", "key": "search", "expected": false}]
+    },
+    {
+      "name": "single role allows; output sorted by type:key",
+      "memberRoleIds": ["101"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "pistol", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "vehicle", "grantKey": "police", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "mdt_page", "grantKey": "search", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "armory", "grantKey": "basic", "effect": "allow"}
+      ],
+      "expected": {
+        "grants": ["armory:basic", "mdt_page:search", "vehicle:police", "weapon:pistol"],
+        "denied": [],
+        "tier": 0,
+        "units": [],
+        "rank": null
+      },
+      "checks": [
+        {"type": "weapon", "key": "pistol", "expected": true},
+        {"type": "weapon", "key": "smg", "expected": false},
+        {"type": "vehicle", "key": "police", "expected": true}
+      ]
+    },
+    {
+      "name": "allows are unioned over roles and deduplicated",
+      "memberRoleIds": ["101", "102"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "pistol", "effect": "allow"},
+        {"discordRoleId": "102", "grantType": "weapon", "grantKey": "stungun", "effect": "allow"},
+        {"discordRoleId": "102", "grantType": "weapon", "grantKey": "pistol", "effect": "allow"},
+        {"discordRoleId": "102", "grantType": "mdt_page", "grantKey": "alerts", "effect": "allow"}
+      ],
+      "expected": {
+        "grants": ["mdt_page:alerts", "weapon:pistol", "weapon:stungun"],
+        "denied": [],
+        "tier": 0,
+        "units": [],
+        "rank": null
+      },
+      "checks": [{"type": "weapon", "key": "stungun", "expected": true}]
+    },
+    {
+      "name": "deny from another role wins over allow",
+      "memberRoleIds": ["101", "107"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "smg", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "pistol", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "weapon", "grantKey": "smg", "effect": "deny"}
+      ],
+      "expected": {"grants": ["weapon:pistol"], "denied": ["weapon:smg"], "tier": 0, "units": [], "rank": null},
+      "checks": [{"type": "weapon", "key": "smg", "expected": false}, {"type": "weapon", "key": "pistol", "expected": true}]
+    },
+    {
+      "name": "allow and deny in the same role: deny wins",
+      "memberRoleIds": ["101"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "tool", "grantKey": "ram", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "tool", "grantKey": "ram", "effect": "deny"}
+      ],
+      "expected": {"grants": [], "denied": ["tool:ram"], "tier": 0, "units": [], "rank": null},
+      "checks": [{"type": "tool", "key": "ram", "expected": false}]
+    },
+    {
+      "name": "wildcard allow + exact deny: wildcard kept, key denied",
+      "memberRoleIds": ["106", "107"],
+      "grants": [
+        {"discordRoleId": "106", "grantType": "weapon", "grantKey": "*", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "weapon", "grantKey": "rifle", "effect": "deny"}
+      ],
+      "expected": {"grants": ["weapon:*"], "denied": ["weapon:rifle"], "tier": 0, "units": [], "rank": null},
+      "checks": [
+        {"type": "weapon", "key": "pistol", "expected": true},
+        {"type": "weapon", "key": "rifle", "expected": false},
+        {"type": "vehicle", "key": "police", "expected": false}
+      ]
+    },
+    {
+      "name": "wildcard deny beats exact allows of that type",
+      "memberRoleIds": ["101", "107"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "armory", "grantKey": "basic", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "armory", "grantKey": "heavy", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "vehicle", "grantKey": "police", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "armory", "grantKey": "*", "effect": "deny"}
+      ],
+      "expected": {"grants": ["vehicle:police"], "denied": ["armory:*"], "tier": 0, "units": [], "rank": null},
+      "checks": [
+        {"type": "armory", "key": "basic", "expected": false},
+        {"type": "armory", "key": "heavy", "expected": false},
+        {"type": "vehicle", "key": "police", "expected": true}
+      ]
+    },
+    {
+      "name": "wildcard deny beats wildcard allow",
+      "memberRoleIds": ["106", "107"],
+      "grants": [
+        {"discordRoleId": "106", "grantType": "tool", "grantKey": "*", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "tool", "grantKey": "*", "effect": "deny"}
+      ],
+      "expected": {"grants": [], "denied": ["tool:*"], "tier": 0, "units": [], "rank": null},
+      "checks": [{"type": "tool", "key": "ram", "expected": false}]
+    },
+    {
+      "name": "wildcard deny of one type leaves other types alone",
+      "memberRoleIds": ["101", "107"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "vehicle", "grantKey": "police", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "pistol", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "weapon", "grantKey": "*", "effect": "deny"}
+      ],
+      "expected": {"grants": ["vehicle:police"], "denied": ["weapon:*"], "tier": 0, "units": [], "rank": null},
+      "checks": [{"type": "vehicle", "key": "police", "expected": true}, {"type": "weapon", "key": "pistol", "expected": false}]
+    },
+    {
+      "name": "deleted role: its allows are ignored",
+      "memberRoleIds": ["101", "199"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "pistol", "effect": "allow"},
+        {"discordRoleId": "199", "grantType": "weapon", "grantKey": "rifle", "effect": "allow"},
+        {"discordRoleId": "199", "grantType": "perm", "grantKey": "intel.command", "effect": "allow"}
+      ],
+      "expected": {"grants": ["weapon:pistol"], "denied": [], "tier": 0, "units": [], "rank": null},
+      "checks": [
+        {"type": "weapon", "key": "rifle", "expected": false},
+        {"type": "perm", "key": "intel.command", "expected": false}
+      ]
+    },
+    {
+      "name": "deleted role: its denies are ignored",
+      "memberRoleIds": ["101", "199"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "pistol", "effect": "allow"},
+        {"discordRoleId": "199", "grantType": "weapon", "grantKey": "pistol", "effect": "deny"},
+        {"discordRoleId": "199", "grantType": "weapon", "grantKey": "*", "effect": "deny"}
+      ],
+      "expected": {"grants": ["weapon:pistol"], "denied": [], "tier": 0, "units": [], "rank": null},
+      "checks": [{"type": "weapon", "key": "pistol", "expected": true}]
+    },
+    {
+      "name": "rows of roles the member does not hold are ignored",
+      "memberRoleIds": ["101"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "pistol", "effect": "allow"},
+        {"discordRoleId": "106", "grantType": "weapon", "grantKey": "*", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "weapon", "grantKey": "pistol", "effect": "deny"}
+      ],
+      "expected": {"grants": ["weapon:pistol"], "denied": [], "tier": 0, "units": [], "rank": null},
+      "checks": [{"type": "weapon", "key": "pistol", "expected": true}, {"type": "weapon", "key": "smg", "expected": false}]
+    },
+    {
+      "name": "member role id missing from the roles table is ignored",
+      "memberRoleIds": ["101", "555"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "mdt_page", "grantKey": "search", "effect": "allow"},
+        {"discordRoleId": "555", "grantType": "perm", "grantKey": "intel.command", "effect": "allow"},
+        {"discordRoleId": "555", "grantType": "mdt_page", "grantKey": "search", "effect": "deny"}
+      ],
+      "expected": {"grants": ["mdt_page:search"], "denied": [], "tier": 0, "units": [], "rank": null},
+      "checks": [
+        {"type": "perm", "key": "intel.command", "expected": false},
+        {"type": "mdt_page", "key": "search", "expected": true}
+      ]
+    },
+    {
+      "name": "tier is the highest allowed intel_tier",
+      "memberRoleIds": ["104", "105"],
+      "grants": [
+        {"discordRoleId": "104", "grantType": "intel_tier", "grantKey": "1", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "2", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "0", "effect": "allow"}
+      ],
+      "expected": {"grants": ["intel_tier:0", "intel_tier:1", "intel_tier:2"], "denied": [], "tier": 2, "units": [], "rank": null}
+    },
+    {
+      "name": "tier above 2 is clamped to 2",
+      "memberRoleIds": ["105"],
+      "grants": [{"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "5", "effect": "allow"}],
+      "expected": {"grants": ["intel_tier:5"], "denied": [], "tier": 2, "units": [], "rank": null}
+    },
+    {
+      "name": "non-integer tier keys are ignored for tier (wildcard included)",
+      "memberRoleIds": ["105"],
+      "grants": [
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "abc", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "1.5", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "*", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "0x2", "effect": "allow"}
+      ],
+      "expected": {
+        "grants": ["intel_tier:*", "intel_tier:0x2", "intel_tier:1.5", "intel_tier:abc"],
+        "denied": [],
+        "tier": 0,
+        "units": [],
+        "rank": null
+      },
+      "checks": [{"type": "intel_tier", "key": "2", "expected": true}]
+    },
+    {
+      "name": "negative tier clamps to 0; leading zeros parse",
+      "memberRoleIds": ["104", "105"],
+      "grants": [
+        {"discordRoleId": "104", "grantType": "intel_tier", "grantKey": "-1", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "01", "effect": "allow"}
+      ],
+      "expected": {"grants": ["intel_tier:-1", "intel_tier:01"], "denied": [], "tier": 1, "units": [], "rank": null}
+    },
+    {
+      "name": "denied tier is ignored",
+      "memberRoleIds": ["104", "105", "107"],
+      "grants": [
+        {"discordRoleId": "104", "grantType": "intel_tier", "grantKey": "1", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "2", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "intel_tier", "grantKey": "2", "effect": "deny"}
+      ],
+      "expected": {"grants": ["intel_tier:1"], "denied": ["intel_tier:2"], "tier": 1, "units": [], "rank": null}
+    },
+    {
+      "name": "deny intel_tier:2 blocks allow intel_tier:5 (same tier, other spelling)",
+      "memberRoleIds": ["104", "105", "107"],
+      "grants": [
+        {"discordRoleId": "104", "grantType": "intel_tier", "grantKey": "1", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "5", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "intel_tier", "grantKey": "2", "effect": "deny"}
+      ],
+      "expected": {"grants": ["intel_tier:1"], "denied": ["intel_tier:2"], "tier": 1, "units": [], "rank": null},
+      "checks": [
+        {"type": "intel_tier", "key": "5", "expected": false},
+        {"type": "intel_tier", "key": "2", "expected": false},
+        {"type": "intel_tier", "key": "1", "expected": true}
+      ]
+    },
+    {
+      "name": "deny intel_tier:2 blocks allow intel_tier:02 and intel_tier:3",
+      "memberRoleIds": ["105", "107"],
+      "grants": [
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "02", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "3", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "intel_tier", "grantKey": "2", "effect": "deny"}
+      ],
+      "expected": {"grants": [], "denied": ["intel_tier:2"], "tier": 0, "units": [], "rank": null},
+      "checks": [{"type": "intel_tier", "key": "02", "expected": false}]
+    },
+    {
+      "name": "deny of a non-canonical tier key (5) blocks allow intel_tier:2",
+      "memberRoleIds": ["104", "105", "107"],
+      "grants": [
+        {"discordRoleId": "104", "grantType": "intel_tier", "grantKey": "1", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "2", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "intel_tier", "grantKey": "5", "effect": "deny"}
+      ],
+      "expected": {"grants": ["intel_tier:1"], "denied": ["intel_tier:5"], "tier": 1, "units": [], "rank": null},
+      "checks": [{"type": "intel_tier", "key": "2", "expected": false}]
+    },
+    {
+      "name": "wildcard tier deny gives tier 0",
+      "memberRoleIds": ["105", "107"],
+      "grants": [
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "2", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "intel_tier", "grantKey": "*", "effect": "deny"}
+      ],
+      "expected": {"grants": [], "denied": ["intel_tier:*"], "tier": 0, "units": [], "rank": null}
+    },
+    {
+      "name": "units follow unitOrder",
+      "memberRoleIds": ["102", "104", "106"],
+      "grants": [
+        {"discordRoleId": "104", "grantType": "unit", "grantKey": "utredning", "effect": "allow"},
+        {"discordRoleId": "106", "grantType": "unit", "grantKey": "ledning", "effect": "allow"},
+        {"discordRoleId": "102", "grantType": "unit", "grantKey": "igv", "effect": "allow"}
+      ],
+      "expected": {
+        "grants": ["unit:igv", "unit:ledning", "unit:utredning"],
+        "denied": [],
+        "tier": 0,
+        "units": ["igv", "utredning", "ledning"],
+        "rank": null
+      }
+    },
+    {
+      "name": "unknown units come after known ones, alphabetically",
+      "memberRoleIds": ["103"],
+      "grants": [
+        {"discordRoleId": "103", "grantType": "unit", "grantKey": "zulu", "effect": "allow"},
+        {"discordRoleId": "103", "grantType": "unit", "grantKey": "span", "effect": "allow"},
+        {"discordRoleId": "103", "grantType": "unit", "grantKey": "alfa", "effect": "allow"}
+      ],
+      "expected": {
+        "grants": ["unit:alfa", "unit:span", "unit:zulu"],
+        "denied": [],
+        "tier": 0,
+        "units": ["span", "alfa", "zulu"],
+        "rank": null
+      }
+    },
+    {
+      "name": "denied unit is removed",
+      "memberRoleIds": ["102", "103", "107"],
+      "grants": [
+        {"discordRoleId": "102", "grantType": "unit", "grantKey": "igv", "effect": "allow"},
+        {"discordRoleId": "103", "grantType": "unit", "grantKey": "span", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "unit", "grantKey": "span", "effect": "deny"}
+      ],
+      "expected": {"grants": ["unit:igv"], "denied": ["unit:span"], "tier": 0, "units": ["igv"], "rank": null},
+      "checks": [{"type": "unit", "key": "span", "expected": false}, {"type": "unit", "key": "igv", "expected": true}]
+    },
+    {
+      "name": "unit wildcard passes hasGrant but lists no units",
+      "memberRoleIds": ["106"],
+      "grants": [{"discordRoleId": "106", "grantType": "unit", "grantKey": "*", "effect": "allow"}],
+      "expected": {"grants": ["unit:*"], "denied": [], "tier": 0, "units": [], "rank": null},
+      "checks": [{"type": "unit", "key": "igv", "expected": true}]
+    },
+    {
+      "name": "unitOrder duplicates: first position counts",
+      "unitOrder": ["span", "igv", "span"],
+      "memberRoleIds": ["102", "103"],
+      "grants": [
+        {"discordRoleId": "102", "grantType": "unit", "grantKey": "igv", "effect": "allow"},
+        {"discordRoleId": "103", "grantType": "unit", "grantKey": "span", "effect": "allow"}
+      ],
+      "expected": {"grants": ["unit:igv", "unit:span"], "denied": [], "tier": 0, "units": ["span", "igv"], "rank": null}
+    },
+    {
+      "name": "rank comes from the highest-position role",
+      "memberRoleIds": ["108", "110"],
+      "grants": [
+        {"discordRoleId": "110", "grantType": "perm", "grantKey": "rank:assistent", "effect": "allow"},
+        {"discordRoleId": "108", "grantType": "perm", "grantKey": "rank:kommissarie", "effect": "allow"}
+      ],
+      "expected": {
+        "grants": ["perm:rank:assistent", "perm:rank:kommissarie"],
+        "denied": [],
+        "tier": 0,
+        "units": [],
+        "rank": {"roleId": "108", "key": "kommissarie"}
+      },
+      "checks": [{"type": "perm", "key": "rank:kommissarie", "expected": true}]
+    },
+    {
+      "name": "denied rank falls through to the next role",
+      "memberRoleIds": ["107", "108", "109"],
+      "grants": [
+        {"discordRoleId": "108", "grantType": "perm", "grantKey": "rank:kommissarie", "effect": "allow"},
+        {"discordRoleId": "109", "grantType": "perm", "grantKey": "rank:inspektor", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "perm", "grantKey": "rank:kommissarie", "effect": "deny"}
+      ],
+      "expected": {
+        "grants": ["perm:rank:inspektor"],
+        "denied": ["perm:rank:kommissarie"],
+        "tier": 0,
+        "units": [],
+        "rank": {"roleId": "109", "key": "inspektor"}
+      }
+    },
+    {
+      "name": "rank from a deleted role is ignored",
+      "memberRoleIds": ["110", "199"],
+      "grants": [
+        {"discordRoleId": "199", "grantType": "perm", "grantKey": "rank:rikspolischef", "effect": "allow"},
+        {"discordRoleId": "110", "grantType": "perm", "grantKey": "rank:assistent", "effect": "allow"}
+      ],
+      "expected": {
+        "grants": ["perm:rank:assistent"],
+        "denied": [],
+        "tier": 0,
+        "units": [],
+        "rank": {"roleId": "110", "key": "assistent"}
+      }
+    },
+    {
+      "name": "perm wildcard deny clears rank and every perm",
+      "memberRoleIds": ["107", "108"],
+      "grants": [
+        {"discordRoleId": "108", "grantType": "perm", "grantKey": "rank:kommissarie", "effect": "allow"},
+        {"discordRoleId": "108", "grantType": "perm", "grantKey": "intel.read", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "perm", "grantKey": "*", "effect": "deny"}
+      ],
+      "expected": {"grants": [], "denied": ["perm:*"], "tier": 0, "units": [], "rank": null},
+      "checks": [
+        {"type": "perm", "key": "intel.read", "expected": false},
+        {"type": "perm", "key": "rank:kommissarie", "expected": false}
+      ]
+    },
+    {
+      "name": "perm wildcard allow passes hasGrant but gives no rank",
+      "memberRoleIds": ["106"],
+      "grants": [{"discordRoleId": "106", "grantType": "perm", "grantKey": "*", "effect": "allow"}],
+      "expected": {"grants": ["perm:*"], "denied": [], "tier": 0, "units": [], "rank": null},
+      "checks": [
+        {"type": "perm", "key": "rank:kommissarie", "expected": true},
+        {"type": "perm", "key": "intel.command", "expected": true}
+      ]
+    },
+    {
+      "name": "rank tie on position: lower roleId wins, then lower key",
+      "roles": [
+        {"discordRoleId": "301", "name": "Gruppchef A", "position": 9, "deleted": false},
+        {"discordRoleId": "302", "name": "Gruppchef B", "position": 9, "deleted": false}
+      ],
+      "memberRoleIds": ["301", "302"],
+      "grants": [
+        {"discordRoleId": "302", "grantType": "perm", "grantKey": "rank:b", "effect": "allow"},
+        {"discordRoleId": "301", "grantType": "perm", "grantKey": "rank:c", "effect": "allow"},
+        {"discordRoleId": "301", "grantType": "perm", "grantKey": "rank:a", "effect": "allow"}
+      ],
+      "expected": {
+        "grants": ["perm:rank:a", "perm:rank:b", "perm:rank:c"],
+        "denied": [],
+        "tier": 0,
+        "units": [],
+        "rank": {"roleId": "301", "key": "a"}
+      }
+    },
+    {
+      "name": "perm rank:* and an empty rank key are not ranks",
+      "memberRoleIds": ["108", "110"],
+      "grants": [
+        {"discordRoleId": "108", "grantType": "perm", "grantKey": "rank:*", "effect": "allow"},
+        {"discordRoleId": "108", "grantType": "perm", "grantKey": "rank:", "effect": "allow"},
+        {"discordRoleId": "110", "grantType": "perm", "grantKey": "rank:assistent", "effect": "allow"}
+      ],
+      "expected": {
+        "grants": ["perm:rank:", "perm:rank:*", "perm:rank:assistent"],
+        "denied": [],
+        "tier": 0,
+        "units": [],
+        "rank": {"roleId": "110", "key": "assistent"}
+      }
+    },
+    {
+      "name": "full officer profile across five roles",
+      "memberRoleIds": ["101", "104", "105", "107", "109", "199"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "pistol", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "stungun", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "vehicle", "grantKey": "police", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "mdt_page", "grantKey": "search", "effect": "allow"},
+        {"discordRoleId": "104", "grantType": "unit", "grantKey": "utredning", "effect": "allow"},
+        {"discordRoleId": "104", "grantType": "intel_tier", "grantKey": "1", "effect": "allow"},
+        {"discordRoleId": "104", "grantType": "mdt_page", "grantKey": "cases", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "unit", "grantKey": "tekniker", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "perm", "grantKey": "intel.read", "effect": "allow"},
+        {"discordRoleId": "105", "grantType": "intel_tier", "grantKey": "2", "effect": "allow"},
+        {"discordRoleId": "109", "grantType": "perm", "grantKey": "rank:inspektor", "effect": "allow"},
+        {"discordRoleId": "109", "grantType": "unit", "grantKey": "igv", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "weapon", "grantKey": "stungun", "effect": "deny"},
+        {"discordRoleId": "107", "grantType": "intel_tier", "grantKey": "2", "effect": "deny"},
+        {"discordRoleId": "199", "grantType": "perm", "grantKey": "intel.command", "effect": "allow"}
+      ],
+      "expected": {
+        "grants": [
+          "intel_tier:1",
+          "mdt_page:cases",
+          "mdt_page:search",
+          "perm:intel.read",
+          "perm:rank:inspektor",
+          "unit:igv",
+          "unit:tekniker",
+          "unit:utredning",
+          "vehicle:police",
+          "weapon:pistol"
+        ],
+        "denied": ["intel_tier:2", "weapon:stungun"],
+        "tier": 1,
+        "units": ["igv", "utredning", "tekniker"],
+        "rank": {"roleId": "109", "key": "inspektor"}
+      },
+      "checks": [
+        {"type": "perm", "key": "intel.read", "expected": true},
+        {"type": "perm", "key": "intel.command", "expected": false},
+        {"type": "weapon", "key": "stungun", "expected": false},
+        {"type": "intel_tier", "key": "2", "expected": false}
+      ]
+    }
+  ],
+  "unvalidatedCases": [
+    {
+      "name": "rows a DB/JSON caller could pass are ignored: unknown type or effect, empty/missing key, key outside [A-Za-z0-9_.:*-]{1,64}",
+      "memberRoleIds": ["101"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "spell", "grantKey": "fireball", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "pistol", "effect": "maybe"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "", "effect": "deny"},
+        {"discordRoleId": "101", "grantType": "weapon", "effect": "deny"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": 7, "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "a b", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "rifle\n", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "perm", "grantKey": "rank:polisinspektör", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "effect": "allow"},
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "smg", "effect": "allow"}
+      ],
+      "expected": {"grants": ["weapon:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", "weapon:smg"], "denied": [], "tier": 0, "units": [], "rank": null}
+    },
+    {
+      "name": "a deny row with a key outside the charset is ignored too (no valid key could match it)",
+      "memberRoleIds": ["101", "107"],
+      "grants": [
+        {"discordRoleId": "101", "grantType": "weapon", "grantKey": "*", "effect": "allow"},
+        {"discordRoleId": "107", "grantType": "weapon", "grantKey": "rifle ", "effect": "deny"}
+      ],
+      "expected": {"grants": ["weapon:*"], "denied": [], "tier": 0, "units": [], "rank": null},
+      "checks": [
+        {"type": "weapon", "key": "rifle", "expected": true}
+      ]
+    }
+  ]
+}

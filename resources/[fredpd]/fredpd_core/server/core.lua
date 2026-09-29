@@ -1,0 +1,235 @@
+-- SPDX-License-Identifier: GPL-3.0-only
+-- fredpd_core shared server helpers: service calls through the JS bridge, per-player rate limits, config files,
+-- player data access and logging. Loaded with `require 'server.core'`; nothing touches FiveM at load time, so the
+-- pure parts (rateLimit with an injected clock, readJsonFile with an injected loader) are tested outside FiveM.
+
+local M = {}
+
+M.RESOURCE = 'fredpd_core'
+
+--- This resource's name (only callable inside FiveM).
+function M.resource()
+    return GetCurrentResourceName()
+end
+
+---------------------------------------------------------------------------------------------------------------
+-- Logging: ox_lib's lib.print (levels via convar ox:printlevel:fredpd_core), plain print outside FiveM.
+
+local function emit(level, fmt, ...)
+    local msg = select('#', ...) > 0 and fmt:format(...) or tostring(fmt)
+    local printer = type(lib) == 'table' and lib.print and lib.print[level]
+    if printer then
+        printer(msg)
+    else
+        print(('[fredpd_core] %s: %s'):format(level, msg))
+    end
+end
+
+function M.info(fmt, ...) emit('info', fmt, ...) end
+function M.warn(fmt, ...) emit('warn', fmt, ...) end
+function M.error(fmt, ...) emit('error', fmt, ...) end
+function M.debug(fmt, ...) emit('debug', fmt, ...) end
+
+---------------------------------------------------------------------------------------------------------------
+-- One-shot async work (never a loop): runs fn in its own thread so it may await oxmysql / Core.fetch.
+
+--- @param label string used in the error log
+--- @param fn function
+function M.async(label, fn, ...)
+    local args = table.pack(...)
+    CreateThread(function()
+        local ok, err = pcall(fn, table.unpack(args, 1, args.n))
+        if not ok then M.error('%s failed: %s', label, tostring(err)) end
+    end)
+end
+
+---------------------------------------------------------------------------------------------------------------
+-- Service calls (docs/contracts.md §C6): Core.fetch wraps the JS export signedFetch in a promise.
+
+--- Decode a JSON body; nil when empty or not JSON.
+function M.decode(text)
+    if type(text) ~= 'string' or text == '' then return nil end
+    local ok, value = pcall(json.decode, text)
+    if ok then return value end
+    return nil
+end
+
+--- Signed request to fredpd_service. Must run inside a thread (Citizen.Await). The JS side always answers within
+--- its 3 s timeout, so this never hangs.
+--- @param method string 'GET'|'POST'|...
+--- @param path string '/internal/...'
+--- @param body table|nil JSON body (ignored for GET)
+--- @return integer status 0 when there was no HTTP response (bridge disabled, timeout, network error)
+--- @return any decoded JSON body or nil
+function M.fetch(method, path, body)
+    local p = promise.new()
+    local ok, err = pcall(function()
+        exports[M.resource()]:signedFetch(method, path, body, function(status, text)
+            p:resolve({ status, text })
+        end)
+    end)
+    if not ok then
+        M.error('signedFetch export unavailable: %s', tostring(err))
+        return 0, nil
+    end
+    local result = Citizen.Await(p)
+    return tonumber(result[1]) or 0, M.decode(result[2])
+end
+
+---------------------------------------------------------------------------------------------------------------
+-- Rate limits: one timestamp per (player, action). No threads; entries are dropped on playerDropped.
+
+local buckets = {}
+
+--- Monotonic milliseconds. GetGameTimer() on FXServer; os.clock() is CPU time on Linux, so it is only the
+--- fallback outside FiveM (tests pass `now` explicitly).
+function M.now()
+    if type(GetGameTimer) == 'function' then return GetGameTimer() end
+    return math.floor(os.clock() * 1000)
+end
+
+--- Allow an action at most once per `ms` per player. Returns true when allowed (and records it), false when the
+--- call comes too soon. A refused call does not extend the window.
+--- @param src integer|string player id
+--- @param action string
+--- @param ms integer
+--- @param now integer|nil current time in ms (default M.now())
+--- @return boolean
+function M.rateLimit(src, action, ms, now)
+    now = now or M.now()
+    local key = tostring(src)
+    local bucket = buckets[key]
+    if not bucket then
+        bucket = {}
+        buckets[key] = bucket
+    end
+    local last = bucket[action]
+    if last and now - last < ms then return false end
+    bucket[action] = now
+    return true
+end
+
+--- Forget a player's rate-limit state (called on playerDropped).
+function M.clearRateLimits(src)
+    buckets[tostring(src)] = nil
+end
+
+---------------------------------------------------------------------------------------------------------------
+-- SQL helpers
+
+--- Placeholders and parameters for one row of `n` values where some may be nil. A Lua array with nil holes does
+--- not survive the msgpack trip to oxmysql as an array, so a nil value becomes a literal NULL in the SQL and is
+--- left out of the parameter list.
+--- @param values table values[1..n], nil allowed
+--- @param n integer
+--- @param params table|nil list to append to (default a new one)
+--- @return string placeholders e.g. '?, NULL, ?'
+--- @return table params
+function M.bindRow(values, n, params)
+    params = params or {}
+    local marks = {}
+    for i = 1, n do
+        local v = values[i]
+        if v == nil then
+            marks[i] = 'NULL'
+        else
+            marks[i] = '?'
+            params[#params + 1] = v
+        end
+    end
+    return table.concat(marks, ', '), params
+end
+
+--- Multi-row `INSERT ... ON DUPLICATE KEY UPDATE` (or INSERT IGNORE when `update` is nil) over `rows` (tables keyed
+--- by column name). Returns sql, params.
+--- @param tbl string table name (trusted)
+--- @param columns string[] column names (trusted)
+--- @param rows table[]
+--- @param update string[]|nil columns to overwrite on a duplicate key; nil = INSERT IGNORE
+function M.buildInsert(tbl, columns, rows, update)
+    local params, tuples = {}, {}
+    for r, row in ipairs(rows) do
+        local values = {}
+        for i, col in ipairs(columns) do values[i] = row[col] end
+        local marks = M.bindRow(values, #columns, params)
+        tuples[r] = '(' .. marks .. ')'
+    end
+    local head = update and 'INSERT INTO' or 'INSERT IGNORE INTO'
+    local sql = ('%s %s (%s) VALUES %s'):format(head, tbl, table.concat(columns, ', '), table.concat(tuples, ', '))
+    if update and #update > 0 then
+        local sets = {}
+        for i, col in ipairs(update) do sets[i] = ('%s = VALUES(%s)'):format(col, col) end
+        sql = sql .. ' ON DUPLICATE KEY UPDATE ' .. table.concat(sets, ', ')
+    end
+    return sql, params
+end
+
+---------------------------------------------------------------------------------------------------------------
+-- Config files (config/*.json, copied from the repo's config/ by scripts/build.mjs)
+
+--- Read and decode a JSON file of this resource. Returns nil and an error string when missing or invalid.
+--- @param path string e.g. 'config/formats.json'
+--- @param loader function|nil (resource, path) -> string|nil, default LoadResourceFile
+function M.readJsonFile(path, loader)
+    loader = loader or LoadResourceFile
+    local resource = type(GetCurrentResourceName) == 'function' and GetCurrentResourceName() or M.RESOURCE
+    local raw = loader(resource, path)
+    if not raw or raw == '' then return nil, ('%s is missing (run scripts/build.mjs)'):format(path) end
+    local ok, value = pcall(json.decode, raw)
+    if not ok or type(value) ~= 'table' then return nil, ('%s is not valid JSON'):format(path) end
+    return value
+end
+
+M.config = { formats = nil, units = nil, integrations = nil }
+
+--- Unit code -> config entry and the ordered list of codes (config/units.json).
+function M.unitIndex(units)
+    local byCode, order = {}, {}
+    for _, u in ipairs(type(units) == 'table' and units.units or {}) do
+        if type(u) == 'table' and type(u.code) == 'string' and byCode[u.code] == nil then
+            byCode[u.code] = u
+            order[#order + 1] = u.code
+        end
+    end
+    return byCode, order
+end
+
+---------------------------------------------------------------------------------------------------------------
+-- Players (qbx_core). Always asks qbx_core so the actor is never taken from a stale cache or from the client.
+
+--- qbx PlayerData of an online player, or nil.
+function M.getPlayerData(src)
+    src = tonumber(src)
+    if not src or src <= 0 then return nil end
+    local ok, player = pcall(function() return exports.qbx_core:GetPlayer(src) end)
+    if ok and type(player) == 'table' and type(player.PlayerData) == 'table' then return player.PlayerData end
+    return nil
+end
+
+--- 'discord:123' -> '123'; nil for anything that is not a Discord snowflake.
+function M.discordIdFromIdentifier(identifier)
+    if type(identifier) ~= 'string' then return nil end
+    local id = identifier:match('^discord:(%d+)$')
+    if id and #id <= 20 then return id end
+    return nil
+end
+
+--- Discord id of an online player (nil if they have no Discord identifier).
+function M.discordIdOf(src)
+    if not tonumber(src) or tonumber(src) <= 0 then return nil end
+    return M.discordIdFromIdentifier(GetPlayerIdentifierByType(tostring(src), 'discord'))
+end
+
+--- Online player ids as integers.
+function M.players()
+    local out = {}
+    for _, id in ipairs(GetPlayers()) do out[#out + 1] = tonumber(id) end
+    return out
+end
+
+--- ox_lib notify from the server.
+function M.notify(src, data)
+    if tonumber(src) and tonumber(src) > 0 then TriggerClientEvent('ox_lib:notify', src, data) end
+end
+
+return M

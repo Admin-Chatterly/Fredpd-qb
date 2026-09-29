@@ -1,0 +1,171 @@
+// SPDX-License-Identifier: GPL-3.0-only
+// fredpd_service HTTP app (IMPLEMENTATION.md §5.9, docs/contracts.md §C5, §C6, §C10). buildApp takes every outside
+// dependency (DB, Discord gateway, FXServer client, clock, OAuth) so tests inject fakes; src/main.ts wires the real
+// ones. Security baseline (§4.6): helmet, signed httpOnly/secure/SameSite=Lax session cookie, CSRF token on
+// writes, 60 requests/min per user (or IP when logged out), uploads ≤ 5 MB with MIME sniffing, HMAC on /internal.
+import { join, resolve } from 'node:path';
+import cookie from '@fastify/cookie';
+import helmet from '@fastify/helmet';
+import multipart from '@fastify/multipart';
+import rateLimit from '@fastify/rate-limit';
+import websocket from '@fastify/websocket';
+import Fastify from 'fastify';
+import type { FastifyInstance, FastifyServerOptions } from 'fastify';
+import { UPLOAD_MAX_BYTES } from '@fredpd/types/actions';
+import { AvatarCache } from './avatar';
+import { registerDiscordOAuth } from './auth/oauth';
+import type { DiscordOAuth } from './auth/oauth';
+import { loadSession, SESSION_COOKIE } from './auth/session';
+import { systemClock } from './clock';
+import type { Clock } from './clock';
+import type { Config } from './config';
+import { BackgroundTasks } from './context';
+import type { AppContext } from './context';
+import type { Db } from './db/client';
+import type { DiscordGateway } from './discord/gateway';
+import { createSync } from './discord/sync';
+import type { FxClient } from './fx';
+import { errorHandler, HttpError } from './http/errors';
+import { checkHmacBeforeParse } from './http/guards';
+import { createLogger } from './log';
+import type { Logger } from './log';
+import { registerAdminRoutes } from './routes/admin';
+import { registerAuthRoutes } from './routes/auth';
+import { registerAvatarRoutes } from './routes/avatar';
+import { registerInternalRoutes } from './routes/internal';
+import { registerUploadRoutes } from './routes/upload';
+import { registerWsRoutes } from './routes/ws';
+import { loadUnitCodes } from './units';
+import { WsHub } from './ws/hub';
+
+export interface AppDeps {
+  config: Config;
+  db: Db;
+  gateway: DiscordGateway;
+  fx: FxClient;
+  clock?: Clock;
+  /** Default: @fastify/oauth2 against Discord. Tests pass a fake. */
+  oauth?: DiscordOAuth;
+  /** fetch for Discord HTTP calls: CDN downloads (avatar cache) and /users/@me after the OAuth exchange. */
+  fetch?: typeof fetch;
+  /** Tests: host of the OAuth token endpoint used by the default (@fastify/oauth2) login. */
+  discordTokenHost?: string;
+  /** Logger outside requests (sync, background work). */
+  log?: Logger;
+  /** Fastify's request logger. Default: pino at config.LOG_LEVEL. */
+  logger?: FastifyServerOptions['logger'];
+  /** Unit codes in primary-unit order. Default: config/units.json. */
+  unitOrder?: string[];
+}
+
+/** Default JSON body limit; /upload raises it for base64 images. */
+const BODY_LIMIT = 256 * 1024;
+export const RATE_LIMIT_PER_MINUTE = 60;
+
+export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
+  const { config, db, gateway, fx } = deps;
+  const clock = deps.clock ?? systemClock;
+  const log = deps.log ?? createLogger('fredpd_service', config.LOG_LEVEL);
+  const unitOrder = deps.unitOrder ?? loadUnitCodes();
+
+  const app = Fastify({
+    logger: deps.logger ?? { level: config.LOG_LEVEL },
+    bodyLimit: BODY_LIMIT,
+    // The service listens on loopback behind Cloudflare Tunnel or Caddy on the same host: take the client address
+    // from X-Forwarded-For only when the connection comes from loopback (so rate limits are per real client).
+    trustProxy: 'loopback',
+  });
+
+  app.decorateRequest('portalSession', null);
+  app.decorateRequest('rawBody', undefined);
+  app.setErrorHandler(errorHandler);
+  app.setNotFoundHandler((_request, reply) => {
+    void reply.code(404).send({ error: 'not_found' });
+  });
+
+  await app.register(helmet);
+  await app.register(cookie, { secret: config.SESSION_SECRET });
+
+  // Session before the rate limiter (whose hooks are route-level and so run after this one): logged-in users are
+  // limited per Discord id, everyone else per IP.
+  app.addHook('onRequest', async (request) => {
+    const raw = request.cookies[SESSION_COOKIE];
+    if (!raw) return;
+    const unsigned = request.unsignCookie(raw);
+    if (!unsigned.valid || unsigned.value === null) return;
+    request.portalSession = await loadSession(db, unsigned.value, clock.now());
+  });
+
+  await app.register(rateLimit, {
+    max: RATE_LIMIT_PER_MINUTE,
+    timeWindow: '1 minute',
+    keyGenerator: (request) => (request.portalSession ? `user:${request.portalSession.discordId}` : `ip:${request.ip}`),
+    errorResponseBuilder: () => new HttpError(429, 'rate_limited'),
+  });
+  await app.register(multipart, {
+    limits: { fileSize: UPLOAD_MAX_BYTES, files: 1, fields: 4, parts: 5, fieldSize: 1024 },
+    throwFileSizeLimit: true,
+  });
+  await app.register(websocket, { options: { maxPayload: 4096 } });
+  const oauth = deps.oauth ?? (await registerDiscordOAuth(app, config, { tokenHost: deps.discordTokenHost, fetch: deps.fetch }));
+
+  const hub = new WsHub(() => clock.now());
+  const grantDeps = { db, gateway, clock, unitOrder };
+  const sync = createSync({
+    db,
+    gateway,
+    fx,
+    clock,
+    log,
+    unitOrder,
+    identity: { publicUrl: config.PUBLIC_URL, guildId: config.DISCORD_GUILD_ID, nameSource: config.OFFICER_NAME_SOURCE },
+    onGrantsChanged: (discordId, grants, member) => hub.setEligible(discordId, member && grants.grants.length > 0),
+  });
+  const ctx: AppContext = {
+    config,
+    db,
+    gateway,
+    fx,
+    clock,
+    log,
+    oauth,
+    sync,
+    hub,
+    avatars: new AvatarCache({ dir: join(resolve(config.UPLOAD_DIR), 'avatars'), log, fetch: deps.fetch }),
+    background: new BackgroundTasks(log),
+    unitOrder,
+    grantDeps,
+  };
+  app.decorate('fredpd', ctx);
+
+  // JSON with the raw text kept for HMAC (§C5 signs the exact bytes). A request with HMAC headers and no session is
+  // verified before it is parsed (401, no parsing, for a forged one). Fastify's own parser then does the parsing,
+  // with prototype-poisoning protection. Set up here, once ctx exists and before the routes below (which use the
+  // root instance's parser; the plugins above add no JSON routes).
+  const parseJson = app.getDefaultJsonParser('error', 'error');
+  app.removeContentTypeParser('application/json');
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (request, body, done) => {
+    const raw = body as string;
+    request.rawBody = raw;
+    try {
+      checkHmacBeforeParse(ctx, request, raw);
+    } catch (err) {
+      done(err as Error, undefined);
+      return;
+    }
+    parseJson(request, raw, done);
+  });
+
+  registerAuthRoutes(app, ctx);
+  registerAdminRoutes(app, ctx);
+  registerInternalRoutes(app, ctx);
+  registerUploadRoutes(app, ctx);
+  registerAvatarRoutes(app, ctx);
+  registerWsRoutes(app, ctx);
+
+  app.addHook('onClose', async () => {
+    hub.closeAll();
+    await ctx.background.drain();
+  });
+  return app;
+}

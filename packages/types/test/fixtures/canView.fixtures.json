@@ -1,0 +1,639 @@
+{
+  "$comment": "Shared fixtures for canView (docs/contracts.md §C3). Run by packages/types/test/canView.test.ts, tests/lua/canview_test.lua and /fredpd_selftest. `rules` must equal db/seed/visibility_rules_default.sql (a TS test parses the SQL). Each viewer is a complete ViewerSchema value (viewer.grants.tier/units mirror viewer.tier/units, rank null, fixed computedAt). engineCases test evaluation semantics with their own rules. unvalidatedCases (own rules) feed input the schemas reject, e.g. DB rows cast without parsing: both ports must fail closed identically.",
+  "rules": [
+    {"id": 10, "recordType": "case", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "records.admin", "result": "full", "priority": 100, "enabled": true},
+    {"id": 11, "recordType": "case", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 90, "enabled": true},
+    {"id": 12, "recordType": "case", "level": null, "recordStatus": "open", "viewerCondition": "unit", "conditionValue": null, "result": "full", "priority": 80, "enabled": true},
+    {"id": 13, "recordType": "case", "level": null, "recordStatus": "closed", "viewerCondition": "tier_gte", "conditionValue": null, "result": "masked", "priority": 70, "enabled": true},
+    {"id": 14, "recordType": "case", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 10, "enabled": true},
+    {"id": 15, "recordType": "case", "level": null, "recordStatus": "open", "viewerCondition": "any", "conditionValue": null, "result": "masked", "priority": 50, "enabled": false},
+    {"id": 20, "recordType": "report", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "records.admin", "result": "full", "priority": 100, "enabled": true},
+    {"id": 21, "recordType": "report", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 90, "enabled": true},
+    {"id": 22, "recordType": "report", "level": null, "recordStatus": "open", "viewerCondition": "unit", "conditionValue": null, "result": "full", "priority": 80, "enabled": true},
+    {"id": 23, "recordType": "report", "level": null, "recordStatus": "closed", "viewerCondition": "tier_gte", "conditionValue": null, "result": "masked", "priority": 70, "enabled": true},
+    {"id": 24, "recordType": "report", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 10, "enabled": true},
+    {"id": 30, "recordType": "evidence", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "records.admin", "result": "full", "priority": 100, "enabled": true},
+    {"id": 31, "recordType": "evidence", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 90, "enabled": true},
+    {"id": 32, "recordType": "evidence", "level": null, "recordStatus": "open", "viewerCondition": "unit", "conditionValue": null, "result": "full", "priority": 80, "enabled": true},
+    {"id": 33, "recordType": "evidence", "level": null, "recordStatus": "closed", "viewerCondition": "tier_gte", "conditionValue": null, "result": "masked", "priority": 70, "enabled": true},
+    {"id": 34, "recordType": "evidence", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 10, "enabled": true},
+    {"id": 40, "recordType": "poi", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "records.admin", "result": "full", "priority": 100, "enabled": true},
+    {"id": 41, "recordType": "poi", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 90, "enabled": true},
+    {"id": 42, "recordType": "poi", "level": null, "recordStatus": "any", "viewerCondition": "unit", "conditionValue": null, "result": "full", "priority": 80, "enabled": true},
+    {"id": 43, "recordType": "poi", "level": null, "recordStatus": "any", "viewerCondition": "tier_gte", "conditionValue": null, "result": "full", "priority": 70, "enabled": true},
+    {"id": 44, "recordType": "poi", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 10, "enabled": true},
+    {"id": 50, "recordType": "bolo", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "records.admin", "result": "full", "priority": 100, "enabled": true},
+    {"id": 51, "recordType": "bolo", "level": 0, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 95, "enabled": true},
+    {"id": 52, "recordType": "bolo", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 90, "enabled": true},
+    {"id": 53, "recordType": "bolo", "level": null, "recordStatus": "any", "viewerCondition": "unit", "conditionValue": null, "result": "full", "priority": 80, "enabled": true},
+    {"id": 54, "recordType": "bolo", "level": null, "recordStatus": "any", "viewerCondition": "tier_gte", "conditionValue": null, "result": "full", "priority": 70, "enabled": true},
+    {"id": 55, "recordType": "bolo", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 10, "enabled": true},
+    {"id": 60, "recordType": "mission", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "intel.command", "result": "full", "priority": 100, "enabled": true},
+    {"id": 61, "recordType": "mission", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 90, "enabled": true},
+    {"id": 62, "recordType": "mission", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 10, "enabled": true},
+    {"id": 70, "recordType": "intel_report", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "intel.command", "result": "full", "priority": 100, "enabled": true},
+    {"id": 71, "recordType": "intel_report", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 90, "enabled": true},
+    {"id": 72, "recordType": "intel_report", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "intel.read", "result": "full", "priority": 60, "enabled": true},
+    {"id": 80, "recordType": "intel_source", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "intel.command", "result": "full", "priority": 100, "enabled": true},
+    {"id": 81, "recordType": "intel_source", "level": null, "recordStatus": "any", "viewerCondition": "handler", "conditionValue": null, "result": "full", "priority": 90, "enabled": true},
+    {"id": 82, "recordType": "intel_source", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "intel.read", "result": "masked", "priority": 60, "enabled": true},
+    {"id": 999, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "none", "priority": -1000, "enabled": false}
+  ],
+  "cases": [
+    {
+      "name": "§5.3 open case: IGV not assigned -> notice (kontaktnotis)",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 0, "status": "open", "unit": "utredning", "assignees": ["UTR001"], "ownerCitizenid": "UTR001"},
+      "expected": "notice"
+    },
+    {
+      "name": "§5.3 same case closed: IGV -> masked (Standard parts)",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 0, "status": "closed", "unit": "utredning", "assignees": ["UTR001"], "ownerCitizenid": "UTR001"},
+      "expected": "masked"
+    },
+    {
+      "name": "§5.3 open case: IGV assigned -> full",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 0, "status": "open", "unit": "utredning", "assignees": ["UTR001", "IGV001"], "ownerCitizenid": "UTR001"},
+      "expected": "full"
+    },
+    {
+      "name": "open case: member of the case unit -> full",
+      "viewer": {"citizenid": "UTR002", "tier": 1, "units": ["utredning"], "grants": {"grants": ["intel_tier:1", "unit:utredning"], "denied": [], "tier": 1, "units": ["utredning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 0, "status": "open", "unit": "utredning", "assignees": ["UTR001"], "ownerCitizenid": "UTR001"},
+      "expected": "full"
+    },
+    {
+      "name": "closed case: unit member not assigned -> masked (unit rule is open-only)",
+      "viewer": {"citizenid": "UTR002", "tier": 1, "units": ["utredning"], "grants": {"grants": ["intel_tier:1", "unit:utredning"], "denied": [], "tier": 1, "units": ["utredning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 0, "status": "closed", "unit": "utredning", "assignees": ["UTR001"], "ownerCitizenid": "UTR001"},
+      "expected": "masked"
+    },
+    {
+      "name": "closed case: owner -> full (assigned outranks tier_gte by priority)",
+      "viewer": {"citizenid": "UTR001", "tier": 1, "units": ["utredning"], "grants": {"grants": ["intel_tier:1", "unit:utredning"], "denied": [], "tier": 1, "units": ["utredning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 0, "status": "closed", "unit": "utredning", "assignees": [], "ownerCitizenid": "UTR001"},
+      "expected": "full"
+    },
+    {
+      "name": "disabled rule ignored: open case for a tier-2 officer of another unit stays notice",
+      "viewer": {"citizenid": "SPN002", "tier": 2, "units": ["span"], "grants": {"grants": ["intel_tier:2", "perm:intel.read", "unit:span"], "denied": [], "tier": 2, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 0, "status": "open", "unit": "utredning", "assignees": ["UTR001"], "ownerCitizenid": "UTR001"},
+      "expected": "notice"
+    },
+    {
+      "name": "closed level-1 case: IGV tier 0 -> notice",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 1, "status": "closed", "unit": "utredning", "assignees": ["UTR001"], "ownerCitizenid": "UTR001"},
+      "expected": "notice"
+    },
+    {
+      "name": "records.admin tier 2: closed level-2 case -> full",
+      "viewer": {"citizenid": "ADM001", "tier": 2, "units": [], "grants": {"grants": ["intel_tier:2", "perm:records.admin"], "denied": [], "tier": 2, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 2, "status": "closed", "unit": "utredning", "assignees": ["UTR001"], "ownerCitizenid": "UTR001"},
+      "expected": "full"
+    },
+    {
+      "name": "records.admin tier 0: level-1 case -> notice (level cap beats the rule)",
+      "viewer": {"citizenid": "ADM002", "tier": 0, "units": [], "grants": {"grants": ["perm:records.admin"], "denied": [], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 1, "status": "open", "unit": "utredning", "assignees": ["UTR001"], "ownerCitizenid": "UTR001"},
+      "expected": "notice"
+    },
+    {
+      "name": "records.admin + intel.command tier 0: level-2 case -> full (intel.command lifts the level cap)",
+      "viewer": {"citizenid": "ADM003", "tier": 0, "units": [], "grants": {"grants": ["perm:intel.command", "perm:records.admin"], "denied": [], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 2, "status": "closed", "unit": "utredning", "assignees": ["UTR001"], "ownerCitizenid": "UTR001"},
+      "expected": "full"
+    },
+    {
+      "name": "records.admin does not open intel reports -> none",
+      "viewer": {"citizenid": "ADM001", "tier": 2, "units": [], "grants": {"grants": ["intel_tier:2", "perm:records.admin"], "denied": [], "tier": 2, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_report", "id": 12, "level": 0, "status": "open", "unit": "span", "assignees": [], "ownerCitizenid": "SPN009"},
+      "expected": "none"
+    },
+    {
+      "name": "denied perm: records.admin via perm:* but denied -> falls through to tier_gte masked",
+      "viewer": {"citizenid": "ADM004", "tier": 2, "units": [], "grants": {"grants": ["perm:*"], "denied": ["perm:records.admin"], "tier": 2, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 101, "level": 0, "status": "closed", "unit": "utredning", "assignees": ["UTR001"], "ownerCitizenid": "UTR001"},
+      "expected": "masked"
+    },
+    {
+      "name": "report open, officer of another unit -> notice",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "report", "id": "K-101-26/2", "level": 0, "status": "open", "unit": "utredning", "ownerCitizenid": "UTR001"},
+      "expected": "notice"
+    },
+    {
+      "name": "evidence open, member of the evidence unit -> full",
+      "viewer": {"citizenid": "UTR002", "tier": 1, "units": ["utredning"], "grants": {"grants": ["intel_tier:1", "unit:utredning"], "denied": [], "tier": 1, "units": ["utredning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "evidence", "id": 55, "level": 0, "status": "open", "unit": "utredning", "ownerCitizenid": "UTR001"},
+      "expected": "full"
+    },
+    {
+      "name": "evidence closed, tier >= level -> masked",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "evidence", "id": 56, "level": 0, "status": "closed", "unit": "utredning", "ownerCitizenid": "UTR001"},
+      "expected": "masked"
+    },
+    {
+      "name": "POI level 0: IGV lookup -> full (permissive lookups)",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "poi", "id": 900, "level": 0, "status": "open", "unit": null, "ownerCitizenid": "UTR001"},
+      "expected": "full"
+    },
+    {
+      "name": "POI level 1: IGV tier 0 -> notice",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "poi", "id": 901, "level": 1, "status": "open", "unit": null, "ownerCitizenid": "UTR001"},
+      "expected": "notice"
+    },
+    {
+      "name": "BOLO level 0: anyone, even without identity or units -> full",
+      "viewer": {"citizenid": null, "tier": 0, "units": [], "grants": {"grants": [], "denied": [], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "bolo", "id": 40, "level": 0, "status": "open", "unit": "igv", "ownerCitizenid": "IGV001"},
+      "expected": "full"
+    },
+    {
+      "name": "BOLO level 1: tier 1 officer of another unit -> full (tier_gte)",
+      "viewer": {"citizenid": "UTR002", "tier": 1, "units": ["utredning"], "grants": {"grants": ["intel_tier:1", "unit:utredning"], "denied": [], "tier": 1, "units": ["utredning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "bolo", "id": 41, "level": 1, "status": "open", "unit": "igv", "ownerCitizenid": "IGV001"},
+      "expected": "full"
+    },
+    {
+      "name": "BOLO level 1: IGV tier 0 -> notice",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "bolo", "id": 42, "level": 1, "status": "open", "unit": "span", "ownerCitizenid": "SPN001"},
+      "expected": "notice"
+    },
+    {
+      "name": "BOLO level 2: unit member tier 1 -> notice (level cap over the unit rule)",
+      "viewer": {"citizenid": "SPN003", "tier": 1, "units": ["span"], "grants": {"grants": ["intel_tier:1", "perm:intel.handler", "perm:intel.read", "unit:span"], "denied": [], "tier": 1, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "bolo", "id": 43, "level": 2, "status": "open", "unit": "span", "ownerCitizenid": "SPN001"},
+      "expected": "notice"
+    },
+    {
+      "name": "BOLO level 2: issuer (owner) tier 0 -> full (owner exempt from level cap)",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "bolo", "id": 44, "level": 2, "status": "open", "unit": "igv", "ownerCitizenid": "IGV001"},
+      "expected": "full"
+    },
+    {
+      "name": "§5.8 Span mission Hemlig: IGV searching -> notice",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "mission", "id": 7, "level": 2, "status": "open", "unit": "span", "assignees": ["SPN001", "UTR002"], "ownerCitizenid": "SPN001"},
+      "expected": "notice"
+    },
+    {
+      "name": "§5.8 Span mission Hemlig: Utredning assigned (tier 1) -> full",
+      "viewer": {"citizenid": "UTR002", "tier": 1, "units": ["utredning"], "grants": {"grants": ["intel_tier:1", "unit:utredning"], "denied": [], "tier": 1, "units": ["utredning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "mission", "id": 7, "level": 2, "status": "open", "unit": "span", "assignees": ["SPN001", "UTR002"], "ownerCitizenid": "SPN001"},
+      "expected": "full"
+    },
+    {
+      "name": "§5.8 Span mission Hemlig: Span lead (owner) -> full",
+      "viewer": {"citizenid": "SPN001", "tier": 2, "units": ["span"], "grants": {"grants": ["intel_tier:2", "perm:intel.read", "unit:span"], "denied": [], "tier": 2, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "mission", "id": 7, "level": 2, "status": "open", "unit": "span", "assignees": ["UTR002"], "ownerCitizenid": "SPN001"},
+      "expected": "full"
+    },
+    {
+      "name": "Span mission Hemlig: Span colleague not a member -> notice (missions are strict)",
+      "viewer": {"citizenid": "SPN002", "tier": 2, "units": ["span"], "grants": {"grants": ["intel_tier:2", "perm:intel.read", "unit:span"], "denied": [], "tier": 2, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "mission", "id": 7, "level": 2, "status": "open", "unit": "span", "assignees": ["SPN001", "UTR002"], "ownerCitizenid": "SPN001"},
+      "expected": "notice"
+    },
+    {
+      "name": "mission: intel.command tier 0, not a member -> full",
+      "viewer": {"citizenid": "LED002", "tier": 0, "units": ["ledning"], "grants": {"grants": ["perm:intel.command", "unit:ledning"], "denied": [], "tier": 0, "units": ["ledning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "mission", "id": 7, "level": 2, "status": "open", "unit": "span", "assignees": ["SPN001", "UTR002"], "ownerCitizenid": "SPN001"},
+      "expected": "full"
+    },
+    {
+      "name": "mission: records.admin tier 2, not a member -> notice (missions count as intel)",
+      "viewer": {"citizenid": "ADM001", "tier": 2, "units": [], "grants": {"grants": ["intel_tier:2", "perm:records.admin"], "denied": [], "tier": 2, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "mission", "id": 7, "level": 2, "status": "open", "unit": "span", "assignees": ["SPN001", "UTR002"], "ownerCitizenid": "SPN001"},
+      "expected": "notice"
+    },
+    {
+      "name": "source: handler with intel.handler -> full (real identity)",
+      "viewer": {"citizenid": "SPN003", "tier": 1, "units": ["span"], "grants": {"grants": ["intel_tier:1", "perm:intel.handler", "perm:intel.read", "unit:span"], "denied": [], "tier": 1, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 3, "level": 1, "status": "open", "unit": "span", "ownerCitizenid": null, "handlerCitizenid": "SPN003"},
+      "expected": "full"
+    },
+    {
+      "name": "source: handler without intel.handler -> masked (identity cap)",
+      "viewer": {"citizenid": "SPN003", "tier": 1, "units": ["span"], "grants": {"grants": ["intel_tier:1", "perm:intel.read", "unit:span"], "denied": [], "tier": 1, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 3, "level": 1, "status": "open", "unit": "span", "ownerCitizenid": null, "handlerCitizenid": "SPN003"},
+      "expected": "masked"
+    },
+    {
+      "name": "source: intel.handler but not this source's handler -> masked",
+      "viewer": {"citizenid": "SPN004", "tier": 1, "units": ["span"], "grants": {"grants": ["intel_tier:1", "perm:intel.handler", "perm:intel.read", "unit:span"], "denied": [], "tier": 1, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 3, "level": 1, "status": "open", "unit": "span", "ownerCitizenid": null, "handlerCitizenid": "SPN003"},
+      "expected": "masked"
+    },
+    {
+      "name": "source: intel.command -> full",
+      "viewer": {"citizenid": "LED001", "tier": 2, "units": ["ledning"], "grants": {"grants": ["intel_tier:2", "perm:intel.command", "unit:ledning"], "denied": [], "tier": 2, "units": ["ledning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 3, "level": 1, "status": "open", "unit": "span", "ownerCitizenid": null, "handlerCitizenid": "SPN003"},
+      "expected": "full"
+    },
+    {
+      "name": "source: intel.read only -> masked",
+      "viewer": {"citizenid": "SPN005", "tier": 1, "units": ["span"], "grants": {"grants": ["intel_tier:1", "perm:intel.read", "unit:span"], "denied": [], "tier": 1, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 3, "level": 1, "status": "open", "unit": "span", "ownerCitizenid": null, "handlerCitizenid": "SPN003"},
+      "expected": "masked"
+    },
+    {
+      "name": "source: no intel perms -> none",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 3, "level": 1, "status": "open", "unit": "span", "ownerCitizenid": null, "handlerCitizenid": "SPN003"},
+      "expected": "none"
+    },
+    {
+      "name": "source level 2: intel.read tier 1, not handler -> notice (level cap)",
+      "viewer": {"citizenid": "SPN005", "tier": 1, "units": ["span"], "grants": {"grants": ["intel_tier:1", "perm:intel.read", "unit:span"], "denied": [], "tier": 1, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 4, "level": 2, "status": "open", "unit": "span", "ownerCitizenid": null, "handlerCitizenid": "SPN003"},
+      "expected": "notice"
+    },
+    {
+      "name": "source level 2: handler with intel.handler tier 1 -> full (handler exempt from level cap)",
+      "viewer": {"citizenid": "SPN003", "tier": 1, "units": ["span"], "grants": {"grants": ["intel_tier:1", "perm:intel.handler", "perm:intel.read", "unit:span"], "denied": [], "tier": 1, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 4, "level": 2, "status": "open", "unit": "span", "ownerCitizenid": null, "handlerCitizenid": "SPN003"},
+      "expected": "full"
+    },
+    {
+      "name": "source: perm:* with intel.handler and intel.command denied, handler -> masked",
+      "viewer": {"citizenid": "SPN003", "tier": 2, "units": ["span"], "grants": {"grants": ["intel_tier:2", "perm:*"], "denied": ["perm:intel.command", "perm:intel.handler"], "tier": 2, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 3, "level": 1, "status": "open", "unit": "span", "ownerCitizenid": null, "handlerCitizenid": "SPN003"},
+      "expected": "masked"
+    },
+    {
+      "name": "intel report: author (owner) -> full",
+      "viewer": {"citizenid": "SPN001", "tier": 2, "units": ["span"], "grants": {"grants": ["intel_tier:2", "perm:intel.read", "unit:span"], "denied": [], "tier": 2, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_report", "id": 12, "level": 1, "status": "open", "unit": "span", "assignees": [], "ownerCitizenid": "SPN001"},
+      "expected": "full"
+    },
+    {
+      "name": "intel report: assignee tier 0 on level 2 -> full",
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_report", "id": 12, "level": 2, "status": "open", "unit": "span", "assignees": ["IGV001"], "ownerCitizenid": "SPN001"},
+      "expected": "full"
+    },
+    {
+      "name": "intel report: intel.read with tier >= level -> full",
+      "viewer": {"citizenid": "SPN005", "tier": 1, "units": ["span"], "grants": {"grants": ["intel_tier:1", "perm:intel.read", "unit:span"], "denied": [], "tier": 1, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_report", "id": 12, "level": 1, "status": "open", "unit": "span", "assignees": [], "ownerCitizenid": "SPN001"},
+      "expected": "full"
+    },
+    {
+      "name": "intel report: intel.read with tier below level -> notice (level cap; §C3 text says none, OPEN contract question)",
+      "viewer": {"citizenid": "SPN005", "tier": 1, "units": ["span"], "grants": {"grants": ["intel_tier:1", "perm:intel.read", "unit:span"], "denied": [], "tier": 1, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_report", "id": 12, "level": 2, "status": "open", "unit": "span", "assignees": [], "ownerCitizenid": "SPN001"},
+      "expected": "notice"
+    },
+    {
+      "name": "intel report: no intel perms -> none (no rule matches)",
+      "viewer": {"citizenid": "UTR002", "tier": 1, "units": ["utredning"], "grants": {"grants": ["intel_tier:1", "unit:utredning"], "denied": [], "tier": 1, "units": ["utredning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_report", "id": 12, "level": 1, "status": "open", "unit": "span", "assignees": [], "ownerCitizenid": "SPN001"},
+      "expected": "none"
+    },
+    {
+      "name": "intel report: null citizenid never matches a null owner -> none",
+      "viewer": {"citizenid": null, "tier": 0, "units": [], "grants": {"grants": [], "denied": [], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_report", "id": 12, "level": 0, "status": "open", "unit": "span", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    }
+  ],
+  "engineCases": [
+    {
+      "name": "priority tie: lower id wins regardless of array order",
+      "rules": [
+        {"id": 2, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "masked", "priority": 50, "enabled": true},
+        {"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}
+      ],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "full"
+    },
+    {
+      "name": "higher priority wins over lower id",
+      "rules": [
+        {"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 10, "enabled": true},
+        {"id": 2, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 20, "enabled": true}
+      ],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "full"
+    },
+    {
+      "name": "failing condition falls through to the next rule",
+      "rules": [
+        {"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 90, "enabled": true},
+        {"id": 2, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "masked", "priority": 10, "enabled": true}
+      ],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "masked"
+    },
+    {
+      "name": "recordType '*' matches every type",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "masked", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "poi", "id": 2, "level": 0, "status": "open"},
+      "expected": "masked"
+    },
+    {
+      "name": "recordType mismatch -> none",
+      "rules": [{"id": 1, "recordType": "bolo", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "poi", "id": 2, "level": 0, "status": "open"},
+      "expected": "none"
+    },
+    {
+      "name": "unknown recordType (admin typo) is schema-valid but never matches",
+      "rules": [
+        {"id": 1, "recordType": "csae", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true},
+        {"id": 2, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 10, "enabled": true}
+      ],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "notice"
+    },
+    {
+      "name": "level-specific rule does not match another level",
+      "rules": [{"id": 1, "recordType": "case", "level": 1, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "X", "tier": 2, "units": [], "grants": {"grants": [], "denied": [], "tier": 2, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "level-specific rule matches its level",
+      "rules": [{"id": 1, "recordType": "case", "level": 1, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "X", "tier": 2, "units": [], "grants": {"grants": [], "denied": [], "tier": 2, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 1, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "full"
+    },
+    {
+      "name": "status-specific rule does not match the other status",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "closed", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "unit with explicit conditionValue uses it, not record.unit",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "unit", "conditionValue": "span", "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "X", "tier": 0, "units": ["span"], "grants": {"grants": [], "denied": [], "tier": 0, "units": ["span"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "full"
+    },
+    {
+      "name": "unit with explicit conditionValue the viewer lacks -> none",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "unit", "conditionValue": "span", "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "unit without conditionValue and record without unit -> none",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "unit", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": null, "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "unit with empty conditionValue matches no unit (only NULL falls back to record.unit)",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "unit", "conditionValue": "", "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "perm with NULL conditionValue never matches",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "X", "tier": 0, "units": [], "grants": {"grants": ["perm:*"], "denied": [], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "perm with empty conditionValue never matches, not even perm:*",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "", "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "X", "tier": 0, "units": [], "grants": {"grants": ["perm:*"], "denied": [], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "perm condition honours deny",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "records.admin", "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "X", "tier": 0, "units": [], "grants": {"grants": ["perm:records.admin"], "denied": ["perm:*"], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "tier_gte: equal tier counts",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "tier_gte", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "X", "tier": 1, "units": [], "grants": {"grants": [], "denied": [], "tier": 1, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 1, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "full"
+    },
+    {
+      "name": "tier_gte: lower tier fails",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "tier_gte", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "X", "tier": 0, "units": [], "grants": {"grants": [], "denied": [], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 1, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "handler condition",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "handler", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "H1", "tier": 0, "units": [], "grants": {"grants": [], "denied": [], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null, "handlerCitizenid": "H1"},
+      "expected": "full"
+    },
+    {
+      "name": "assigned condition via assignees",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "A1", "tier": 0, "units": [], "grants": {"grants": [], "denied": [], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": ["Z9", "A1"], "ownerCitizenid": null},
+      "expected": "full"
+    },
+    {
+      "name": "disabled rule is skipped",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": false}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "no rules -> none",
+      "rules": [],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "none"
+    },
+    {
+      "name": "identity cap: rule gives full to anyone on intel_source -> masked",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 9, "level": 0, "status": "open"},
+      "expected": "masked"
+    },
+    {
+      "name": "level cap: rule gives full to anyone on a level-2 record, tier 0 -> notice",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 2, "status": "open", "unit": "igv", "assignees": [], "ownerCitizenid": null},
+      "expected": "notice"
+    },
+    {
+      "name": "caps never raise a result",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "LED001", "tier": 2, "units": ["ledning"], "grants": {"grants": ["intel_tier:2", "perm:intel.command", "unit:ledning"], "denied": [], "tier": 2, "units": ["ledning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "intel_source", "id": 9, "level": 0, "status": "open"},
+      "expected": "notice"
+    },
+    {
+      "name": "records without optional fields",
+      "rules": [
+        {"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 50, "enabled": true},
+        {"id": 2, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "unit", "conditionValue": null, "result": "masked", "priority": 1, "enabled": true}
+      ],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["mdt_page:search", "unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 5, "level": 0, "status": "open"},
+      "expected": "none"
+    }
+  ],
+  "unvalidatedCases": [
+    {
+      "name": "record level null counts as 2: full-to-anyone rule, tier 1 -> notice",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 1, "units": ["igv"], "grants": {"grants": ["intel_tier:1", "unit:igv"], "denied": [], "tier": 1, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": null, "status": "open", "unit": "igv"},
+      "expected": "notice"
+    },
+    {
+      "name": "record without level counts as 2 -> notice",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 1, "units": ["igv"], "grants": {"grants": ["intel_tier:1", "unit:igv"], "denied": [], "tier": 1, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "status": "open", "unit": "igv"},
+      "expected": "notice"
+    },
+    {
+      "name": "record level -1 counts as 2 -> notice",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 1, "units": ["igv"], "grants": {"grants": ["intel_tier:1", "unit:igv"], "denied": [], "tier": 1, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": -1, "status": "open"},
+      "expected": "notice"
+    },
+    {
+      "name": "record level '1' (string) counts as 2 -> notice",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 1, "units": ["igv"], "grants": {"grants": ["intel_tier:1", "unit:igv"], "denied": [], "tier": 1, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": "1", "status": "open"},
+      "expected": "notice"
+    },
+    {
+      "name": "record level 3 counts as 2: tier 2 passes tier_gte -> full",
+      "rules": [
+        {"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "tier_gte", "conditionValue": null, "result": "full", "priority": 50, "enabled": true},
+        {"id": 2, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 10, "enabled": true}
+      ],
+      "viewer": {"citizenid": "LED001", "tier": 2, "units": ["ledning"], "grants": {"grants": ["intel_tier:2", "unit:ledning"], "denied": [], "tier": 2, "units": ["ledning"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "poi", "id": 1, "level": 3, "status": "open"},
+      "expected": "full"
+    },
+    {
+      "name": "a level-2 rule applies to a record without a level (owner, so no level cap) -> full",
+      "rules": [{"id": 1, "recordType": "*", "level": 2, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 1, "units": ["igv"], "grants": {"grants": ["intel_tier:1", "unit:igv"], "denied": [], "tier": 1, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "status": "open", "ownerCitizenid": "IGV001"},
+      "expected": "full"
+    },
+    {
+      "name": "viewer without tier counts as tier 0 -> notice on level 1",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "units": ["igv"], "grants": {"grants": ["unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 1, "status": "open"},
+      "expected": "notice"
+    },
+    {
+      "name": "viewer tier null counts as 0 -> notice on level 1",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": null, "units": ["igv"], "grants": {"grants": ["unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 1, "status": "open"},
+      "expected": "notice"
+    },
+    {
+      "name": "viewer tier 5 counts as 0 -> notice on level 1",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 5, "units": ["igv"], "grants": {"grants": ["unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 1, "status": "open"},
+      "expected": "notice"
+    },
+    {
+      "name": "viewer tier '2' (string) counts as 0: tier_gte fails on level 1 -> none",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "tier_gte", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "LED001", "tier": "2", "units": [], "grants": {"grants": ["intel_tier:2"], "denied": [], "tier": 2, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "poi", "id": 1, "level": 1, "status": "open"},
+      "expected": "none"
+    },
+    {
+      "name": "assignees as a string never match (no substring match) -> none",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "assignees": "XIGV001X"},
+      "expected": "none"
+    },
+    {
+      "name": "viewer units as a string never match (no substring match) -> none",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "unit", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": "igv,span", "grants": {"grants": ["unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv"},
+      "expected": "none"
+    },
+    {
+      "name": "numeric citizenid is no identity, even against the same numeric owner -> none",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "assigned", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": 123, "tier": 0, "units": [], "grants": {"grants": [], "denied": [], "tier": 0, "units": [], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "ownerCitizenid": 123},
+      "expected": "none"
+    },
+    {
+      "name": "enabled as TINYINT: 1 and '1' apply, 0 and 'true' do not -> masked",
+      "rules": [
+        {"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 90, "enabled": 0},
+        {"id": 2, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "full", "priority": 80, "enabled": "true"},
+        {"id": 3, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "masked", "priority": 70, "enabled": 1},
+        {"id": 4, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 60, "enabled": "1"}
+      ],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open"},
+      "expected": "masked"
+    },
+    {
+      "name": "viewer grants without lists grant nothing -> falls through to notice",
+      "rules": [
+        {"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "perm", "conditionValue": "records.admin", "result": "full", "priority": 50, "enabled": true},
+        {"id": 2, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "any", "conditionValue": null, "result": "notice", "priority": 10, "enabled": true}
+      ],
+      "viewer": {"citizenid": "ADM001", "tier": 2, "units": [], "grants": {"grants": "perm:records.admin"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open"},
+      "expected": "notice"
+    },
+    {
+      "name": "non-string conditionValue counts as NULL: unit falls back to record.unit -> full",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "unit", "conditionValue": 5, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {"citizenid": "IGV001", "tier": 0, "units": ["igv"], "grants": {"grants": ["unit:igv"], "denied": [], "tier": 0, "units": ["igv"], "rank": null, "computedAt": "2026-09-29T12:00:00.000Z"}},
+      "record": {"type": "case", "id": 1, "level": 0, "status": "open", "unit": "igv"},
+      "expected": "full"
+    },
+    {
+      "name": "empty viewer object: tier 0, no identity, no grants -> full only via tier_gte on level 0",
+      "rules": [{"id": 1, "recordType": "*", "level": null, "recordStatus": "any", "viewerCondition": "tier_gte", "conditionValue": null, "result": "full", "priority": 50, "enabled": true}],
+      "viewer": {},
+      "record": {"type": "poi", "id": 1, "level": 0, "status": "open"},
+      "expected": "full"
+    }
+  ]
+}

@@ -1,0 +1,74 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# FredPD - example server.cfg fragment. Copy the parts you need into your own server.cfg (which is git-ignored and
+# must stay out of the repository: it holds secrets). Keep your existing Qbox/txAdmin settings; this file only shows
+# what FredPD needs and the order it needs it in.
+
+## ---------------------------------------------------------------------------------------------------------------
+## Database (oxmysql). utf8mb4 so Swedish names survive; the server's time zone should be UTC (docs/modules/db.md).
+set mysql_connection_string "mysql://fivem:CHANGE_ME@127.0.0.1:3306/qbox?charset=utf8mb4"
+
+## ---------------------------------------------------------------------------------------------------------------
+## Language: ox_lib's locale() and FredPD's L() read locales/sv.json (en.json is the fallback).
+setr ox:locale sv
+
+## ---------------------------------------------------------------------------------------------------------------
+## FredPD <-> fredpd_service bridge (docs/contracts.md C5/C6).
+# Shared HMAC secret: the same value as FREDPD_HMAC_SECRET in apps/service/.env. At least 32 characters, random,
+# never committed. With a missing, short or placeholder secret (like the one below) fredpd_core logs an error and
+# the bridge stays disabled. Replace it with the output of:
+#   node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"
+set fredpd_hmac_secret "CHANGE_ME"
+# Where fredpd_core reaches the service (grants, events). Default http://127.0.0.1:3000.
+set fredpd_service_url "http://127.0.0.1:3000"
+# The service reaches FXServer at http://127.0.0.1:30120/fredpd_core/... (ping, grants, recompute, officer). Those
+# routes share the public game port (players connect on it, so it cannot be firewalled) and rely on the HMAC alone:
+# anyone who knows the secret can change police permissions. That is why it must be random and kept out of git.
+
+## ---------------------------------------------------------------------------------------------------------------
+## Permissions (ACE). ox_lib creates the ACE entries for lib.addCommand(..., { restricted = 'group.admin' }), which
+## covers fredpd_audit_archive and the fredpd_devtools commands. It needs these four lines to do so:
+add_ace resource.ox_lib command.add_ace allow
+add_ace resource.ox_lib command.remove_ace allow
+add_ace resource.ox_lib command.add_principal allow
+add_ace resource.ox_lib command.remove_principal allow
+
+add_ace group.admin command allow
+# Server admins (in-game permissions for police work come from Discord roles, not from ACE):
+# add_principal identifier.discord:000000000000000000 group.admin
+
+## ---------------------------------------------------------------------------------------------------------------
+## Resource order. Dependencies first; FredPD after the upstream police resources it integrates with.
+ensure oxmysql
+ensure ox_lib
+ensure qbx_core
+ensure ox_inventory
+ensure ox_target
+ensure ox_doorlock
+
+# Upstream (fetched by scripts/fetch-deps.sh into resources/[upstream], patched by scripts/apply-patches.sh)
+ensure qbx_policejob
+ensure evidences
+ensure ps-dispatch
+
+# Integrations configured in config/integrations.json (housing/garage/prison adapters). Start them before
+# fredpd_core so its start-up check sees them running; adjust to the scripts you actually use.
+ensure ps-housing
+ensure qbx_garages
+ensure qbx_prison
+
+# FredPD: fredpd_core first (permissions, migrations, bridge), then the modules that use it.
+ensure fredpd_core
+ensure fredpd_mdt
+ensure fredpd_records
+ensure fredpd_bolo
+ensure fredpd_dispatch
+ensure fredpd_forensics
+ensure fredpd_intel
+ensure fredpd_breach
+
+# DEV ONLY. fredpd_devtools (/fredpd_selftest, /fredpd_backfill, /fredpd_seed, /fredpd_fakeunits) must never be
+# started on the production server. Uncomment on a development server only:
+# ensure fredpd_devtools
+
+## Maintenance: once a month, from the server console (or in game as group.admin):
+##   fredpd_audit_archive        moves fredpd_audit rows older than 90 days to fredpd_audit_archive

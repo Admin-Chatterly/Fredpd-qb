@@ -1,0 +1,84 @@
+/* SPDX-License-Identifier: GPL-3.0-only */
+/*
+ * FredPD theme (Tailwind v4). Dark, flat (no shadows, no gradients), one accent hue, 15 px base.
+ * Apps import it right after Tailwind:
+ *
+ *   @import "tailwindcss";
+ *   @import "@fredpd/ui/theme.css";
+ *
+ * The default palette is removed on purpose (--color-*: initial) so pages can only use these tokens:
+ * bg-canvas / bg-surface / bg-raised, border-line, text-fg / text-muted / text-subtle, bg-accent, text-accent-text,
+ * bg-accent-soft and the three status colours (success, warning, danger).
+ * The body background and `color-scheme` are left to each app: the NUI must stay transparent over the game.
+ * Never set `color-scheme` on html/:root here. FiveM shows each ui_page as a transparent full-screen iframe in a
+ * root page whose scheme is `normal`; when an iframe's used scheme differs from its embedder's, Chromium paints
+ * the iframe canvas opaque (dark), which would black out the game even while the tablet is closed. The portal
+ * sets it on html; the NUI sets it on #fredpd-tablet only (apps/nui/test/theme.test.ts guards this).
+ */
+
+/* Scan the shared components for class names (paths are relative to this file). */
+@source "./";
+
+@theme {
+  --color-*: initial;
+  --color-white: #ffffff;
+  --color-black: #000000;
+
+  /* Surfaces, darkest to lightest. */
+  --color-canvas: #0e1116;
+  --color-surface: #151920;
+  --color-raised: #1c2129;
+  --color-line: #262d37;
+  --color-line-strong: #353d4a;
+
+  /* Text. muted ≥ 4.5:1 on surface; subtle only for placeholders and decoration. */
+  --color-fg: #e7eaef;
+  --color-muted: #9aa3b0;
+  --color-subtle: #6c7584;
+
+  /* The one accent hue (Polisen blue): fill, hover fill, text on dark, tinted background. */
+  --color-accent: #2f6fd6;
+  --color-accent-strong: #285fb8;
+  --color-accent-text: #7aa7f2;
+  --color-accent-soft: #16243a;
+  --color-accent-fg: #ffffff;
+
+  /* Status (badges, allow/deny cells, errors). Used sparingly, never as decoration. */
+  --color-success: #3fa66b;
+  --color-warning: #d9a23a;
+  --color-danger: #e0605b;
+
+  --font-sans: system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: ui-monospace, "Cascadia Mono", Consolas, "Liberation Mono", monospace;
+
+  --radius-sm: 4px;
+  --radius-md: 6px;
+  --radius-lg: 8px;
+
+  /* Flat: no elevation. */
+  --shadow-*: initial;
+  --inset-shadow-*: initial;
+  --drop-shadow-*: initial;
+}
+
+@layer base {
+  html {
+    /* 15 px base: 1rem = 15 px, so text-base and the spacing scale follow it. */
+    font-size: 15px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--color-accent-text);
+    outline-offset: 2px;
+  }
+
+  ::selection {
+    background: var(--color-accent-soft);
+  }
+
+  button:not(:disabled),
+  [role="button"]:not([aria-disabled="true"]) {
+    cursor: pointer;
+  }
+}
