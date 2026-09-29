@@ -64,7 +64,21 @@ AddEventHandler('playerDropped', function()
     Service.forget(source)
 end)
 
-MySQL.ready(function()
+-- Run fn once fredpd_core has applied its migrations (exports.fredpd_core:isReady / 'fredpd_core:ready'), then inside
+-- MySQL.ready so .await calls run in a thread. Loading at plain MySQL.ready raced the migrations on a fresh install.
+local function whenCoreReady(fn)
+    local okReady, isReady = pcall(function() return exports.fredpd_core:isReady() end)
+    if okReady and isReady then return MySQL.ready(fn) end
+    local handler
+    handler = AddEventHandler('fredpd_core:ready', function()
+        local n = tonumber(source)
+        if n and n > 0 then return end -- server-only
+        RemoveEventHandler(handler)
+        MySQL.ready(fn)
+    end)
+end
+
+whenCoreReady(function()
     Service.scheduleRebuild()
 end)
 

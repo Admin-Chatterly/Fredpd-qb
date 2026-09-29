@@ -70,4 +70,16 @@ tests['config/integrations.json selects the qb stack (target server)'] = functio
     t.eq(cfg.inventory, 'qb-inventory')
 end
 
+tests['spelling variants of an implementation name are accepted'] = function(t)
+    local S = require('bridge.select')
+    local none = function() return 'missing' end
+    t.eq(S.resolve('target', 'ox-target', none), 'ox_target')
+    t.eq(S.resolve('doorlock', 'OX_DOORLOCK', none), 'ox_doorlock')
+    t.eq(S.resolve('inventory', 'qb_inventory', none), 'qb-inventory')
+    t.eq(S.resolve('framework', 'qbcore', none), 'qb-core')
+    local impl, note = S.resolve('target', 'oxtarget2', none)
+    t.eq(note, 'unknown')
+    t.ok(impl ~= nil)
+end
+
 return tests

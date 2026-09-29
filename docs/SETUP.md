@@ -190,3 +190,11 @@ service and the server.
 | Breach ram does nothing on a qb-doorlock door | the patched `qb-doorlock` copy was not installed (step 2) |
 | No BOLO alert when a wanted car is parked | `qb-garages` is not the patched copy, or `"garage"` is not `qb-garages` |
 | Evidence laptop is blank / missing | qb stack: expected (ox stack only); ox stack: evidences was not installed from the release zip |
+| `… exists in more than one place (… [upstream] …)` | the whole `[upstream]` folder was copied to the server. **Delete `resources/[upstream]` on the server**; copy only the patched folders listed in step 2 over your existing copies |
+| `ox_inventory` / `ox_doorlock`: "UI has not been built" | the git copy was installed. Use the **release zip**, then copy only FredPD's patched files over it (step 2). On the qb stack, don't run ox_inventory at all |
+| qb-inventory **and** ox_inventory both started | pick one. Two inventories break items and shops. The qb stack uses qb-inventory; stop ox_inventory, ox_target, ox_doorlock, evidences and `fredpd_forensics` |
+| `unknown target bridge "ox-target"` | a spelling mistake in `integrations.json` (use `ox_target` / `qb-target`). FredPD now also accepts dash spellings |
+| `fredpd_bolo … Table 'fredpd_bolos' doesn't exist` on the very first start | fixed: BOLO and dispatch now wait for fredpd_core's migrations. On older builds, restart once |
+| `No such export RegisterStash in resource ox_inventory` | ox_inventory failed to start (see "UI has not been built"), or you are on the qb stack with ox_inventory still running |
+| `signedFetch POST /internal/events failed` | the FredPD service isn't running yet (step 5). Harmless until then |
+| `prison adapter "xt-prison": resource xt-prison is missing` | set `"prison": "qb-prison"` if you run qb-prison (the default now), or `"none"` |

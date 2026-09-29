@@ -71,6 +71,12 @@ Adapters.load(Core.config.integrations)
 ---------------------------------------------------------------------------------------------------------------
 -- 3. Database. MySQL.ready runs its callback once, in a thread, when oxmysql is connected.
 
+-- Other FredPD resources wait for this before touching their tables: on a fresh install the migrations below create
+-- them, and a module that queried at MySQL.ready would race them. 'fredpd_core:ready' is a server-only event
+-- (AddEventHandler in the listeners, never RegisterNetEvent), fired once after the migrations were attempted.
+local coreReady = false
+exports('isReady', function() return coreReady end)
+
 MySQL.ready(function()
     local ok, result = pcall(Db.migrate)
     if not ok then
@@ -88,4 +94,6 @@ MySQL.ready(function()
     for _, src in ipairs(Core.players()) do Core.async('officer on start', Officers.onCharacter, src) end
 
     Core.info('fredpd_core ready')
+    coreReady = true
+    TriggerEvent('fredpd_core:ready')
 end)

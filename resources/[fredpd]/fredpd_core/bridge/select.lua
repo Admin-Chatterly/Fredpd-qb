@@ -34,6 +34,17 @@ function M.moduleName(kind, impl)
     return ('bridge.%s.%s'):format(kind, (impl:gsub('%-', '_')))
 end
 
+--- Accept the common spelling variants in config/integrations.json: case, '-' vs '_' ('ox-target', 'QB_Target').
+--- Returns the canonical implementation name, or nil when it is not an implementation of that kind.
+function M.canonical(kind, name)
+    if type(name) ~= 'string' then return nil end
+    local key = name:lower():gsub('[%-_%s]', '')
+    for _, impl in ipairs(M.IMPLS[kind] or {}) do
+        if impl:gsub('[%-_]', '') == key then return impl end
+    end
+    return nil
+end
+
 function M.isImpl(kind, name)
     for _, impl in ipairs(M.IMPLS[kind] or {}) do
         if impl == name then return true end
@@ -52,7 +63,8 @@ function M.resolve(kind, configured, stateOf)
     if not list then return nil, 'unknown_kind' end
     local note = nil
     if configured ~= nil and configured ~= '' and configured ~= 'auto' then
-        if M.isImpl(kind, configured) then return configured, nil end
+        local impl = M.canonical(kind, configured)
+        if impl then return impl, nil end
         note = 'unknown'
     end
     for _, name in ipairs(list) do

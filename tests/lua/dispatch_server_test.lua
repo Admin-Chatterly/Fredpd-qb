@@ -137,6 +137,7 @@ local function makeEnv()
     local function player(src) return env.players[tonumber(src)] end
 
     local core = {
+        isReady = function() return true end,
         hasGrant = function(_, src, t, k)
             local p = player(src)
             return p ~= nil and p.grants[t .. ':' .. k] == true

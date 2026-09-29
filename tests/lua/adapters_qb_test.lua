@@ -428,4 +428,30 @@ tests['pending locale keys exist in sv and en'] = function(t)
     end
 end
 
+tests['prison qb-prison: metadata + qb-prison client events, release, bad input'] = function(t)
+    local a = fresh('adapters.prison.qb_prison')
+    local M = a.impl
+    local meta, events = {}, {}
+    M.getPlayer = function(src)
+        if src ~= 7 then return nil end
+        return { Functions = { SetMetaData = function(k, v) meta[k] = v end } }
+    end
+    local savedTCE = rawget(_G, 'TriggerClientEvent')
+    _G.TriggerClientEvent = function(name, src, ...) events[#events + 1] = { name, src, ... } end
+    t.eq(M.jail(7, 15, {}), true)
+    t.eq(meta.injail, 15)
+    t.eq(meta.criminalrecord.hasRecord, true)
+    t.eq(events[1], { 'prison:client:Enter', 7, 15 })
+    t.eq(M.jail(7, 0), true)
+    t.eq(meta.injail, 0)
+    t.eq(events[2], { 'prison:client:UnjailPerson', 7 })
+    t.eq(M.jail(8, 10), false, 'offline')
+    t.eq(M.jail(7, -1), false, 'negative')
+    t.eq(M.jail(7, 'x'), false, 'not a number')
+    t.eq(#events, 2)
+    t.eq(a.name, 'qb-prison')
+    t.eq(a.resource, 'qb-prison')
+    _G.TriggerClientEvent = savedTCE
+end
+
 return tests

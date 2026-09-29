@@ -68,22 +68,18 @@ end
 tests['the default config loads its adapters; missing resources warn once each'] = function(t)
     local cfg = helper.readJson('config/integrations.json')
     local log = recorder()
-    withStates({ qbx_garages = 'started' }, function()
+    -- The default config targets a standard QBCore server: qb-garages, qb-prison, no housing script.
+    withStates({ ['qb-garages'] = 'started' }, function()
         local active = Loader.load(cfg, { log = log, require = freshRequire })
-        t.eq(active.housing.name, 'ps-housing')
-        t.eq(active.garage.name, 'qbx_garages')
-        -- qbx_prison must never run (any client can unlock any ox_doorlock door, docs/deps-verification.md §2a):
-        -- no prison integration until the xt-prison adapter exists (task 4.1).
-        t.eq(active.prison.name, 'none')
+        t.eq(active.housing.name, 'none')
+        t.eq(active.garage.name, 'qb-garages')
+        t.eq(active.prison.name, 'qb-prison')
         -- init again (e.g. a second load): still one warning per adapter
         active.housing.init(log)
         active.prison.init(log)
     end)
     t.eq(#log.warns, 1, table.concat(log.warns, ' | '))
-    t.ok(log.warns[1]:find('ps-housing', 1, true))
-    -- Only qbx_garages is still a stub in the default config (ps-housing is real, prison is 'none').
-    t.eq(#log.debugs, 1, 'stub notices are debug level')
-    t.ok(log.debugs[1]:find('qbx_garages', 1, true), log.debugs[1])
+    t.ok(log.warns[1]:find('qb-prison', 1, true), log.warns[1])
 end
 
 tests['qbx_prison and qbx_police-jail are opt-in only and say why at every start'] = function(t)
@@ -102,7 +98,7 @@ end
 tests['a starting resource does not warn'] = function(t)
     local log = recorder()
     withStates({ ['ps-housing'] = 'starting', qbx_garages = 'started', qbx_prison = 'started' }, function()
-        Loader.load(helper.readJson('config/integrations.json'), { log = log, require = freshRequire })
+        Loader.load({ housing = 'ps-housing', garage = 'qbx_garages', prison = 'none' }, { log = log, require = freshRequire })
     end)
     t.eq(#log.warns, 0)
 end
@@ -113,7 +109,7 @@ tests['a resource ensured after fredpd_core is checked again later, not warned a
     local defer = function(ms, fn) timers[#timers + 1] = { ms = ms, fn = fn } end
     local states = { ['ps-housing'] = 'stopped', qbx_garages = 'uninitialized' }
     withStates(states, function()
-        Loader.load(helper.readJson('config/integrations.json'), { log = log, require = freshRequire, defer = defer })
+        Loader.load({ housing = 'ps-housing', garage = 'qbx_garages', prison = 'none' }, { log = log, require = freshRequire, defer = defer })
         t.eq(#log.warns, 0, 'no warning while fredpd_core is still starting')
         t.eq(#timers, 2)
         t.eq(timers[1].ms, Base.DEFERRED_CHECK_MS)

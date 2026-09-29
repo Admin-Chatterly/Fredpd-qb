@@ -150,6 +150,7 @@ local function makeEnv()
     end
 
     local core = {
+        isReady = function() return env.coreReady ~= false end,
         hasGrant = function(_, src, t, k) local p = player(src); return p ~= nil and p.grants[t .. ':' .. k] == true end,
         isOnDuty = function(_, src) local p = player(src); return p ~= nil and p.duty == true end,
         getCitizenId = function(_, src) local p = player(src); return p and p.cid or nil end,
@@ -1007,6 +1008,24 @@ end
 
 ---------------------------------------------------------------------------------------------------------------
 -- Wiring, pushes, locale, source rules
+
+tests['17b main: waits for fredpd_core:ready before loading (fresh install: tables not migrated yet)'] = function(t)
+    withEnv(t, function(_, env)
+        env.coreReady = false
+        local readyCb
+        MySQL.ready = function(cb) readyCb = cb end
+        _G.RemoveEventHandler = function() end
+        local savedPath = package.path
+        package.path = BOLO .. '?.lua;' .. package.path
+        assert(pcall(dofile, BOLO .. 'server/main.lua'))
+        package.path = savedPath
+        t.eq(readyCb, nil, 'no DB access before fredpd_core is ready')
+        t.ok(env.handlers['fredpd_core:ready'], 'waits for fredpd_core:ready')
+        env.coreReady = true
+        env.handlers['fredpd_core:ready'][1]()
+        t.ok(readyCb, 'loads after the ready event')
+    end)
+end
 
 tests['17 main: exports, callback, server-only events, start-up rebuild'] = function(t)
     withEnv(t, function(_, env)

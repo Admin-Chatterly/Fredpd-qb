@@ -4,9 +4,9 @@
   "inventory": "qb-inventory",
   "target": "qb-target",
   "doorlock": "qb-doorlock",
-  "housing": "ps-housing",
-  "garage": "qbx_garages",
-  "prison": "none",
+  "housing": "none",
+  "garage": "qb-garages",
+  "prison": "qb-prison",
   "dispatch": "ps-dispatch",
   "officerNameSource": "discord_nick",
   "unauthorizedLookupThreshold": 3
