@@ -1,0 +1,15 @@
+diff --git a/fxmanifest.lua b/fxmanifest.lua
+index 6463681..62db2d0 100644
+--- a/fxmanifest.lua
++++ b/fxmanifest.lua
+@@ -11,9 +11,7 @@ ui_page 'html/index.html'
+ -- ui_page 'http://localhost:5173/' --for dev
+ 
+ client_script {
+-  '@PolyZone/client.lua',
+-  '@PolyZone/CircleZone.lua',
+-  '@PolyZone/BoxZone.lua',
++  -- FredPD (patches/ps-dispatch.20-no-polyzone.patch): the zones use lib.zones; no code calls PolyZone.
+   'client/**',
+ }
+ server_script {

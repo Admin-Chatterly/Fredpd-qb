@@ -1,0 +1,28 @@
+{
+  "code": "10-31",
+  "coords": {
+    "x": -1234.5,
+    "y": 987.25,
+    "z": 12
+  },
+  "createdAt": "2026-09-29T10:03:00Z",
+  "description": "Larm från butik",
+  "id": 3,
+  "priority": 1,
+  "source": "bolo",
+  "status": "assigned",
+  "street": "Mirror Park Blvd",
+  "title": "Inbrott pågår",
+  "units": [
+    {
+      "callsign": "IGV-07",
+      "citizenid": "DSP10001",
+      "displayName": "Anna B.",
+      "unit": "igv"
+    },
+    {
+      "citizenid": "DSP10006",
+      "displayName": "DSP10006"
+    }
+  ]
+}

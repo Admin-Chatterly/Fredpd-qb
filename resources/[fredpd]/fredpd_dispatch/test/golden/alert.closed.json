@@ -1,0 +1,24 @@
+{
+  "closedAt": "2026-09-29T10:30:00Z",
+  "closedBy": {
+    "callsign": "LED-01",
+    "citizenid": "DSP10005",
+    "displayName": "Eva L.",
+    "unit": "ledning"
+  },
+  "code": "10-50",
+  "createdAt": "2026-09-29T10:04:00Z",
+  "id": 4,
+  "priority": 3,
+  "source": "ps-dispatch",
+  "status": "closed",
+  "title": "Trafikolycka",
+  "units": [
+    {
+      "callsign": "LED-01",
+      "citizenid": "DSP10005",
+      "displayName": "Eva L.",
+      "unit": "ledning"
+    }
+  ]
+}

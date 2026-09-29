@@ -1,0 +1,26 @@
+{
+  "alert": {
+    "code": "10-11",
+    "coords": {
+      "x": 1,
+      "y": 2,
+      "z": 3
+    },
+    "createdAt": "2026-09-29T11:00:00Z",
+    "id": 5,
+    "priority": 2,
+    "source": "test",
+    "status": "assigned",
+    "street": "Strawberry Ave",
+    "title": "Skottlossning",
+    "units": [
+      {
+        "callsign": "IGV-07",
+        "citizenid": "DSP10001",
+        "displayName": "Anna B.",
+        "unit": "igv"
+      }
+    ]
+  },
+  "type": "updated"
+}

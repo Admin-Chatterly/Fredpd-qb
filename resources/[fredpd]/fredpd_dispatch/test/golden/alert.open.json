@@ -1,0 +1,17 @@
+{
+  "code": "10-11",
+  "coords": {
+    "x": 215.5,
+    "y": -920.25,
+    "z": 30.75
+  },
+  "createdAt": "2026-09-29T10:01:00Z",
+  "description": "Två skott mot Legion Square\nFordon: Sultan RS · ABC 12D\nVapen: Pistol",
+  "id": 1,
+  "priority": 2,
+  "source": "ps-dispatch",
+  "status": "open",
+  "street": "Vespucci Blvd, Legion Square",
+  "title": "Shots Fired",
+  "units": []
+}

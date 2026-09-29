@@ -1,0 +1,39 @@
+{
+  "units": [
+    {
+      "alertId": 3,
+      "callsign": "IGV-07",
+      "citizenid": "DSP10001",
+      "displayName": "Anna B.",
+      "onDuty": true,
+      "unit": "igv"
+    },
+    {
+      "callsign": "IGV-91",
+      "citizenid": "FAKE001",
+      "displayName": "IGV-91",
+      "onDuty": true,
+      "unit": "igv"
+    },
+    {
+      "callsign": "LED-01",
+      "citizenid": "DSP10005",
+      "displayName": "Eva L.",
+      "onDuty": true,
+      "unit": "ledning"
+    },
+    {
+      "callsign": "SPAN-02",
+      "citizenid": "DSP10002",
+      "displayName": "Bo C.",
+      "onDuty": true,
+      "unit": "span"
+    },
+    {
+      "alertId": 3,
+      "citizenid": "DSP10006",
+      "displayName": "acct_fia",
+      "onDuty": true
+    }
+  ]
+}

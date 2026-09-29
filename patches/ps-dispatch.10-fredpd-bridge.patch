@@ -1,0 +1,142 @@
+diff --git a/client/main.lua b/client/main.lua
+index b07275c..fad5724 100644
+--- a/client/main.lua
++++ b/client/main.lua
+@@ -1,6 +1,10 @@
+ QBCore = exports['qb-core']:GetCoreObject()
+ PlayerData = {}
+ 
++-- FredPD (patches/ps-dispatch.10-fredpd-bridge.patch): no ps-dispatch popups, blips, sounds, E/O keys or menu
++-- unless `setr fredpd_psdispatch_ui true`; fredpd_dispatch shows the alerts (toast, "Ta larm" key, tablet).
++local fredpdUi = GetConvar('fredpd_psdispatch_ui', 'false') == 'true'
++
+ -- Settings are persisted with SetResourceKvp rather than the NUI's own
+ -- localStorage. Both survive a relog, but a CEF cache clear wipes localStorage
+ -- — and clearing the cache is the first thing players are told to try when
+@@ -411,19 +415,22 @@ local function addBlip(data, blipData)
+ end
+ 
+ -- Keybind
+-local RespondToDispatch = lib.addKeybind({
++local RespondToDispatch, OpenDispatchMenu
++if fredpdUi then -- FredPD: E/O are not even registered while the ps-dispatch UI is off
++RespondToDispatch = lib.addKeybind({
+     name = 'RespondToDispatch',
+     description = 'Set waypoint to last call location',
+     defaultKey = Config.RespondKeybind,
+     onPressed = setWaypoint,
+ })
+ 
+-local OpenDispatchMenu = lib.addKeybind({
++OpenDispatchMenu = lib.addKeybind({
+     name = 'OpenDispatchMenu',
+     description = 'Open Dispatch Menu',
+     defaultKey = Config.OpenDispatchMenu,
+     onPressed = openMenu,
+ })
++end
+ 
+ -- Events
+ -- Server detached us from another call (one-call-per-unit rule): drop that
+@@ -497,6 +504,7 @@ end)
+ local respondWindowToken = 0
+ 
+ RegisterNetEvent('ps-dispatch:client:notify', function(data)
++    if not fredpdUi then return end -- FredPD: also covers targeted alerts and third-party senders
+     if data.alertTime == nil then data.alertTime = Config.AlertTime end
+     local timer = data.alertTime * 1000
+ 
+@@ -577,6 +585,7 @@ RegisterNetEvent('ps-dispatch:client:notify', function(data)
+ end)
+ 
+ RegisterNetEvent('ps-dispatch:client:openMenu', function(data)
++    if not fredpdUi then return end -- FredPD: /dispatch would take NUI focus for a hidden board
+     if not isJobValid(PlayerData.job.type) then return end
+     if not IsOnDuty() then return end
+ 
+diff --git a/server/main.lua b/server/main.lua
+index e3a5395..716c800 100644
+--- a/server/main.lua
++++ b/server/main.lua
+@@ -6,6 +6,11 @@ local callCount = 0
+ local QBCore = nil
+ pcall(function() QBCore = exports['qb-core']:GetCoreObject() end)
+ 
++-- FredPD (patches/ps-dispatch.10-fredpd-bridge.patch): stored calls are handed to fredpd_dispatch, which shows
++-- them as lib.notify toasts and on the tablet. ps-dispatch's own popups, blips, sounds and menu stay off unless
++-- the replicated convar is set: `setr fredpd_psdispatch_ui true` (read once when the resource starts).
++local fredpdUi = GetConvar('fredpd_psdispatch_ui', 'false') == 'true'
++
+ ---@param data table
+ -- Resolve blip metadata ONCE server-side from the shared config: the display
+ -- position (randomly offset when the alert type wants imprecision) and the
+@@ -148,6 +153,7 @@ end
+ -- (including all civilians), each of which then filtered it away — wasted
+ -- bandwidth and event handling that scales with slot count.
+ local function broadcastCall(data)
++    if not fredpdUi then return end -- FredPD: fredpd_dispatch notifies the officers instead
+     -- Every path out of here goes through publicCall: an offset alert must
+     -- not carry its true coords, no matter which branch sends it.
+     local payload = publicCall(data)
+@@ -332,6 +338,9 @@ RegisterServerEvent('ps-dispatch:server:notify', function(data)
+     -- and stay out of the list, which is the whole distinction.
+     data.listed = true
+ 
++    -- FredPD: mirror the stored call (true coords included) and the reporting player's server id.
++    TriggerEvent('fredpd:dispatch:incoming', data, src)
++
+     broadcastCall(data)
+ end)
+ 
+@@ -397,6 +406,7 @@ end)
+ 
+ -- Callbacks
+ lib.callback.register('ps-dispatch:callback:getLatestDispatch', function(source)
++    if not fredpdUi then return nil end -- FredPD: no job check upstream; only the (off) E key uses it
+     return calls[#calls]
+ end)
+ 
+@@ -409,15 +419,18 @@ local function publicCalls()
+ end
+ 
+ lib.callback.register('ps-dispatch:callback:getCalls', function(source)
++    if not fredpdUi then return {} end -- FredPD: no job check upstream; only the (off) menu uses it
+     return publicCalls()
+ end)
+ 
+ -- Commands
++if fredpdUi then -- FredPD: /dispatch sent the whole call list to any player; not registered while the UI is off
+ lib.addCommand('dispatch', {
+     help = locale('open_dispatch')
+ }, function(source, raw)
+     TriggerClientEvent("ps-dispatch:client:openMenu", source, publicCalls())
+ end)
++end
+ 
+ lib.addCommand('911', {
+     help = 'Send a message to 911',
+diff --git a/shared/config.lua b/shared/config.lua
+index 82dd34e..a20d0ef 100644
+--- a/shared/config.lua
++++ b/shared/config.lua
+@@ -1,6 +1,8 @@
+ Config = Config or {}
+ 
+-Config.Debug = true -- Enables debug and send alerts when leo break the law.
++-- FredPD (patches/ps-dispatch.10-fredpd-bridge.patch): off. true alerts on every on-duty officer who shoots or
++-- speeds and draws the no-dispatch zones for every player.
++Config.Debug = false -- Enables debug and send alerts when leo break the law.
+ 
+ Config.RespondKeybind = 'E'
+ Config.OpenDispatchMenu = 'O'
+@@ -118,7 +120,9 @@ Config.AlertPosition = 'top-right'
+ -- Demo command that fires a varied sequence of test alerts 10 seconds apart
+ -- (vehicle strip, weapon banner, priority, merge ×N, note, ...) so styling
+ -- changes can be reviewed without staging crimes. Set false in production.
+-Config.TestCommand = 'dispatchtest'
++-- FredPD (patches/ps-dispatch.10-fredpd-bridge.patch): off. It is an unrestricted client command, and through the
++-- bridge every run would put ~11 alerts (OfficerDown …) on every on-duty officer. Use /fredpd_testalert (dev, ACE).
++Config.TestCommand = false
+ 
+ -- Calls older than this many minutes are swept from the call list (the menu
+ -- otherwise shows session-old calls forever). 0 disables the sweep.

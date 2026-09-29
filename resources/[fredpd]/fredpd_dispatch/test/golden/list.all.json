@@ -1,0 +1,85 @@
+{
+  "items": [
+    {
+      "closedAt": "2026-09-29T10:30:00Z",
+      "closedBy": {
+        "callsign": "LED-01",
+        "citizenid": "DSP10005",
+        "displayName": "Eva L.",
+        "unit": "ledning"
+      },
+      "code": "10-50",
+      "createdAt": "2026-09-29T10:04:00Z",
+      "id": 4,
+      "priority": 3,
+      "source": "ps-dispatch",
+      "status": "closed",
+      "title": "Trafikolycka",
+      "units": [
+        {
+          "callsign": "LED-01",
+          "citizenid": "DSP10005",
+          "displayName": "Eva L.",
+          "unit": "ledning"
+        }
+      ]
+    },
+    {
+      "code": "10-31",
+      "coords": {
+        "x": -1234.5,
+        "y": 987.25,
+        "z": 12
+      },
+      "createdAt": "2026-09-29T10:03:00Z",
+      "description": "Larm från butik",
+      "id": 3,
+      "priority": 1,
+      "source": "bolo",
+      "status": "assigned",
+      "street": "Mirror Park Blvd",
+      "title": "Inbrott pågår",
+      "units": [
+        {
+          "callsign": "IGV-07",
+          "citizenid": "DSP10001",
+          "displayName": "Anna B.",
+          "unit": "igv"
+        },
+        {
+          "citizenid": "DSP10006",
+          "displayName": "DSP10006"
+        }
+      ]
+    },
+    {
+      "code": "10-80",
+      "createdAt": "2026-09-29T10:02:00Z",
+      "id": 2,
+      "priority": 2,
+      "source": "devtools",
+      "status": "open",
+      "title": "Misstänkt aktivitet",
+      "units": []
+    },
+    {
+      "code": "10-11",
+      "coords": {
+        "x": 215.5,
+        "y": -920.25,
+        "z": 30.75
+      },
+      "createdAt": "2026-09-29T10:01:00Z",
+      "description": "Två skott mot Legion Square\nFordon: Sultan RS · ABC 12D\nVapen: Pistol",
+      "id": 1,
+      "priority": 2,
+      "source": "ps-dispatch",
+      "status": "open",
+      "street": "Vespucci Blvd, Legion Square",
+      "title": "Shots Fired",
+      "units": []
+    }
+  ],
+  "page": 1,
+  "total": 4
+}

@@ -1,0 +1,22 @@
+{
+  "code": "10-11",
+  "coords": {
+    "x": 215.5,
+    "y": -920.25,
+    "z": 30.75
+  },
+  "description": "Två skott\nVapen: Pistol",
+  "meta": {
+    "codeName": "shooting",
+    "gender": "Male",
+    "icon": "fas fa-gun",
+    "psId": 17,
+    "weapon": "Pistol",
+    "weaponClass": "pistol",
+    "weaponTier": 1
+  },
+  "priority": 2,
+  "source": "ps-dispatch",
+  "street": "Vespucci Blvd, Legion Square",
+  "title": "Shots Fired"
+}
