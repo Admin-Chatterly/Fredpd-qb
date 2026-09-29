@@ -14,11 +14,13 @@ import { parseId } from '../../cases';
 import { Callout, PageSpinner, QueryView } from '../../components/Common';
 import { LevelSelect, MutationError } from '../../components/Fields';
 import { fmtDateTime, noticeOwner, officerLabel } from '../../format';
-import { ENTITY_TYPES, ENTITY_TYPE_KEYS, LINK_TYPES, entityPath, intelReportPath, linkTypeLabel } from '../../intel';
+import { ENTITY_TYPE_KEYS, LINK_TYPES, entityPath, intelReportPath, linkTypeLabel } from '../../intel';
 import { PERMS, usePerm } from '../../perms';
 import { useSession } from '../../tablet/TabletContext';
 
 const GraphView = lazy(() => import('./GraphView'));
+
+const FREE_ENTITY_TYPES = ['group', 'location'] as const;
 
 function EntityLabel({ entity }: { entity: Entity }) {
   const { t } = useI18n();
@@ -92,7 +94,8 @@ function AddLinkFlow({ from, onDone }: { from: Entity; onDone: () => void }) {
   const i18n = useI18n();
   const { grants } = useSession();
   const [target, setTarget] = useState<LinkTarget | null>(null);
-  const [newType, setNewType] = useState<Entity['type']>('person');
+  // Keyed entities (person, vehicle, case) are found by search; free-text ones can be created here.
+  const [newType, setNewType] = useState<'group' | 'location'>('group');
   const [newLabel, setNewLabel] = useState('');
   const [confidence, setConfidence] = useState(50);
   const [level, setLevel] = useState<Level>(Math.min(1, grants.tier) as Level);
@@ -121,8 +124,8 @@ function AddLinkFlow({ from, onDone }: { from: Entity; onDone: () => void }) {
           <div className="flex flex-wrap items-end gap-2 border-t border-line pt-3">
             <Label className="w-36">
               {t('common.type')}
-              <select className={fieldClass} value={newType} onChange={(e) => setNewType(e.target.value as Entity['type'])}>
-                {ENTITY_TYPES.filter((x) => x === 'group' || x === 'location').map((x) => (
+              <select className={fieldClass} value={newType} onChange={(e) => setNewType(e.target.value as 'group' | 'location')}>
+                {FREE_ENTITY_TYPES.map((x) => (
                   <option key={x} value={x}>
                     {t(ENTITY_TYPE_KEYS[x])}
                   </option>
