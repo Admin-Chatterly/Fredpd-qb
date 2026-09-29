@@ -19,3 +19,5 @@ playwright-report/
 test-results/
 .DS_Store
 Thumbs.db
+resources/[[]fredpd[]]/fredpd_core/migrations/
+resources/[[]fredpd[]]/fredpd_devtools/fixtures/
