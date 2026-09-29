@@ -127,6 +127,7 @@ FXServer (`SetHttpHandler` in fredpd_core, reached at `http://127.0.0.1:30120/fr
 | POST | `/grants` | `{ discordId, grants: GrantSet }` | `applyGrants` → cache, `fredpd_grant_cache`, `fredpd:client:grantsChanged` to that player |
 | POST | `/recompute` | `{ discordIds?: string[] }` | re-fetch grants from the service for those (or all) online players |
 | POST | `/officer` | `{ discordId, displayName, avatarUrl }` | refresh the in-memory officer name used for rosters |
+| POST | `/rules` | `{}` | reload `fredpd_visibility_rules` (fires `fredpd:rulesChanged`); sent by the service after a rule edit |
 
 Service (Fastify, `FREDPD_SERVICE_URL`, default `http://127.0.0.1:3000`; convar `fredpd_service_url` on FXServer):
 
@@ -156,7 +157,13 @@ Lua wraps it as `Core.fetch(method, path, body)` returning `status, decoded` ins
   `fredpd_uploads`) belongs to apps/service.
 - Test DB: env `FREDPD_TEST_DB_URL`, default `mysql://fredpd:fredpd@127.0.0.1:3306/fredpd_test`. DB tests skip (with
   a console warning) when it is unreachable. `db/dev/qbx_stub.sql` creates minimal `players`/`player_vehicles` for tests.
-- Every table: InnoDB, utf8mb4, `utf8mb4_swedish_ci`, `created_at DATETIME DEFAULT CURRENT_TIMESTAMP` (UTC).
+- Every table: InnoDB, utf8mb4, `utf8mb4_swedish_ci`, `created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP())`.
+  Times are UTC regardless of the MariaDB server/session time zone: defaults use `(UTC_TIMESTAMP())`, code writes
+  `UTC_TIMESTAMP()`, and `updated_at` is set explicitly by the writer (MariaDB has no `ON UPDATE UTC_TIMESTAMP()`).
+  Never `NOW()`, `CURRENT_TIMESTAMP` or `ON UPDATE CURRENT_TIMESTAMP`. The DB server does not need to run in UTC.
+- Audit (§0 rule 5) covers authoritative records. Exempt, because they are caches, mirrors or logs themselves:
+  `fredpd_migrations`, `fredpd_grant_cache`, `fredpd_identities` (last_seen), `fredpd_persons`, `fredpd_vehicles_idx`,
+  `fredpd_sessions`, `fredpd_sequences`, `fredpd_plate_checks`, `fredpd_report_drafts`, `fredpd_audit*`.
 
 ## C8. Locale
 
@@ -207,12 +214,16 @@ Do not edit `docs/contracts.md` from a module task; record module-level decision
   fires `fredpd:boloHit`), plus the §4.3 lookups `checkPlate(plate) → bolo|nil`, `checkPerson(citizenid) → bolo|nil`
   and `getBolosFor(src, kind, id)` (canView-filtered, used by records for person/vehicle pages).
   `fredpd_mdt` owns `getHome` (composes records + bolo + core), `close`, `listTablets`, `setTabletRevoked`.
-- Timestamps on the wire: ISO-8601 UTC via `fredpd_core/shared/time.lua` `toIsoUtc(v)` (accepts oxmysql epoch-ms
-  numbers and `YYYY-MM-DD HH:MM:SS` strings). All SQL writes use `UTC_TIMESTAMP()`, never `NOW()`/`CURRENT_TIMESTAMP`.
+- Timestamps on the wire: ISO-8601 UTC strings. oxmysql converts DATETIME columns to epoch-ms using the FXServer
+  host's local zone (wrong for UTC-stored values on a Stockholm host), so Lua reads select them as strings:
+  `DATE_FORMAT(col, '%Y-%m-%dT%H:%i:%sZ') AS col` (helper `fredpd_core/shared/time.lua`: `M.isoSelect('col')` builds that
+  fragment; `M.toIsoUtc(v)` normalises `YYYY-MM-DD HH:MM:SS` strings; `M.nowIso()`). All SQL writes use
+  `UTC_TIMESTAMP()`, never `NOW()`/`CURRENT_TIMESTAMP`.
 - Officers on the wire are `OfficerRef` from `fredpd_officers` (display name + callsign, §4.9).
 - Perm keys used so far (service catalog must list them): `admin.permissions`, `records.admin`, `bolo.create`,
   `bolo.resolve`, `tablets.manage`, `intel.read`, `intel.handler`, `intel.command`, `rank:<key>`.
-  `mdt_page` keys: `packages/ui/src/mdtPages.ts` (`search, alerts, bolos, cases, evidence, intel, charges, roster, command`).
+  `mdt_page` keys: `packages/types/src/mdtPages.ts` (`search, alerts, bolos, cases, evidence, intel, charges, roster, command`);
+  `packages/ui` re-exports them and the service catalog lists them.
 - Migrations added in Phase 2: `010_plate_checks.sql` (fredpd_bolo: `fredpd_plate_checks (id, plate, officer_citizenid,
   hit, bolo_id, created_at)`, index (plate, created_at)).
 - Items live in `patches/ox_inventory.*.patch` (upstream is never edited): `pd_tablet` (`client.export =
