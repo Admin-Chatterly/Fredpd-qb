@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- fredpd_records Phase 5: Brottskatalog and sanctions (server/charges.lua): catalogue read, applyCharges totals and
--- snapshots, subject auto-add, prison adapter, issueFine class/distance/bucket/funds/billing checks; golden files.
+-- snapshots, subject auto-add, prison adapter, issueFine class/distance/bucket/funds checks and refund
+-- (money through the fredpd_core bridge; FREDPD_RECORDS_STACK picks qb-core or qbx_core); golden files.
 local H = require('records_env_test')
 
 local tests = {}
@@ -131,7 +132,7 @@ tests['charges 04 applyCharges sends prison time to the adapter only for a perso
     end)
 end
 
-tests['charges 05 issueFine: ordningsbot only, online, same bucket, within 5 m, funds, billing and records'] = function(t)
+tests['charges 05 issueFine: ordningsbot only, online, same bucket, within 5 m, funds, refund and records'] = function(t)
     H.with(t, function(_, env, mods)
         H.fewPeople()
         local function fine(src, input)
@@ -152,9 +153,15 @@ tests['charges 05 issueFine: ordningsbot only, online, same bucket, within 5 m, 
         env.coords[7] = { 104, 103.1, 30 }
         t.eq(fine(1, { citizenid = 'RP501', lines = speeding }), { ok = false, error = 'validation', reason = 'target_too_far' }, '> 5 m')
         env.coords[7] = { 104, 103, 30 }
-        env.bank.RP501 = 4999
+        -- the framework refuses: qb-core below Config.Money.MinusLimit (-5000, config.lua:12); qbx_core through a
+        -- removeMoney hook (its bank may go below 0, config.money.dontAllowMinus = cash, crypto)
+        if env.stack == 'qb' then env.bank.RP501 = -1000 else env.bank.RP501 = 4999; env.moneyHookRefuses = true end
+        local before = env.bank.RP501
         t.eq(fine(1, { citizenid = 'RP501', lines = speeding }), { ok = false, error = 'validation', reason = 'insufficient_funds' })
-        t.eq(env.bank.RP501, 4999)
+        t.eq(env.bank.RP501, before)
+        env.moneyHookRefuses = false
+        -- no bridge player behind the server id (dropped / framework down) -> 'unavailable', not insufficient_funds
+        t.eq({ Ch(mods).bill(99, 100) }, { false, 'unavailable' }, 'bill without a bridge player')
         t.eq(fine(6, { citizenid = 'RP501', lines = speeding }), { ok = false, error = 'unauthorized' }, 'no charges.fine grant')
         t.eq(fine(1, { citizenid = 'REC10001', lines = speeding }), { ok = false, error = 'validation', reason = 'self' })
         env.bank.RP501 = 10000
@@ -164,7 +171,9 @@ tests['charges 05 issueFine: ordningsbot only, online, same bucket, within 5 m, 
         t.eq(#ok.data.records, 2)
         t.eq(ok.data.records[1].status, 'paid')
         t.eq(env.bank.RP501, 5000, 'bank debited')
-        t.eq(env.deposits, { { account = 'police', amount = 5000 } }, 'society credited')
+        local last = env.moneyCalls[#env.moneyCalls]
+        t.eq({ last[1], last[2], last[3], last[4], last[5] }, { 'RemoveMoney', 7, 'bank', 5000, 'police-fine' },
+            'bridge removeMoney -> ' .. env.stack .. ' framework, target server id')
         t.eq(env.notifies[#env.notifies].target, 7)
         t.ok(env.notifies[#env.notifies].data.description:find('charge.ordningsbot.received', 1, true) == 1, 'target notified via L()')
         t.ok(env.notifies[#env.notifies].data.description:find('5 000 kr', 1, true) ~= nil, 'amount formatted')
@@ -175,11 +184,14 @@ tests['charges 05 issueFine: ordningsbot only, online, same bucket, within 5 m, 
             .. 'AND report_id IS NULL')), 2)
         -- cooldown: a second fine straight away is rate limited
         t.eq(Ch(mods).issueFine(1, { citizenid = 'RP501', lines = speeding }), { ok = false, error = 'rate_limited' })
-        -- a failed society deposit refunds the player
-        env.depositFails = true
-        t.eq(fine(1, { citizenid = 'RP501', lines = speeding }), { ok = false, error = 'validation', reason = 'payment_failed' })
+        -- storing the records fails after the money moved: refunded through the bridge's addMoney, then raised
+        env.onTransaction = function() error('simulated transaction failure', 0) end
+        local okCall, err = pcall(fine, 1, { citizenid = 'RP501', lines = speeding })
+        env.onTransaction = nil
+        t.ok(not okCall and tostring(err):find('fine refunded', 1, true) ~= nil, tostring(err))
         t.eq(env.bank.RP501, 5000, 'refunded')
-        env.depositFails = false
+        last = env.moneyCalls[#env.moneyCalls]
+        t.eq({ last[1], last[2], last[3], last[4], last[5] }, { 'AddMoney', 7, 'bank', 5000, 'police-fine-refund' })
         -- linked to a case the officer can see in full: audited on the case (timeline) and pushed
         local c = Cs(mods).createCase(1, { title = 'Ordningsstörning' }).data
         local withCase = fine(1, { citizenid = 'RP501', caseId = c.id, lines = { { code = 'BRB-046' } } })

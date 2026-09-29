@@ -15,10 +15,13 @@ Tick each step. If one fails, copy the F8 console and the txAdmin Live Console l
    `locales/sv.json`; only if `locales/pending/` holds files from later work, run
    `node scripts/merge-pending-locales.mjs` first.) For step 3 build the NUI in dev mode once: `pnpm --filter @fredpd/nui build:dev`, then
    `node scripts/build.mjs --skip-web`.
-2. **Item:** `scripts\apply-patches.ps1` adds `pd_tablet` to ox_inventory. On a txAdmin **Qbox recipe** install the
-   patch cannot apply (the recipe replaced `data/items.lua`): paste the block from `docs/modules/mdt.md`
-   ("ox_inventory item") into `ox_inventory/data/items.lua` instead.
-3. **server.cfg:** after `ensure fredpd_core` add `ensure fredpd_records`, `ensure fredpd_bolo`, `ensure fredpd_mdt`.
+2. **Item:** `scripts\apply-patches.ps1` adds `pd_tablet` to qb-core's `shared/items.lua` (our server: qb-core +
+   qb-inventory + qb-target) and, if fetched, to ox_inventory. Check `fredpd_core/config/integrations.json` names the
+   scripts the server runs; the server console at start shows one line
+   `bridge: framework=qb-core, inventory=qb-inventory …, target=qb-target …`. (Only on an ox/Qbox server: on a txAdmin
+   **Qbox recipe** install paste the block from `docs/modules/mdt.md` ("ox_inventory item") into
+   `ox_inventory/data/items.lua` instead.)
+3. **server.cfg:** `ensure qb-core`, `ensure qb-inventory`, `ensure qb-target` come **before** `ensure fredpd_core`; after it add `ensure fredpd_records`, `ensure fredpd_bolo`, `ensure fredpd_mdt`.
    Restart the server.
 
 ## Steps
@@ -26,7 +29,9 @@ Tick each step. If one fails, copy the F8 console and the txAdmin Live Console l
 ### 1. Issue two tablets ☐
 
 In the txAdmin console: `surfplatta <your server id>` and `surfplatta <other player's id>` (ids from `status`).
-Each player gets "Du har fått surfplatta SP-…". Hover the item: label **Surfplatta**, "Serienummer: SP-…".
+Each player gets "Du har fått surfplatta SP-…". Hover the item: label **Surfplatta** (tell us whether
+"Serienummer: SP-…" shows in qb-inventory's tooltip). With a **full** inventory the command answers "Surfplattan
+kunde inte läggas i spelarens förråd …" and no row is left in `fredpd_tablets`.
 SQL: `SELECT serial, owner_citizenid, issued_at FROM fredpd_tablets;` → two rows, `issued_at` 1–2 h behind Swedish
 time (UTC). In game, as Ledning: `/surfplatta <id>` works too; a player without `perm:tablets.manage` gets "Du har
 inte behörighet att göra det här."
@@ -39,7 +44,8 @@ surfplattan." In both cases no tablet, no prop, and the mouse cursor does **not*
 
 ### 3. Opening: speed, prop and animation ☐
 
-On duty, use the tablet from the inventory. The tablet opens at once; F8 (dev build) shows
+On duty, use the tablet from the inventory (qb-inventory: right-click → Använd, or drag it to a hotbar key). The
+inventory closes and the tablet opens at once; F8 (dev build) shows
 `[fredpd] open -> first paint N ms` with **N < 300**. Your character holds a tablet in the right hand and plays the
 tablet animation **standing** (tell us if the pose or the prop's position looks wrong). Other players see the prop.
 
@@ -64,13 +70,13 @@ person's vehicles and BOLOs; the vehicle page shows owner, BOLO flag and "Kontro
 ### 7. BOLO → plate check → the other officer's tablet ☐
 
 Player B keeps their tablet **open** on Efterlysningar. You create a vehicle BOLO for a car standing nearby (its
-plate). Within a second it appears on B's list without B doing anything. Close the tablet, walk to the car, ox_target
-**Kontrollera registreringsskylt** → the popup shows the hit in red and an alert goes out.
+plate). Within a second it appears on B's list without B doing anything. Close the tablet, walk to the car, target
+it (third eye) → **Kontrollera registreringsskylt** → the popup shows the hit in red and an alert goes out.
 
 ### 8. Vehicle terminal ☐
 
-Sit in a police car (driver or front passenger; models in `fredpd_mdt/config.lua`). ox_target on the car →
-**Använd fordonsdatorn** → the tablet opens **without** a prop in hand. Leave the car (F) → it closes by itself and
+Sit in a police car (driver or front passenger; models in `fredpd_mdt/config.lua`). Target (third eye, qb-target)
+the car you sit in → **Använd fordonsdatorn** → the tablet opens **without** a prop in hand. Leave the car (F) → it closes by itself and
 the mouse is back. From the back seat the option is not offered.
 
 ### 9. Revoke a tablet that is in use ☐
@@ -85,4 +91,5 @@ reinstate.
 
 Your Hem (Ledning) shows active BOLOs, your open cases, officers on duty and the roster of on-duty officers with
 callsigns. Player B (IGV) sees the IGV variant without the roster. Go off duty while the tablet is open → it
-closes with "Du måste vara i tjänst för att använda surfplattan."
+closes with "Du måste vara i tjänst för att använda surfplattan." Open it again, go on duty, then log out to the
+character menu (qb-multicharacter): the tablet closes and the character menu keeps the mouse.

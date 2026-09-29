@@ -6,9 +6,15 @@
 -- close(): focus released, `close` message, prop deleted, animation stopped, server told (fredpd:mdt:closed).
 --
 -- Focus-trap safety (§8.3): the tablet closes on the NUI `close` callback (Esc and the close button), on the
--- server's fredpd:client:forceClose, on death (gameEventTriggered CEventNetworkEntityDamage, baseevents, the qbx
--- `isDead` state), when leaving the vehicle it was opened in as a terminal (lib.onCache('vehicle')), on logout and
--- when this resource stops. The death handlers exist only while the tablet is open; nothing runs while it is closed.
+-- server's fredpd:client:forceClose (also sent on logout, fredpd:bridge:playerUnloaded), on death (gameEventTriggered
+-- CEventNetworkEntityDamage, baseevents, the `isDead` player state), when leaving the vehicle it was opened in as a
+-- terminal (lib.onCache('vehicle')) and when this resource stops.
+--
+-- Framework, inventory and target go through fredpd_core's bridge only (docs/contracts.md §C17): FredBridge.* from
+-- '@fredpd_core/bridge/client.lua' (loaded before this file). The tablet item opens two ways, both validated by the
+-- server's Open.open: ox_inventory's client.export (exports.fredpd_mdt:open -> 'fredpd:mdt:open' callback) and, where
+-- the inventory reports the use on the server (qb-inventory), the server's fredpd:client:openTablet with the result.
+-- The death handlers exist only while the tablet is open; nothing runs while it is closed.
 --
 -- NUI actions: one RegisterNUICallback per tablet action (shared/validate.lua ACTIONS) forwarding
 -- { action, input } to lib.callback 'fredpd:mdt:action'; the server answers the data or { error }.
@@ -35,10 +41,11 @@ local function notify(kind, text)
     lib.notify({ type = kind, description = text })
 end
 
---- Client hint only (the server decides): qbx job of type leo and on duty.
+--- Client hint only (the server decides): job of type leo and on duty (FredBridge.framework.getJob, qb-core or
+--- qbx_core).
 function M.isOfficerOnDuty()
-    local pd = type(QBX) == 'table' and QBX.PlayerData or nil
-    local job = type(pd) == 'table' and pd.job or nil
+    local fw = type(FredBridge) == 'table' and FredBridge.framework or nil
+    local job = fw and fw.getJob() or nil
     return type(job) == 'table' and job.onduty == true and job.type == 'leo'
 end
 
@@ -142,23 +149,11 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- Open / close
 
---- Open the tablet. mode 'item' (ox_inventory export; slot = { slot, metadata }) or 'terminal' (vehicle = entity).
---- Awaits the server; call from a thread. @return boolean opened
-function M.open(mode, slot, vehicle)
-    if state.open or state.opening then return false end
-    if IsPauseMenuActive() or M.isDead() then return false end
-    if not M.hasUi() then
-        notify('error', L('tablet.unavailable'))
-        return false
-    end
-    mode = mode == 'terminal' and 'terminal' or 'item'
-    local req = { mode = mode }
-    if mode == 'item' and type(slot) == 'table' then req.slot = math.tointeger(tonumber(slot.slot)) end
-
-    state.opening = true
-    local okCall, res = pcall(lib.callback.await, 'fredpd:mdt:open', false, req)
-    state.opening = false
-    if not okCall or type(res) ~= 'table' then
+--- Show the server's answer to an open (MdtOpenPayload or { error }). Shared by the callback path (M.open) and the
+--- server-side item use (fredpd:client:openTablet). A success whose tablet cannot be shown any more tells the server.
+--- @return boolean opened
+function M.present(mode, res, vehicle)
+    if type(res) ~= 'table' then
         notify('error', L('tablet.unavailable'))
         return false
     end
@@ -189,9 +184,35 @@ function M.open(mode, slot, vehicle)
     return true
 end
 
+--- Open the tablet. mode 'item' (ox_inventory client.export; slot = { slot, metadata }) or 'terminal' (vehicle =
+--- entity). Awaits the server; call from a thread. @return boolean opened
+function M.open(mode, slot, vehicle)
+    if state.open or state.opening then return false end
+    if IsPauseMenuActive() or M.isDead() then return false end
+    if not M.hasUi() then
+        notify('error', L('tablet.unavailable'))
+        return false
+    end
+    mode = mode == 'terminal' and 'terminal' or 'item'
+    local req = { mode = mode }
+    if mode == 'item' and type(slot) == 'table' then req.slot = math.tointeger(tonumber(slot.slot)) end
+
+    state.opening = true
+    local okCall, res = pcall(lib.callback.await, 'fredpd:mdt:open', false, req)
+    state.opening = false
+    if not okCall then res = nil end
+    local queued = state.queuedItem
+    state.queuedItem = nil
+    local shown = M.present(mode, res, vehicle)
+    -- A server-side item open (qb) arrived while this one was in flight. The server refused this one (no session was
+    -- written for it), so the item session it already opened is the valid one: show it.
+    if not shown and queued and type(res) == 'table' and res.error then return M.presentServerItem(queued) end
+    return shown
+end
+
 --- Close the tablet. notifyServer = false when the server already closed it (forceClose). @return boolean was open
 --- Focus is only released when this resource holds it, so logout/forceClose never steals focus from another NUI
---- (e.g. the qbx character selector). The NUI 'close' callback, the F8 command and resource stop release it always.
+--- (e.g. the character selector). The NUI 'close' callback, the F8 command and resource stop release it always.
 function M.close(notifyServer)
     if not state.open then return false end
     SetNuiFocus(false, false)
@@ -205,10 +226,41 @@ function M.close(notifyServer)
 end
 
 ---------------------------------------------------------------------------------------------------------------
--- ox_inventory item: client.export = 'fredpd_mdt.open' -> exports.fredpd_mdt:open(data, slot)
+-- Tablet item. ox_inventory: client.export = 'fredpd_mdt.open' -> exports.fredpd_mdt:open(data, slot) -> the server
+-- callback. qb-inventory (or any inventory that reports the use on the server): the server already ran the same
+-- checks for the slot the inventory named and marked the session open; `res` is its answer.
 
 exports('open', function(_, slot)
     CreateThread(function() M.open('item', slot) end)
+end)
+
+--- Show the server's answer to a server-side item use. @return boolean opened
+function M.presentServerItem(res)
+    if not res.error and (IsPauseMenuActive() or not M.hasUi()) then
+        -- Opened on the server but nothing can be shown here: never take focus without a page (no trap).
+        TriggerServerEvent('fredpd:mdt:closed')
+        if not M.hasUi() then notify('error', L('tablet.unavailable')) end
+        return false
+    end
+    return M.present('item', res)
+end
+
+RegisterNetEvent('fredpd:client:openTablet', function(res)
+    if type(res) ~= 'table' then return end
+    if state.open then return end -- already showing it (Open[src] holds one session per player; it stays valid)
+    if state.opening then
+        -- Another open (terminal / client export) is in flight. A refusal is still shown; a success is kept and
+        -- shown only if the in-flight open is refused (see M.open). If the in-flight open succeeds, the server
+        -- session is whichever open the server finished last (one Open[src] per player) and the tablet shows the
+        -- in-flight one; both are re-checked per action, so the session is left alone on purpose.
+        if res.error then
+            notify('error', L(type(res.error) == 'string' and res.error or 'tablet.unavailable'))
+        else
+            state.queuedItem = res
+        end
+        return
+    end
+    M.presentServerItem(res)
 end)
 exports('close', function() return M.close(true) end)
 exports('isOpen', M.isOpen)
@@ -259,10 +311,6 @@ RegisterNetEvent('fredpd:client:forceClose', function(reasonKey)
     if wasOpen and type(reasonKey) == 'string' and reasonKey:find('^[%w_.]+$') then notify('error', L(reasonKey)) end
 end)
 
-RegisterNetEvent('QBCore:Client:OnPlayerUnload', function()
-    M.close(true)
-end)
-
 -- Last-resort escape hatch, typed in the F8 console if the page ever fails to answer Esc.
 RegisterCommand('fredpd_mdt_close', function()
     if not M.close(true) then SetNuiFocus(false, false) end
@@ -274,9 +322,10 @@ lib.onCache('vehicle', function(vehicle)
 end)
 
 ---------------------------------------------------------------------------------------------------------------
--- Vehicle terminal (ox_target option on the configured police models; added once, removed on stop)
+-- Vehicle terminal (a target option on the configured police models through FredBridge.target: qb-target or
+-- ox_target; added once, again when the target resource restarts, removed on stop)
 
-local targetAdded = false
+local targetHandle = nil
 
 --- Client hint (the server checks model and seat again): seated in this vehicle, driver or front passenger.
 function M.canUseTerminal(entity)
@@ -289,34 +338,34 @@ function M.canUseTerminal(entity)
 end
 
 function M.addTerminal()
-    if not Config.terminal.enabled or GetResourceState('ox_target') ~= 'started' then return false end
-    exports.ox_target:addModel(Config.terminal.models, {
-        {
-            name = M.TARGET_OPTION,
-            icon = 'fa-solid fa-laptop',
-            label = L('tablet.useTerminal'),
-            distance = Config.terminal.distance,
-            canInteract = function(entity) return M.canUseTerminal(entity) end,
-            onSelect = function(data)
-                local entity = type(data) == 'table' and data.entity or data
-                CreateThread(function() M.open('terminal', nil, entity) end)
-            end,
-        },
+    if not Config.terminal.enabled or targetHandle or not FredBridge.target.available() then return false end
+    targetHandle = FredBridge.target.addModel(Config.terminal.models, {
+        name = M.TARGET_OPTION,
+        icon = 'fa-solid fa-laptop',
+        label = L('tablet.useTerminal'),
+        distance = Config.terminal.distance,
+        canInteract = function(entity) return M.canUseTerminal(entity) end,
+        onSelect = function(data)
+            local entity = type(data) == 'table' and data.entity or nil
+            CreateThread(function() M.open('terminal', nil, entity) end)
+        end,
     })
-    targetAdded = true
-    return true
+    return targetHandle ~= nil
 end
 
 function M.removeTerminal()
-    if not targetAdded then return end
-    targetAdded = false
-    pcall(function() exports.ox_target:removeModel(Config.terminal.models, M.TARGET_OPTION) end)
+    local handle = targetHandle
+    targetHandle = nil
+    if handle then FredBridge.target.remove(handle) end
 end
 
 M.addTerminal()
 
 AddEventHandler('onClientResourceStart', function(resource)
-    if resource == 'ox_target' then M.addTerminal() end
+    if resource == FredBridge.target.resource then
+        targetHandle = nil -- the restarted target resource forgot the option
+        M.addTerminal()
+    end
 end)
 
 AddEventHandler('onClientResourceStop', function(resource)
@@ -324,8 +373,8 @@ AddEventHandler('onClientResourceStop', function(resource)
         M.removeTerminal()
         M.close(false)
         SetNuiFocus(false, false)
-    elseif resource == 'ox_target' then
-        targetAdded = false
+    elseif resource == FredBridge.target.resource then
+        targetHandle = nil
     end
 end)
 

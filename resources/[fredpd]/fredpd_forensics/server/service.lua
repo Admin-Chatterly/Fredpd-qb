@@ -52,6 +52,10 @@ M.cfg = {
     registerDelayMs = 250,
     mintedCap = 2000,             -- minted uids kept in memory before expired ones are pruned (on the next mint)
     mintedTtlMs = 6 * 3600 * 1000, -- how long a minted uid without a row stays trusted
+    -- The inventory fredpd_core's bridge selected (bridgeInfo().inventory), set by server/main.lua when evidence is
+    -- on. ox_inventory's hooks, slots and metadata have no bridge equivalent (§C17: hooks are ox-only), so this module
+    -- reaches ox_inventory itself, but only through M.inventory(), which refuses unless it is the selected one.
+    inventory = nil,
 }
 -- { tag = function(caseNumber, n) -> string, isCaseNumber = function(v) -> boolean } (shared/format.lua); nil when
 -- fredpd_core's formats.json is missing or rejected, which disables linking ('unavailable').
@@ -82,6 +86,16 @@ function M.log(level, fmt, ...)
 end
 
 local function core() return exports.fredpd_core end
+
+--- exports.ox_inventory when fredpd_core's bridge selected ox_inventory; raises otherwise (every caller is in a
+--- pcall, so on any other inventory the call is a logged no-op, never a call into a resource that is not selected).
+function M.inventory()
+    if M.cfg.inventory ~= 'ox_inventory' then
+        error(('ox_inventory is not the selected inventory (%s)'):format(tostring(M.cfg.inventory)), 0)
+    end
+    return exports.ox_inventory
+end
+local oxInventory = M.inventory
 
 local function citizenOf(src)
     if not src or src < 1 then return nil end
@@ -177,7 +191,7 @@ end
 local function findItem(holder, name, uid)
     if holder == nil then return nil end
     local okFind, slots = pcall(function()
-        return exports.ox_inventory:GetSlotsWithItem(holder, name, { item_uid = uid })
+        return oxInventory():GetSlotsWithItem(holder, name, { item_uid = uid })
     end)
     if okFind and type(slots) == 'table' and type(slots[1]) == 'table' then return slots[1] end
     return nil
@@ -220,7 +234,7 @@ local function restamp(item, info, holder, holderSlot, oldUid)
         M.log('warn', 'evidence item %s without a known item_uid in an unknown place; not tracked', tostring(item.name))
         return nil
     end
-    local okSlot, slot = pcall(function() return exports.ox_inventory:GetSlot(holder, holderSlot) end)
+    local okSlot, slot = pcall(function() return oxInventory():GetSlot(holder, holderSlot) end)
     if not okSlot or type(slot) ~= 'table' or slot.name ~= item.name then return nil end
     local current = type(slot.metadata) == 'table' and slot.metadata or {}
     local present = Evidence.isUid(current.item_uid) and current.item_uid or nil
@@ -228,7 +242,7 @@ local function restamp(item, info, holder, holderSlot, oldUid)
     local ev = type(current[info.key]) == 'table' and current[info.key] or {}
     local uid = M.newUid()
     current.item_uid, current.collected_by, current.collected_at = uid, nil, nil
-    local okSet, err = pcall(function() exports.ox_inventory:SetMetadata(holder, holderSlot, current) end)
+    local okSet, err = pcall(function() oxInventory():SetMetadata(holder, holderSlot, current) end)
     if not okSet then
         M.log('error', 'could not stamp item_uid on %s: %s', tostring(item.name), tostring(err))
         return nil
@@ -453,8 +467,8 @@ local function recordContainerMove(src, cid, mv)
     if type(container) ~= 'string' or not mv.destSlot then return 0 end
     if not Evidence.moveAction(mv.from, mv.to, M.cfg.lockerPatterns, nil) then return 0 end
     local okItems, items = pcall(function()
-        exports.ox_inventory:GetContainerFromSlot(mv.to, mv.destSlot)
-        return exports.ox_inventory:GetInventoryItems(container)
+        oxInventory():GetContainerFromSlot(mv.to, mv.destSlot)
+        return oxInventory():GetInventoryItems(container)
     end)
     if not okItems or type(items) ~= 'table' then return 0 end
     local note = Evidence.cleanString(md.label, 64)
@@ -510,7 +524,7 @@ end
 function M.heldBy(src, inventory)
     if type(inventory) == 'number' then return math.tointeger(inventory) == src end
     if type(inventory) ~= 'string' then return false end
-    local okItems, items = pcall(function() return exports.ox_inventory:GetInventoryItems(src) end)
+    local okItems, items = pcall(function() return oxInventory():GetInventoryItems(src) end)
     if not okItems or type(items) ~= 'table' then return false end
     for _, it in pairs(items) do
         if type(it) == 'table' and type(it.metadata) == 'table' and it.metadata.container == inventory then

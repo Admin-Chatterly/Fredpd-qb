@@ -99,17 +99,27 @@ tests['5 requireOwner: another character\'s tablet is refused only when configur
     end)
 end
 
-tests['6 failures of ox_inventory, the database or fredpd_core fail closed'] = function(t)
+tests['6 failures of the inventory (via the bridge), the database or fredpd_core fail closed'] = function(t)
     H.with(function(env, mods)
         local Open = mods['server.open']
-        env.inventoryDown = true
+        env.resources[env.inventory] = 'stopped' -- the bridge answers count 0: "unavailable", not "no tablet"
         t.eq(Open.open(1, { mode = 'item' }), { error = 'tablet.unavailable' })
+        env.resources[env.inventory], env.now = 'started', env.now + 1000
+        env.inventoryDown = true -- the inventory raises: the bridge answers 0 (logged there), nothing opens
+        t.eq(Open.open(1, { mode = 'item' }), { error = 'tablet.noItem' })
+        t.eq(Open.isOpen(1), false)
         env.inventoryDown, env.now = false, env.now + 1000
         env.dbDown = true
         t.eq(Open.open(1, { mode = 'item' }), { error = 'tablet.unavailable' })
         env.dbDown, env.now = false, env.now + 1000
-        env.coreDown = true
-        t.eq(Open.open(1, { mode = 'item' }), { error = 'tablet.noGrant' })
+        env.coreDown = true -- the inventory count is the first fredpd_core call now (bridge)
+        t.eq(Open.open(1, { mode = 'item' }), { error = 'tablet.unavailable' })
+        env.now = env.now + 1000
+        t.eq(Open.open(1, { mode = 'terminal' }), { error = 'tablet.unavailable' }, 'not seated')
+        env.seat(1, 7100, 'police', -1)
+        env.now = env.now + 1000
+        t.eq(Open.open(1, { mode = 'terminal' }), { error = 'tablet.noGrant' }, 'terminal: grant check fails closed')
+        env.vehicles = {}
         env.coreDown, env.now = false, env.now + 1000
         t.eq(Open.isOpen(1), false)
         H.openTablet(mods, 1)
@@ -245,22 +255,30 @@ tests['11 main.lua events: grants/duty/job changes close, client-fired copies ar
         env.players[1].grants = { ['mdt_page:search'] = true }
         env.now = env.now + 1000
         open(1, { mode = 'item' })
-        env.fire('QBCore:Server:SetDuty', '', 1, true)
+        env.fire('fredpd:bridge:dutyChanged', '', 1, true)
         t.eq(env.exported.isTabletOpen(1), true)
         env.players[1].duty = false
-        env.fire('QBCore:Server:SetDuty', '', 1, false)
+        env.fire('fredpd:bridge:dutyChanged', 5, 1, false) -- a client cannot fire it (and it is no net event)
+        t.eq(env.exported.isTabletOpen(1), true)
+        t.eq(env.net['fredpd:bridge:dutyChanged'], nil)
+        env.fire('fredpd:bridge:dutyChanged', '', 1, false)
         t.eq(env.exported.isTabletOpen(1), false)
         env.players[1].duty = true
         env.now = env.now + 1000
         open(1, { mode = 'item' })
         env.players[1].duty = false
-        env.fire('QBCore:Server:OnJobUpdate', '', 1, { name = 'unemployed' })
+        env.fire('fredpd:bridge:jobChanged', '', 1)
         t.eq(env.exported.isTabletOpen(1), false)
         env.players[1].duty = true
         env.now = env.now + 1000
         open(1, { mode = 'item' })
-        env.fire('QBCore:Server:OnPlayerUnload', '', 1)
+        env.client = {}
+        env.fire('fredpd:bridge:playerUnloaded', '', 1)
         t.eq(env.exported.isTabletOpen(1), false, 'logout')
+        t.eq(#env.sent(1, 'fredpd:client:forceClose'), 1, 'the client closes on the server\'s word')
+        for _, name in ipairs({ 'QBCore:Server:SetDuty', 'QBCore:Server:OnJobUpdate', 'QBCore:Server:OnPlayerUnload' }) do
+            t.eq(env.handlers[name], nil, 'no framework event handler: ' .. name)
+        end
     end)
 end
 

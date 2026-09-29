@@ -10,11 +10,12 @@
 -- (i.e. in custody), the sentence goes to the prison adapter: exports.fredpd_core:getAdapter('prison').jail(src,
 -- minutes, charges). The shipped default adapter is 'none', which logs and returns false; the result is audited.
 -- issueFine ("Utfärda ordningsbot"): only class 'ordningsbot'; the target must be online, in the officer's routing
--- bucket and within FINE_RANGE (5 m, measured on the server); the money is taken the way qbx_police's
--- police:server:IssueFine does it (qbx_policejob server/main.lua:596-657; its net event cannot be triggered from the
--- server with the officer as source): Player.Functions.RemoveMoney('bank', total, 'police-fine'), then Renewed-Banking
--- addAccountMoney('police', total) when that resource runs (a failed deposit refunds and fails the call). Rows are
--- stored as 'paid' after the money moved; if storing fails the money is refunded.
+-- bucket and within FINE_RANGE (5 m, measured on the server); the money is taken from the target's bank through the
+-- fredpd_core framework bridge (docs/contracts.md §C17): removeMoney(target, 'bank', total, 'police-fine') on qb-core
+-- (Player.Functions.RemoveMoney) or qbx_core (exports.qbx_core:RemoveMoney) alike. The fine is not credited to any
+-- society account (no banking resource is called; a `billing` adapter is an integration request,
+-- docs/modules/records.md). Rows are stored as 'paid' after the money moved; if storing fails the money is refunded
+-- with the bridge's addMoney(target, 'bank', total, 'police-fine-refund').
 
 local C = require 'server.common'
 local Cases = require 'server.cases'
@@ -28,8 +29,7 @@ M.FINE_RANGE = 5.0
 M.JAIL_RANGE = 5.0
 M.LIST_MAX = 500
 M.FINE_COOLDOWN_MS = 2000
-M.SOCIETY_ACCOUNT = 'police'
-M.BANKING = 'Renewed-Banking'
+M.ACCOUNT = 'bank'
 
 local CLASSES = { 'ordningsbot', 'bot', 'fängelse' }
 
@@ -249,22 +249,13 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- issueFine
 
---- Take `amount` from the target's bank and credit the society account (as qbx_police IssueFine). Returns true, or
---- false, reason ('insufficient_funds' | 'payment_failed').
-function M.bill(targetPlayer, amount)
-    local funcs = targetPlayer.Functions
-    if type(funcs) ~= 'table' or not funcs.RemoveMoney then return false, 'payment_failed' end
-    if not funcs.RemoveMoney('bank', amount, 'police-fine') then return false, 'insufficient_funds' end
-    if GetResourceState(M.BANKING) == 'started' then
-        local ok, deposited = pcall(function() return exports[M.BANKING]:addAccountMoney(M.SOCIETY_ACCOUNT, amount) end)
-        if not ok or not deposited then
-            funcs.AddMoney('bank', amount, 'police-fine-refund')
-            return false, 'payment_failed'
-        end
-    else
-        C.warnOnce('banking', ('%s is not started; fines are taken from the player but credited nowhere'):format(M.BANKING))
-    end
-    return true
+--- Take `amount` from the target's bank through the bridge. Returns true, or false, why: 'unavailable' when the
+--- bridge no longer resolves the player (framework stopped / player dropped), else 'insufficient_funds' (the framework
+--- refused the withdrawal).
+function M.bill(target, amount)
+    if C.removeMoney(target, M.ACCOUNT, amount, 'police-fine') then return true end
+    if not C.player(target) then return false, 'unavailable' end
+    return false, 'insufficient_funds'
 end
 
 --- export issueFine(src, { citizenid, lines, caseId? }) -> { records, totals }
@@ -295,24 +286,28 @@ function M.issueFine(src, input)
     if target == src then return C.failWith('validation', 'self') end
     local d = M.distance(src, target)
     if not d or d > M.FINE_RANGE then return C.failWith('validation', 'target_too_far') end
-    local player = C.qbxPlayer(target)
-    if not player then return C.failWith('not_found', 'target_offline') end
+    local player = C.player(target)
+    if not player or player.citizenid ~= cid then return C.failWith('not_found', 'target_offline') end
     if not C.rateLimit(src, 'issueFine', M.FINE_COOLDOWN_MS) then return C.fail('rate_limited') end
     if not Search.loadFormats() then return C.fail('unavailable') end
 
     local total = 0
     for _, p in ipairs(priced) do total = total + p.fine end
     if total < 1 then return C.failWith('validation', 'zero_fine') end
-    local paid, why = M.bill(player, total)
-    if not paid then return C.failWith('validation', why) end
+    local paid, why = M.bill(target, total)
+    if not paid then
+        if why == 'unavailable' then return C.fail('unavailable') end
+        return C.failWith('validation', why)
+    end
 
     local queries = {}
     for _, p in ipairs(priced) do queries[#queries + 1] = recordInsert(cid, c and c.id or nil, nil, p, 'paid', actor, nil) end
     local before = maxRecordId()
     local okTx, stored = pcall(MySQL.transaction.await, queries)
     if not okTx or not stored then
-        pcall(player.Functions.AddMoney, 'bank', total, 'police-fine-refund')
-        error(('issueFine: storing the records failed (%s); fine refunded'):format(tostring(stored)), 0)
+        local refunded = C.addMoney(target, M.ACCOUNT, total, 'police-fine-refund')
+        error(('issueFine: storing the records failed (%s); fine %s'):format(tostring(stored),
+            refunded and 'refunded' or ('NOT refunded (%d to %s)'):format(total, cid)), 0)
     end
     local records = recordsAfter("rec.citizenid = ? AND rec.issued_by = ? AND rec.report_id IS NULL AND rec.status = 'paid' "
         .. 'AND rec.id > ?', { cid, actor, before })

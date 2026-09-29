@@ -47,15 +47,15 @@ lib.callback.register('fredpd:dispatch:takeNewest', function(source)
 end)
 
 ---------------------------------------------------------------------------------------------------------------
--- Units roster: every event that can change who is on duty, their name/callsign or their alert. All
--- AddEventHandler (server-local; verified names in docs/deps-verification.md §5). Each only schedules a rebuild.
+-- Units roster: every event that can change who is on duty, their name/callsign or their alert. The framework
+-- events come normalised from fredpd_core's bridge (docs/contracts.md §C17: qb-core or qbx_core), all server-local
+-- (AddEventHandler; no client can fire them). Each only schedules a rebuild.
 
 for _, name in ipairs({
-    'QBCore:Server:SetDuty',          -- (src, onDuty)   qbx_core server/player.lua SetJobDuty
-    'QBCore:Server:OnJobUpdate',      -- (src, job)      job change / job definition change
-    'QBCore:Server:PlayerLoaded',     -- (Player)        character loaded (duty restored from the saved job)
-    'QBCore:Server:OnPlayerUnload',   -- (src)           /logout, before removal
-    'qbx_core:server:playerLoggedOut',-- (src)           /logout, after removal
+    'fredpd:bridge:dutyChanged',      -- (src, onduty)   duty toggled (SetDuty / SetJobDuty)
+    'fredpd:bridge:jobChanged',       -- (src)           job name/type/grade changed
+    'fredpd:bridge:playerLoaded',     -- (src)           character loaded (duty restored from the saved job)
+    'fredpd:bridge:playerUnloaded',   -- (src)           /logout or disconnect
     'fredpd:officerChanged',          -- (citizenid)     fredpd_core: Discord name push or new callsign
 }) do
     AddEventHandler(name, function() Roster.schedule() end)

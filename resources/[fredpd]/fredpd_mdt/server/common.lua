@@ -105,6 +105,39 @@ function M.citizenId(src)
     return nil
 end
 
+---------------------------------------------------------------------------------------------------------------
+-- Inventory, through fredpd_core's bridge (docs/contracts.md §C17: qb-inventory or ox_inventory; the bridge
+-- normalises qb `info` and ox `metadata` to `metadata`). Never a direct inventory call from this resource.
+
+--- Number of `item` the player holds, or nil when fredpd_core raised.
+function M.itemCount(src, item)
+    local ok, n = M.core('count', src, item)
+    if not ok then return nil end
+    return math.tointeger(tonumber(n)) or 0
+end
+
+--- { { slot, metadata }, ... } sorted by slot, or nil when fredpd_core raised.
+function M.findItems(src, item)
+    local ok, list = M.core('find', src, item)
+    if not ok then return nil end
+    return type(list) == 'table' and list or {}
+end
+
+--- Give an item (metadata = ox metadata / qb info). true when added. The bridge has no CanCarryItem: a full
+--- inventory, an item unknown to the inventory or a stopped inventory all answer false here.
+function M.addItem(src, item, count, metadata)
+    local ok, added = M.core('add', src, item, count, metadata)
+    return ok and added == true
+end
+
+--- Is the inventory resource the bridge selected running? Tells "no item" from "inventory down" (the bridge answers
+--- count 0 / add false for both). Only reads fredpd_core's selection and the resource state.
+function M.inventoryUp()
+    local ok, info = M.core('bridgeInfo')
+    local name = ok and type(info) == 'table' and info.inventory or nil
+    return type(name) == 'string' and GetResourceState(name) == 'started'
+end
+
 --- Every `mdt_page` key (packages/types/src/mdtPages.ts MDT_PAGE_KEYS). The tablet opens with at least one.
 M.MDT_PAGE_KEYS = { 'search', 'alerts', 'bolos', 'cases', 'evidence', 'intel', 'charges', 'roster', 'command' }
 

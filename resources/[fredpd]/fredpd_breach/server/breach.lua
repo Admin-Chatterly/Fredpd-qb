@@ -1,21 +1,23 @@
 -- SPDX-License-Identifier: GPL-3.0-only
--- Door breach (IMPLEMENTATION.md §5.6, docs/contracts.md §C16, docs/modules/breach.md).
+-- Door breach (IMPLEMENTATION.md §5.6, docs/contracts.md §C16, docs/modules/breach.md). Inventory and doorlock go
+-- through fredpd_core's bridge (docs/contracts.md §C17: qb-inventory/ox_inventory, qb-doorlock/ox_doorlock).
 --
 --   start(src, doorId)   callback fredpd:breach:start. Grant tool:ram → on duty → rate limit (1/s) and the
 --                        per-player cooldown after a breach → door id → pd_ram in the player's inventory
---                        (ox_inventory GetItemCount) → door exists, is not in config.denyDoors and is locked
---                        (ox_doorlock getDoor) → the
---                        player's ped (server-side position) within maxDistance of the door. Returns a one-time
---                        token bound to src + door, valid from progressMs - finishSlackMs to tokenTtlMs after the
---                        start. A new start replaces the player's previous token.
+--                        (exports.fredpd_core:count) → door exists, is not in config.denyDoors and is locked
+--                        (exports.fredpd_core:getDoor) → the player's ped (server-side position) within maxDistance
+--                        of the door. Returns a one-time token bound to src + door, valid from
+--                        progressMs - finishSlackMs to tokenTtlMs after the start. A new start replaces the player's
+--                        previous token.
 --   finish(src, token)   callback fredpd:breach:finish. Per-src rate limit (finishRateMs) before the token lookup.
 --                        The token must belong to src (another player's token is rejected and left alone), be
---                        unused, not too early (the progress bar cannot be skipped) and not expired; the token is consumed. Grant, duty, item, door locked and distance are
---                        checked again, then exports.ox_doorlock:setDoorState(id, 0) (ox_doorlock
---                        server/main.lua:275-314: an export call runs with source nil, so ox_doorlock's own
---                        authorisation is skipped — FredPD's checks above are the authorisation), audit
---                        'breach.door' { doorId, name, coords }, optional door evidence (config.breachEvidence).
+--                        unused, not too early (the progress bar cannot be skipped) and not expired; the token is
+--                        consumed. Grant, duty, item, door locked and distance are checked again, then
+--                        exports.fredpd_core:setLocked(id, false, src) (no authorisation happens in the doorlock
+--                        resource on that path: FredPD's checks above are the authorisation), audit 'breach.door'
+--                        { doorId, name, coords }, optional door evidence (config.breachEvidence).
 --
+-- Door ids: ox_doorlock ids are integers; qb-doorlock ids are its Config.DoorList keys (integers or strings).
 -- Results (§C12 shape): { ok = true, data = ... } | { ok = false, error = <code>, reason = <why> }.
 -- Codes: unauthorized (grant / off_duty), rate_limited (rate / cooldown), validation (door / no_item / not_locked /
 -- too_far / too_early / token), not_found (door / token), expired, unavailable.
@@ -47,6 +49,7 @@ local lastBreach = {}  -- [src] = time of the last successful breach
 local lastFinish = {}  -- [src] = time of the last finish attempt (rate limit, before the token lookup)
 
 local warnedItem = false
+local itemFound = false
 
 function M.log(level, fmt, ...)
     local msg = select('#', ...) > 0 and fmt:format(...) or tostring(fmt)
@@ -80,26 +83,70 @@ local function onDuty(src)
     return okCall and duty == true
 end
 
---- Warn once when ox_inventory does not know the ram item (the ox_inventory patch was not applied).
+local function bridgeInfo()
+    local okCall, info = pcall(function() return core():bridgeInfo() end)
+    return okCall and type(info) == 'table' and info or {}
+end
+
+--- true when the bridge's resource of `kind` (inventory / doorlock) runs.
+local function running(kind)
+    local res = bridgeInfo()[kind]
+    return type(res) == 'string' and GetResourceState(res) == 'started'
+end
+
+-- Where the selected stack defines items (bridge kind -> file): qb-inventory items live in the framework's
+-- shared/items.lua (patches/qb-core.10-fredpd-items.patch), ox_inventory's in its data/items.lua
+-- (patches/ox_inventory.30-breach-items.patch). A file that does not exist in that resource is skipped.
+M.ITEM_FILES = { { kind = 'inventory', path = 'data/items.lua' }, { kind = 'framework', path = 'shared/items.lua' } }
+
+local function escape(s) return (s:gsub('[%^%$%(%)%%%.%[%]%*%+%-%?]', '%%%0')) end
+
+--- true when a definition file text defines `item` (qb `name = 'item'`, ox `['item'] =`).
+function M.definesItem(text, item)
+    local e = escape(item)
+    return text:find('name%s*=%s*[\'"]' .. e .. '[\'"]') ~= nil
+        or text:find('%[%s*[\'"]' .. e .. '[\'"]%s*%]%s*=') ~= nil
+end
+
+--- Warn once when no item definition file of the selected stack (bridgeInfo) defines the ram item (its FredPD
+--- items patch was not applied). Nothing is said when no definition file can be read (nothing to judge).
 function M.checkItem()
-    if warnedItem then return end
-    local okCall, items = pcall(function() return exports.ox_inventory:Items(M.cfg.ramItem) end)
-    if okCall and items == nil then
+    if warnedItem or itemFound then return end
+    local info = bridgeInfo()
+    local read, where = false, {}
+    for _, f in ipairs(M.ITEM_FILES) do
+        local res = info[f.kind]
+        if type(res) == 'string' then
+            local okRead, text = pcall(LoadResourceFile, res, f.path)
+            if okRead and type(text) == 'string' and text ~= '' then
+                read = true
+                if M.definesItem(text, M.cfg.ramItem) then
+                    itemFound = true -- checked once: the files are not read again on every no_item
+                    return
+                end
+                where[#where + 1] = res .. '/' .. f.path
+            end
+        end
+    end
+    if read then
         warnedItem = true
-        M.log('warn', 'ox_inventory has no item "%s" (patches/ox_inventory.30-breach-items.patch not applied?); '
-            .. 'nobody can breach doors until it exists', M.cfg.ramItem)
+        M.log('warn', 'no item "%s" in %s (the FredPD items patch for this inventory is not applied, see '
+            .. 'docs/modules/breach.md); nobody can breach doors until it exists', M.cfg.ramItem, table.concat(where, ', '))
     end
 end
 
---- true / false, or nil when ox_inventory could not answer.
+--- true / false, or nil when the inventory could not answer (its resource is not running).
 local function hasItem(src)
-    local okCall, count = pcall(function() return exports.ox_inventory:GetItemCount(src, M.cfg.ramItem) end)
+    if not running('inventory') then return nil end
+    local okCall, count = pcall(function() return core():count(src, M.cfg.ramItem) end)
     if not okCall then return nil end
     return (tonumber(count) or 0) > 0
 end
 
+--- { id, name, locked, coords } or nil, 'unavailable' | 'not_found'.
 local function getDoor(doorId)
-    local okCall, door = pcall(function() return exports.ox_doorlock:getDoor(doorId) end)
+    if not running('doorlock') then return nil, 'unavailable' end
+    local okCall, door = pcall(function() return core():getDoor(doorId) end)
     if not okCall then return nil, 'unavailable' end
     if type(door) ~= 'table' or door.coords == nil then return nil, 'not_found' end
     return door
@@ -116,11 +163,11 @@ local function distance(a, b)
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 end
 
---- true when config.denyDoors excludes the door: an entry is an ox_doorlock id (number), an exact door name
---- (string) or a Lua pattern on the name ({ pattern = '^mrpd_' }).
+--- true when config.denyDoors excludes the door: an entry is a door id (number, or a qb-doorlock string key), an
+--- exact door name (string) or a Lua pattern on the name ({ pattern = '^mrpd_' }).
 function M.isDenied(doorId, name)
     for _, d in ipairs(type(M.cfg.denyDoors) == 'table' and M.cfg.denyDoors or {}) do
-        if type(d) == 'number' and d == doorId then return true end
+        if d == doorId then return true end
         if type(name) == 'string' then
             if type(d) == 'string' and d == name then return true end
             if type(d) == 'table' and type(d.pattern) == 'string' then
@@ -147,10 +194,22 @@ local function checkDoor(src, doorId)
         return nil, 'not_found', 'door'
     end
     if M.isDenied(doorId, door.name) then return nil, 'validation', 'denied' end
-    if door.state ~= 1 and door.state ~= true then return nil, 'validation', 'not_locked' end
+    if door.locked ~= true then return nil, 'validation', 'not_locked' end
     local pos = pedCoords(src)
     if not pos or distance(pos, door.coords) > M.cfg.maxDistance then return nil, 'validation', 'too_far' end
     return door
+end
+
+--- The client's door id, validated: an integer 1..1e6 (also as a numeric string) or a qb-doorlock string key
+--- (valid UTF-8 without control characters, e.g. 'häktet_1'; at most 64 bytes: the audit target id). nil when invalid.
+function M.doorId(v)
+    if type(v) == 'number' or (type(v) == 'string' and v:match('^%d+$')) then
+        local n = math.tointeger(tonumber(v))
+        if n and n >= 1 and n <= 1000000 then return n end
+        return nil
+    end
+    if type(v) == 'string' and #v >= 1 and #v <= 64 and not v:find('%c') and utf8.len(v) then return v end
+    return nil
 end
 
 function M.newToken()
@@ -186,8 +245,8 @@ function M.start(src, doorId)
     lastStart[src] = t
     if lastBreach[src] and t - lastBreach[src] < M.cfg.cooldownMs then return fail('rate_limited', 'cooldown') end
 
-    doorId = math.tointeger(tonumber(doorId))
-    if not doorId or doorId < 1 or doorId > 1000000 then return fail('validation', 'door') end
+    doorId = M.doorId(doorId)
+    if doorId == nil then return fail('validation', 'door') end
 
     local door, code, reason = checkDoor(src, doorId)
     if not door then return fail(code, reason) end
@@ -224,9 +283,10 @@ function M.finish(src, token)
     local door, code, reason = checkDoor(src, entry.doorId)
     if not door then return fail(code, reason) end
 
-    local okSet, result = pcall(function() return exports.ox_doorlock:setDoorState(entry.doorId, 0) end)
+    -- src is passed so qb-doorlock plays its door animation for the breaching officer (docs/modules/bridge.md).
+    local okSet, result = pcall(function() return core():setLocked(entry.doorId, false, src) end)
     if not okSet or result ~= true then
-        M.log('error', 'ox_doorlock setDoorState(%d, 0) failed: %s', entry.doorId, tostring(result))
+        M.log('error', 'unlocking door %s failed: %s', tostring(entry.doorId), tostring(result))
         return fail('unavailable', 'doorlock')
     end
     lastBreach[src] = t
@@ -258,7 +318,7 @@ end
 
 function M.reset()
     tokens, tokenOf, lastStart, lastBreach, lastFinish = {}, {}, {}, {}, {}
-    warnedItem = false
+    warnedItem, itemFound = false, false
 end
 
 return M

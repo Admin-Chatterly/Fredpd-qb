@@ -10,15 +10,15 @@ docs/contracts.md §C1, §C6, §C12 (plus the §C13/§C14/§C15/§C16 action mer
 
 | File | Role |
 |---|---|
-| `fxmanifest.lua` | deps ox_lib, oxmysql, ox_inventory, ox_target, qbx_core, fredpd_core; `ui_page 'web/build/index.html'`; `files` = web/build, locales, `config.lua`, `shared/validate.lua` |
+| `fxmanifest.lua` | deps ox_lib, oxmysql, fredpd_core only (framework/inventory/target via the §C17 bridge); client_scripts `@fredpd_core/bridge/client.lua` then `client/main.lua`; `ui_page 'web/build/index.html'`; `files` = web/build, locales, `config.lua`, `shared/validate.lua` |
 | `config.lua` | item name, prop/anim, terminal models and seats, `requireOwner`, serial format, rate limits, page size (client-readable, nothing secret) |
 | `shared/validate.lua` | Lua mirror of the tablet input shapes (table-driven, incl. nested objects, unions, arrays, refines), `ACTIONS` = action → shape (52 actions, 40 shapes) |
-| `server/main.lua` | registers the callbacks, `fredpd:mdt:closed`, exports, the close-on-event handlers, `/surfplatta` |
+| `server/main.lua` | registers the callbacks, `fredpd:mdt:closed`, exports, the close-on-event handlers (`fredpd:bridge:*`), the tablet's `registerUsable`, `/surfplatta` |
 | `server/open.lua` | open flow, `Open[src]` sessions, pushes, forced closes |
 | `server/dispatch.lua` | the §C12 dispatcher and its action table |
 | `server/home.lua` | `getHome` |
 | `server/tablets.lua` | issue, `listTablets`, `setTabletRevoked` |
-| `server/common.lua` | player ids, rate limiter, pcall-guarded fredpd_core/export calls, throttled logs |
+| `server/common.lua` | player ids, rate limiter, pcall-guarded fredpd_core/export calls, bridge inventory helpers (`itemCount`, `findItems`, `addItem`, `inventoryUp`), throttled logs |
 | `client/main.lua` | open/close, prop + animation, focus-trap safety, NUI callbacks, pushes, vehicle terminal |
 | `test/*.test.ts`, `test/harness.lua`, `test/golden/` | vitest (validation parity, wire contract), Lua test harness, golden JSON |
 
@@ -32,15 +32,15 @@ opens.
 |---|---|---|
 | 1 | rate limit 750 ms per player | `errors.rateLimited` |
 | 2 | terminal: seated (driver/front passenger) in a `config.terminal.models` vehicle (server natives) | `tablet.unavailable` |
-| 3 | item mode (or terminal with `requireItem`): `ox_inventory:GetItemCount(src, 'pd_tablet') > 0` | `tablet.noItem` |
+| 3 | item mode (or terminal with `requireItem`): bridge `count(src, 'pd_tablet') > 0` (0 while the selected inventory is not started → `tablet.unavailable`) | `tablet.noItem` |
 | 4 | any `mdt_page:*` grant (`hasGrant` per MDT_PAGE_KEYS; deny/wildcard rules in fredpd_core) | `tablet.noGrant` |
 | 5 | `exports.fredpd_core:isOnDuty(src)` | `tablet.notOnDuty` |
 | 6 | a character (`getCitizenId`) | `tablet.unavailable` |
-| 7 | serial: the reported slot if it holds a pd_tablet, else the first pd_tablet slot (`GetSlot`/`Search`); must be a row in `fredpd_tablets` | `tablet.unregistered` |
+| 7 | serial: the reported slot if it holds a pd_tablet (its serial or none), else the first pd_tablet slot with a serial (bridge `find`: qb `info` / ox `metadata`); must be a row in `fredpd_tablets` | `tablet.unregistered` |
 | 8 | not revoked | `tablet.revoked` |
 | 9 | `requireOwner` only: `owner_citizenid` = the player's citizenid | `tablet.notOwner` |
 
-ox_inventory, fredpd_core or the DB failing → `tablet.unavailable` / `tablet.noGrant` (fail closed). Success:
+The inventory (stopped), fredpd_core or the DB failing → `tablet.unavailable` / `tablet.noGrant` (fail closed); an inventory that raises answers count 0 through the bridge → `tablet.noItem`. Success:
 `Open[src] = { mode, serial, since }` and the MdtOpenPayload `{ grants = getGrants(src) copy, unit = grants.units[1]
 (unit-code pattern, else absent), me = { citizenid, displayName, callsign } }`. `displayName` is the Discord name
 from `getOfficer`; without an officer row it is `officer.unnamed` with the last 4 Discord digits (never the
@@ -48,11 +48,12 @@ character name, §4.9).
 
 Sessions end on: the net event `fredpd:mdt:closed` (no arguments, so it can only clear the sender's own session;
 not rate limited: idempotent, O(1), and a dropped close would leave a stale session), the `close` action,
-`playerDropped` (also clears the limiter), `QBCore:Server:OnPlayerUnload`, and forced closes (below).
+`playerDropped` (also clears the limiter), `fredpd:bridge:playerUnloaded` (a forced close without reason, so the
+client closes on the server's word), and forced closes (below).
 
 **Forced closes** (`TriggerClientEvent('fredpd:client:forceClose', src, reasonKey)`): a revoked serial
-(`tablet.revoked`), `fredpd:grantsChanged` leaving no mdt_page grant (`tablet.noGrant`), `QBCore:Server:SetDuty`
-false / `OnJobUpdate` while off duty (`tablet.notOnDuty`), the `closeTablet` export. Those handlers are
+(`tablet.revoked`), `fredpd:grantsChanged` leaving no mdt_page grant (`tablet.noGrant`), `fredpd:bridge:dutyChanged`
+false / `fredpd:bridge:jobChanged` while off duty (`tablet.notOnDuty`), the `closeTablet` export. Those handlers are
 `AddEventHandler` only and ignore a player `source`. The session is written only after a final
 `GetPlayerName(src)` check: the open checks yield (inventory, MySQL, core), and a player who dropped meanwhile
 (playerDropped already ran) must not leave a stale session.
@@ -154,10 +155,12 @@ request 1 below).
 
 - **Issue:** `/surfplatta <server id>` (`lib.addCommand`, param `playerId`, **no ACE restriction**: the handler
   requires `perm:tablets.manage` via `hasGrant` and 1 per 2 s; the server console may always issue, for the first
-  tablet). Target checked with `TabletIssueInputSchema`'s mirror, must be connected with a character and pass
-  `CanCarryItem`. Serial `SP-XXXX-XXXX` (alphabet without I/O/0/1, `math.random`), `INSERT IGNORE` with
-  `issued_at = UTC_TIMESTAMP()`, retried on a taken serial (5 attempts); then `AddItem(target, 'pd_tablet', 1,
-  { serial, owner = citizenid, description = tablet.itemSerial })`; if AddItem fails the row is deleted again.
+  tablet). Target checked with `TabletIssueInputSchema`'s mirror, must be connected with a character, and the
+  selected inventory must be started (`tablet.unavailable`). The bridge has no `CanCarryItem`. Serial `SP-XXXX-XXXX` (alphabet without I/O/0/1, `math.random`), `INSERT IGNORE` with
+  `issued_at = UTC_TIMESTAMP()`, retried on a taken serial (5 attempts); then bridge `add(target, 'pd_tablet', 1,
+  { serial, owner = citizenid, description = tablet.itemSerial })` (qb: `info`, ox: `metadata`); if add answers
+  false (full inventory, item unknown to the inventory, inventory stopped meanwhile) the row is deleted again and the
+  actor gets `tablet.issueNotAdded` (one throttled warning in the server log).
   Audit `tablet.issue` `{ owner, target }` (actor 0 for the console); the target gets `tablet.received`.
 - **listTablets:** `TabletListOutput`, 50 per page, newest first; `owner.name` = the owner's `fredpd_officers`
   display name, else the citizenid (never the character name); `issuedBy` = OfficerRef or absent (console);
@@ -169,7 +172,8 @@ request 1 below).
 ## Client (`client/main.lua`)
 
 - `exports('open', function(data, slot))` is ox_inventory's `client.export`; it runs `M.open('item', slot)` in a
-  thread. Refused while dead, in the pause menu, or when `web/build/index.html` is missing (no page → nothing
+  thread. On qb-inventory the use arrives on the server instead (see "Tablet item" below) and the server sends its
+  open result with `fredpd:client:openTablet`; both paths share `M.present` (notification or focus + page + prop). Refused while dead, in the pause menu, or when `web/build/index.html` is missing (no page → nothing
   could answer Esc → never take focus). After the callback: `SetNuiFocus(true, true)`, then
   `SendNUIMessage({ action = 'open', grants, unit, me })` (docs/modules/ui.md), **then** the prop (so streaming
   never delays first paint): `lib.requestAnimDict`/`lib.requestModel`, `CreateObject` (networked per config), attach
@@ -178,19 +182,22 @@ request 1 below).
   without prop. No prop in a vehicle.
 - `close(notifyServer)`: only when open: `SetNuiFocus(false, false)`, `{ action = 'close' }`, prop detached and
   deleted, anim stopped, `fredpd:mdt:closed` unless the server closed it. When closed it does nothing, so logout
-  (`OnPlayerUnload`) or a forceClose never takes focus from another resource's NUI (qbx multicharacter). Focus is
+  (the server's forceClose on `fredpd:bridge:playerUnloaded`) never takes focus from another resource's NUI
+  (multicharacter). Focus is
   released unconditionally only by the NUI `close` callback (our own page asked), the F8 command and resource stop.
 - **Focus traps (§8.3):** NUI `close` callback (Esc, close button; answers `{ ok = true }`), `forceClose`, death
   (`gameEventTriggered` `CEventNetworkEntityDamage` with the own ped dead, `baseevents:onPlayerDied/Killed`,
   state bag `isDead` of `player:<serverId>` — these handlers are added on open and removed on close, so a closed
-  tablet costs nothing), terminal vehicle exit (`lib.onCache('vehicle')`), `QBCore:Client:OnPlayerUnload`, resource
+  tablet costs nothing), terminal vehicle exit (`lib.onCache('vehicle')`), logout (server forceClose), resource
   stop, and the F8 command `fredpd_mdt_close` as a last resort.
 - **NUI callbacks:** one per action in `validate.lua` (except `close`): `lib.callback.await('fredpd:mdt:action',
   false, { action, input })` → `cb(result)`; while closed `{ error = 'unauthorized' }` without a server call;
   nothing / a raise → `{ error = 'unavailable' }`.
-- **Vehicle terminal:** `ox_target:addModel(config.terminal.models, …)` once (again when ox_target restarts,
-  removed on stop); `canInteract` = on-duty leo, seated in that vehicle as driver or front passenger; opens with
-  `mode = 'terminal'` and no prop.
+- **Vehicle terminal:** `FredBridge.target.addModel(config.terminal.models, option)` once (handle kept; again when
+  `FredBridge.target.resource` restarts, `FredBridge.target.remove(handle)` on stop; nothing while the target
+  resource is down); `canInteract` = `FredBridge.framework.getJob()` on-duty leo (hint), seated in that vehicle as
+  driver or front passenger; opens with `mode = 'terminal'` and no prop. qb-target keys the option by its label
+  (`tablet.useTerminal`), ox_target by `fredpd_mdt:terminal`.
 
 ## ox_inventory item: `patches/ox_inventory.10-fredpd-items.patch`
 
@@ -220,6 +227,37 @@ docs/deps-verification.md §8), `client = { export = 'fredpd_mdt.open' }`. Seria
   ```
 - Image: ox_inventory looks for `web/images/pd_tablet.png`; none ships (add one, or the default icon shows).
 
+## Bridge (§C17): qb and ox stacks
+
+fredpd_mdt calls no framework, inventory or target resource directly (checked by `mdt_bridge_test`'s static test).
+
+| Before | Now |
+|---|---|
+| `ox_inventory:GetItemCount` / `GetSlot` / `Search` (open) | `exports.fredpd_core:count` / `find` (`C.itemCount`, `C.findItems`) |
+| `ox_inventory:CanCarryItem` + `AddItem` (issue) | `exports.fredpd_core:add` → false = not added (`C.addItem`), `bridgeInfo().inventory` state for "down" (`C.inventoryUp`) |
+| `QBCore:Server:SetDuty` / `OnJobUpdate` / `OnPlayerUnload` | `fredpd:bridge:dutyChanged` / `jobChanged` / `playerUnloaded` (AddEventHandler, server-local only) |
+| client `QBX.PlayerData.job` | `FredBridge.framework.getJob()` (hint only) |
+| client `QBCore:Client:OnPlayerUnload` | server forceClose on `fredpd:bridge:playerUnloaded` |
+| `ox_target:addModel` / `removeModel` | `FredBridge.target.addModel` / `remove(handle)` |
+| fxmanifest `ox_inventory`, `ox_target`, `qbx_core`, `@qbx_core/modules/playerdata.lua` | removed; `@fredpd_core/bridge/client.lua` |
+
+**Tablet item (both inventories end in `Open.open`):**
+- **qb-inventory:** `server/main.lua` calls `exports.fredpd_core:registerUsable('pd_tablet', fn)` at start (and again
+  when fredpd_core restarts; the bridge itself re-applies it when qb-core/qb-inventory restart). qb-inventory →
+  qb-core usable item → fn(src, slot, info) with the **server-side** slot → `CreateThread` → `Open.useItem(src, slot)`
+  = `Open.open(src, { mode = 'item', slot })` (all checks) → `TriggerClientEvent('fredpd:client:openTablet', src,
+  result)`; the client shows the page or the refusal, and releases the session (`fredpd:mdt:closed`) if it can no
+  longer show it (dead, no NUI bundle, pause menu). A use while the tablet is open is ignored by the client. The item
+  is `pd_tablet` from `patches/qb-core.10-fredpd-items.patch` (`useable = true`, `unique = true`).
+- **ox_inventory:** `registerUsable` is a no-op there; the item keeps `client = { export = 'fredpd_mdt.open' }`
+  (below), i.e. `exports.fredpd_mdt:open` → `lib.callback 'fredpd:mdt:open'` → `Open.open`. Should the ox item ever
+  get `server = { export = 'fredpd_core.useItem' }`, it reaches the same `Open.useItem` flow; the definition must then
+  drop `client.export`, or the item opens twice (the second answer is `errors.rateLimited`).
+
+**Degradation:** inventory stopped → open answers `tablet.unavailable`, issue refuses before writing; target resource
+down → no terminal option (bridge warns once) until it starts (`onClientResourceStart`); framework down → the client
+hint is nil (option hidden), the server still decides via fredpd_core. Nothing errors.
+
 ## Locale
 
 New keys in `locales/pending/mdt.json` (8): `tablet.unregistered`, `tablet.issueTarget`, `tablet.issueNoCharacter`,
@@ -228,11 +266,18 @@ New keys in `locales/pending/mdt.json` (8): `tablet.unregistered`, `tablet.issue
 `officer.unnamed`. `mdt_locale_test` checks every key the code uses exists in sv and en with equal placeholders.
 The Phase 3–5b wiring adds no player-facing text (errors are codes; the NUI localises them), so there is no
 `locales/pending/mdt-wiring.json`.
+The bridge port adds `locales/pending/mdt-bridge.json` (1): `tablet.issueNotAdded`. `tablet.issueCannotCarry` is no
+longer used (no `CanCarryItem` in the bridge); it stays in sv/en for now.
 Note: `tablet.issued` ends with "." after `{name}`, so a name ending in "." shows two dots.
 
 ## Tests
 
-- `lua5.4 tests/lua/run.lua mdt_` — 68 tests: `mdt_validate` (fixtures, JS trim, code points, ints, defaults,
+- `lua5.4 tests/lua/run.lua mdt_` — 81 tests on the **qb** stack (default); `FREDPD_MDT_STACK=ox lua5.4
+  tests/lua/run.lua mdt_` runs the same 81 on qbx_core + ox_inventory + ox_target. The harness routes inventory
+  exports through fredpd_core's **real** `server/bridge.lua` over qb-inventory/qb-core or ox_inventory mocks, and
+  `mdt_client` loads the real `bridge/client.lua` over qb-core + qb-target or qbx_core + ox_target mocks.
+  `mdt_bridge` (11) is the matrix: static no-direct-call check, serial via qb `info` / ox `metadata`, add/no
+  CanCarryItem, item use on both paths, dispatch, client terminal + job hint, each on both stacks. Suites: `mdt_validate` (fixtures, JS trim, code points, ints, defaults,
   refine), `mdt_dispatch` (order, grants vs fixtures, limits, routing with cleaned input, unwrap, close, main.lua
   wiring; RECORDS/INTEL: every valid fixture sample routed to the same-named export with zod's cleaned value, limit
   class and window per action, each grant column removed → unauthorized and not routed, listCharges duty-only,
@@ -252,13 +297,19 @@ Note: `tablet.issued` ends with "." after `{name}`, so a name ending in "." show
 2. Client-created networked prop under `sv_entityLockdown` (set `prop.networked = false` if it is blocked).
 3. Server natives `GetVehiclePedIsIn`, `GetPedInVehicleSeat`, `GetEntityModel` for the terminal check under
    OneSync; that `joaat` (or `GetHashKey`) exists server-side (both handled; hashes compared as unsigned 32-bit).
-4. ox_target raycasts hitting the vehicle the player sits in (the terminal option is only for seated players).
-5. `CEventNetworkEntityDamage` argument 1 = victim; the qbx death state bag key `isDead`.
+4. ox_target **and qb-target** raycasts hitting the vehicle the player sits in (the terminal option is only for
+   seated players); qb-target model options on vehicles while seated.
+5. `CEventNetworkEntityDamage` argument 1 = victim; the death state bag key `isDead` (qbx; whether qb-ambulancejob
+   sets it is unverified — the damage event and baseevents cover qb).
 6. `lib.callback.await` inside `RegisterNUICallback` handlers; `SetNuiFocus` being per resource.
 7. Open → first paint < 300 ms and resmon idle 0.00 / open ≤ 0.05 ms (no threads or timers exist, only handlers).
 8. `exports.<res>:<fn>` for an export the (started) resource does not register raises (caught → `unavailable`),
    and nested arrays/objects (`lines`, `to`) survive NUI → client → server msgpack as Lua sequences/tables.
 9. A 100 000-code-point report body through `lib.callback` (≈ 400 KB worst case) within ox_lib/FiveM event limits.
+10. qb path: qb-core's usable-item callback crossing into fredpd_core's `dispatchUse` and then fredpd_mdt's fn as
+    function references, and `CreateThread` from that callback before the MySQL await; `fredpd:client:openTablet`
+    arriving after qb-inventory closed its NUI (`shouldClose = true`) so focus is not taken back by the inventory.
+11. qb-inventory tooltip for `info.description` / `info.serial` (the text "Serienummer: …" may not show on qb).
 
 ## Decisions and questions for the contract owner
 
@@ -277,6 +328,31 @@ Note: `tablet.issued` ends with "." after `{name}`, so a name ending in "." show
 9. RECORDS_ACTIONS and INTEL_ACTIONS merged (fredpd_records exports coded against §C14's convention — same names —
    while that module is being written; until an export exists the action answers `unavailable`).
 10. `takeAlert` routes to `assignSelf` (§C13's export name).
+
+## Integration requests (bridge port)
+
+1. **fredpd_core (bridge owner):** `canCarry(src, item, count)` would let `/surfplatta` refuse a full inventory before
+   the row insert (qb: `exports['qb-inventory']:CanAddItem`, ox: `CanCarryItem`). Until then add() == false →
+   rollback + `tablet.issueNotAdded`.
+2. **fredpd_core:** `count`/`find`/`add` answer 0/{}/false both for "none" and "inventory raised"; fredpd_mdt tells
+   "stopped" apart via `bridgeInfo().inventory` + `GetResourceState`. A distinct error value (or `available()`)
+   would make that explicit.
+3. **ox_inventory patch owner:** keep `pd_tablet` on `client.export = 'fredpd_mdt.open'` (not both exports; see
+   "Tablet item"). bridge.md open question 4 is answered: qb uses `registerUsable`, ox the client export; both end in
+   `Open.open`.
+4. **Contract owner:** §C12 could record `fredpd:client:openTablet(result)` (server → client, qb item path) next to
+   `fredpd:client:forceClose`.
+5. **Locale merge:** merge `locales/pending/mdt-bridge.json`. `tablet.issueCannotCarry` (sv/en) is unused since the
+   port; keep it for request 1 (a `canCarry` refusal before the row insert) — remove it at merge if request 1 is
+   declined.
+6. **fredpd_core:** the usable-item callback is a function reference into fredpd_mdt. While fredpd_mdt is stopped
+   (fredpd_core running) each qb use of `pd_tablet` calls a dead reference; `dispatchUse`'s pcall catches it and logs
+   an error per use. Restarting fredpd_mdt re-registers and replaces it. Please add `unregisterUsable(item)` or clear
+   registrations whose `GetInvokingResource()` owner stops (`onResourceStop`). Accepted until then.
+7. **Client (documented, no request):** a `fredpd:client:openTablet` answer that arrives while another open (terminal
+   or client export) is in flight: a refusal is shown; a success is kept and shown only if the in-flight open is
+   refused. If both succeed the tablet shows the in-flight one and the server's `Open[src]` is whichever open the
+   server finished last; the session is left alone on purpose (both modes are re-checked per action).
 
 ## Integration requests (Phase 3–5b wiring)
 

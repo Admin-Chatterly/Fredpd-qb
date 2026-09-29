@@ -86,7 +86,7 @@ for name, fn in pairs(SYSTEM_EXPORTS) do
     end)
 end
 
--- "Begär ut allmän handling" at a station (ox_target client, integration request): any player with a character;
+-- "Begär ut allmän handling" at a station (a FredBridge.target box zone on the client, integration request): any player with a character;
 -- rate limited in Releases.createReleaseRequest (1 per 60 s). The station position is not checked (see the module doc).
 if type(lib) == 'table' and type(lib.callback) == 'table' and lib.callback.register then
     lib.callback.register('fredpd:records:releaseRequest', function(source, input)

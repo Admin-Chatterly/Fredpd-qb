@@ -111,12 +111,12 @@ leave**: "assignment changed"), `alertClosed` (`{ id }`), `unitsChanged` (UnitsP
   plus a 750 ms client debounce and an in-flight lock of at most 5 s, released only by the reply to the newest request
   (a late reply to an older one cannot unlock the key while a newer request is pending). Buckets are dropped on
   `playerDropped`.
-- **Units roster**: rebuilt from `GetPlayers()` + `isOnDuty`/`getOfficer` (Discord name + callsign from
-  fredpd_officers; the FiveM account name until the row exists, never the character name) and one query for each
-  officer's newest non-closed alert. Triggers (`AddEventHandler`): `QBCore:Server:SetDuty`,
-  `QBCore:Server:OnJobUpdate`, `QBCore:Server:PlayerLoaded`, `QBCore:Server:OnPlayerUnload`,
-  `qbx_core:server:playerLoggedOut`, `playerDropped`, `fredpd:officerChanged`, take/leave/close, devtools fake units
-  (names verified in docs/deps-verification.md §5; qbx_police has no duty event). Debounce: `SetTimeout`, first
+- **Units roster**: rebuilt from `exports.fredpd_core:getPlayers()` (players with a character, through the §C17
+  bridge) + `isOnDuty`/`getOfficer` (Discord name + callsign from fredpd_officers; the FiveM account name until the
+  row exists, never the character name) and one query for each officer's newest non-closed alert. Triggers
+  (`AddEventHandler`, server-local): fredpd_core's normalised `fredpd:bridge:dutyChanged`, `fredpd:bridge:jobChanged`,
+  `fredpd:bridge:playerLoaded`, `fredpd:bridge:playerUnloaded` (qb-core or qbx_core), `playerDropped`,
+  `fredpd:officerChanged`, take/leave/close, devtools fake units. Debounce: `SetTimeout`, first
   change waits 250 ms, pushes ≥ 2 s apart, an unchanged roster (fingerprint) is not pushed again.
 - **Lua cannot send `null`.** Nullable Alert fields (`description`, `coords`, `street`, `closedBy`, `closedAt`) and
   OfficerRef `callsign`/`unit`, UnitStatus `alertId` are *absent* on every Lua → JS hop (msgpack, and
@@ -125,6 +125,26 @@ leave**: "assignment changed"), `alertClosed` (`{ id }`), `unitsChanged` (UnitsP
   ps-dispatch's presets are **client** exports (docs/deps-verification.md), so with ps-dispatch running the server
   asks the caller's client to run `exports['ps-dispatch']:Shooting()` (the whole patched path); from the console or
   without ps-dispatch it calls `createAlert` with a fake shooting (`source = 'devtools'`).
+
+## Framework bridge (docs/contracts.md §C17)
+
+fredpd_dispatch calls no framework resource (static check in `tests/lua/dispatch_bridge_test.lua`):
+
+| Before (qbx only) | Now (qb and ox stacks) |
+|---|---|
+| roster triggers `QBCore:Server:SetDuty`, `…:OnJobUpdate`, `…:PlayerLoaded`, `…:OnPlayerUnload`, `qbx_core:server:playerLoggedOut` | `fredpd:bridge:dutyChanged`, `jobChanged`, `playerLoaded`, `playerUnloaded` (deduplicated by the bridge; qb-core's drop unload included) |
+| player lists (toasts, roster) from the `GetPlayers()` native | `exports.fredpd_core:getPlayers()` (qb-core `Functions.GetPlayers` / qbx_core `GetQBPlayers`: only players with a character, so civilians in the character menu cost nothing); `{}` + a throttled error if fredpd_core cannot answer |
+| audit actor via qbx_core (fredpd_core) | unchanged code: fredpd_core's audit resolves it through the bridge |
+
+**ps-dispatch on qb-core** needs no FredPD change: it is a qb-core resource (`exports['qb-core']:GetCoreObject()`,
+server/main.lua:6-7; Qbox reaches it through qbx_core's qb-core `provide`). The patch's
+`TriggerEvent('fredpd:dispatch:incoming', data, src)` sits in the framework-independent part of the
+`ps-dispatch:server:notify` handler (after the call is stored, before `broadcastCall`); the QBCore branch only
+decides who gets ps-dispatch's own popups (`QBCore.Functions.GetQBPlayers()` job/duty filter, off by default).
+Verified by `dispatch_bridge_test`: both patches apply to the pinned commit in a temporary copy, the patched
+`server/main.lua` runs with qb-core's `GetCoreObject`, a stored Shooting() fires the event with the reporter, merged
+repeats and invalid reports do not, `shared/alert_input.lua` normalises the data, and with
+`setr fredpd_psdispatch_ui true` the popups go to on-duty leo players only.
 
 ## ps-dispatch patches (apply inside `resources/[upstream]/ps-dispatch`)
 
@@ -164,7 +184,12 @@ pinned commit d488316), then `git -C "resources/[upstream]/ps-dispatch" checkout
 
 ## Tests
 
-- `lua5.4 tests/lua/run.lua dispatch` → **51 passed** (`dispatch_input_test` 17, `dispatch_server_test` 24 against
+- **Stacks**: `lua5.4 tests/lua/run.lua dispatch_` → **80 passed** with the default qb stack and with
+  `FREDPD_STACK=ox` (qbx_core); `dispatch_server_test` runs the real fredpd_core bridge over the stack's framework mock
+  (getPlayers, audit actor, the framework's `QBCore:Server:SetDuty` → `fredpd:bridge:dutyChanged` → roster).
+  `dispatch_bridge_test` (11): static check, 4 server tests re-run on both stacks, the ps-dispatch qb-core path (2).
+  `dispatch_stack_test` (2) is the shared stack helper for bolo/dispatch/breach tests (`FREDPD_STACK`).
+- Earlier count: `lua5.4 tests/lua/run.lua dispatch` → **51 passed** (`dispatch_input_test` 17, `dispatch_server_test` 24 against
   MariaDB database `fredpd_test_dispatch_lua`, sessions at `+02:00`, `dispatch_client_test` 10). Covers hostile ps-dispatch
   data (2 MB strings, NaN/inf/out-of-range coords, priority 99/0, missing fields, invalid UTF-8, EMS calls), offset
   alerts (displayCoords on the wire, true coords only in meta), the reporter rate limit (EMS-only calls not counted),

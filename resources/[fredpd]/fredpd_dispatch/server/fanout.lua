@@ -40,18 +40,24 @@ end
 -- fredpd_core checks (exports; the core owns grants and duty, §C9)
 
 --- hasGrant(src, 'mdt_page', 'alerts') and on duty. Grant first: it is an in-memory lookup, while isOnDuty asks
---- qbx_core for the player, so civilians cost one table lookup each.
+--- the framework (through fredpd_core's bridge) for the player, so civilians cost one table lookup each.
 function M.isAlertOfficer(src)
     local core = exports.fredpd_core
     return core:hasGrant(src, M.ALERTS_GRANT[1], M.ALERTS_GRANT[2]) == true and core:isOnDuty(src) == true
 end
 
---- Online player ids (integers).
+--- Online players with a character (integers, ascending): fredpd_core's bridge getPlayers() (docs/contracts.md
+--- §C17; qb-core Functions.GetPlayers / qbx_core GetQBPlayers). {} while fredpd_core cannot answer.
 function M.players()
+    local ok, list = pcall(function() return exports.fredpd_core:getPlayers() end)
+    if not ok or type(list) ~= 'table' then
+        M.logThrottled('players', 'error', 'fredpd_core getPlayers failed: %s', tostring(list))
+        return {}
+    end
     local out = {}
-    for _, id in ipairs(GetPlayers()) do
-        local src = tonumber(id)
-        if src then out[#out + 1] = src end
+    for _, id in ipairs(list) do
+        local src = math.tointeger(tonumber(id))
+        if src and src > 0 then out[#out + 1] = src end
     end
     return out
 end

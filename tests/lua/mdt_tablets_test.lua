@@ -97,7 +97,8 @@ tests['1 issue: row, item metadata, audit, notification; the tablet then opens']
         t.eq(row.revoked, 0)
         t.ok(row.age >= 0 and row.age < 60, 'issued_at is UTC (session +02:00): age ' .. tostring(row.age))
 
-        local add = env.callsTo('ox_inventory', 'AddItem')[1]
+        local add = env.callsTo('inventory', 'AddItem')[1]
+        t.eq(add.impl, env.inventory, 'through fredpd_core\'s bridge to the selected inventory')
         t.eq(add.src, 5)
         t.eq(add.input, { item = 'pd_tablet', count = 1,
             metadata = { serial = serial, owner = 'MDT10005', description = 'Serienummer: ' .. serial } })
@@ -119,21 +120,27 @@ tests['1 issue: row, item metadata, audit, notification; the tablet then opens']
     end)
 end
 
-tests['2 issue refusals: unknown target, no character, cannot carry, AddItem failure rolls back'] = function(t)
+tests['2 issue refusals: unknown target, no character, inventory down, add() false (full) rolls back'] = function(t)
     withDb(t, function(_, env, mods)
         local Tablets = mods['server.tablets']
         t.eq({ Tablets.issue(2, 77) }, { false, 'errors.notFound' })
         t.eq({ Tablets.issue(2, 0) }, { false, 'errors.notFound' })
         t.eq({ Tablets.issue(2, 'abc') }, { false, 'errors.notFound' })
         t.eq({ Tablets.issue(2, 9) }, { false, 'tablet.issueNoCharacter' })
+        env.resources[env.inventory] = 'stopped'
+        t.eq({ Tablets.issue(2, 5) }, { false, 'tablet.unavailable' })
+        t.eq(#env.callsTo('inventory', 'AddItem'), 0, 'refused before any write')
+        env.resources[env.inventory] = 'started'
+        -- No CanCarryItem in the bridge: a full inventory is add() == false, after the insert, which is rolled back.
         env.players[5].full = true
-        t.eq({ Tablets.issue(2, 5) }, { false, 'tablet.issueCannotCarry' })
+        t.eq({ Tablets.issue(2, 5) }, { false, 'tablet.issueNotAdded' })
         env.players[5].full = nil
         env.addItemFails = true
-        t.eq({ Tablets.issue(2, 5) }, { false, 'tablet.issueFailed' })
+        t.eq({ Tablets.issue(2, 5) }, { false, 'tablet.issueNotAdded' })
+        t.eq(#env.callsTo('inventory', 'AddItem'), 2)
         t.eq(scalar("SELECT COUNT(*) FROM fredpd_tablets WHERE owner_citizenid = 'MDT10005'"), 0, 'row removed again')
         t.eq(#auditRows('tablet.issue'), 0, 'nothing audited')
-        for _, key in ipairs({ 'tablet.issueNoCharacter', 'tablet.issueCannotCarry', 'tablet.issueFailed' }) do
+        for _, key in ipairs({ 'tablet.issueNoCharacter', 'tablet.issueNotAdded', 'tablet.unavailable' }) do
             t.ok(H.SV[key], key .. ' has a Swedish text')
         end
     end)
@@ -152,7 +159,7 @@ tests['3 issue: serial collisions are retried; five in a row give up'] = functio
             'an existing tablet is never overwritten')
         Tablets.newSerial = function() return 'SP-AAAA-0001' end
         t.eq({ Tablets.issue(2, 5) }, { false, 'tablet.issueFailed' })
-        t.eq(#env.callsTo('ox_inventory', 'AddItem'), 1, 'no item for the failed attempt')
+        t.eq(#env.callsTo('inventory', 'AddItem'), 1, 'no item for the failed attempt')
         Tablets.newSerial = original
         -- The generator itself: prefix, groups, alphabet without I, O, 0, 1.
         for _ = 1, 200 do t.ok(Tablets.newSerial():find(SERIAL), 'format') end

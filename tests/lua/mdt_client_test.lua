@@ -2,12 +2,17 @@
 -- fredpd_mdt/client/main.lua with FiveM/ox_lib mocked: open (server callback -> NUI focus + `open` message -> prop on
 -- bone 28422 with the tablet animation, model and dict released), refusals as Swedish notifications with nothing
 -- opened, every close path of IMPLEMENTATION.md §8.3 (NUI close, forceClose, death, vehicle exit for the terminal,
--- logout, resource stop), death handlers only while open, the vehicle terminal (ox_target option), pushes only while
--- open, and one NUI callback per tablet action forwarding { action, input } to the dispatcher.
+-- server-driven logout, resource stop), death handlers only while open, the vehicle terminal (a FredBridge.target
+-- option), the server-side item use (fredpd:client:openTablet, qb-inventory), pushes only while open, and one NUI
+-- callback per tablet action forwarding { action, input } to the dispatcher. The REAL fredpd_core bridge/client.lua is
+-- loaded first (as '@fredpd_core/bridge/client.lua' is), over qb-core + qb-target or qbx_core + ox_target mocks
+-- (H.STACK, FREDPD_MDT_STACK; tests/lua/mdt_bridge_test.lua runs a smoke set on both).
 -- Run: lua5.4 tests/lua/run.lua mdt_client
 local H = dofile('./resources/[fredpd]/fredpd_mdt/test/harness.lua')
 
-local GLOBALS = { 'lib', 'cache', 'QBX', 'LocalPlayer', 'SetNuiFocus', 'SendNUIMessage', 'RegisterNUICallback',
+local CORE = './resources/[fredpd]/fredpd_core/'
+
+local GLOBALS = { 'lib', 'cache', 'FredBridge', 'GetConvar', 'LocalPlayer', 'SetNuiFocus', 'SendNUIMessage', 'RegisterNUICallback',
     'RegisterNetEvent', 'AddEventHandler', 'RemoveEventHandler', 'AddStateBagChangeHandler',
     'RemoveStateBagChangeHandler', 'TriggerServerEvent', 'CreateThread', 'IsPauseMenuActive', 'IsEntityDead',
     'IsPedFatallyInjured', 'IsPedInAnyVehicle', 'DoesEntityExist', 'DetachEntity', 'DeleteEntity', 'IsEntityPlayingAnim',
@@ -21,17 +26,62 @@ local PAYLOAD = {
     me = { citizenid = 'MDT10001', displayName = 'Anna B.', callsign = 'IGV-07' },
 }
 
-local function withClient(fn)
+--- The terminal option as registered with the stack's target resource, driven the way that resource drives it
+--- (qb-target: canInteract(entity, distance, data), action(entity); ox_target: canInteract(entity, distance, coords),
+--- onSelect(data)).
+local function terminalOption(env)
+    local reg = env.targets[#env.targets]
+    local o = reg and reg.options[1]
+    if not o then return nil end
+    return {
+        raw = o, label = o.label, name = o.name, distance = reg.distance or o.distance,
+        canInteract = function(entity) return o.canInteract(entity, 1.0, nil) end,
+        select = function(entity)
+            if o.action then return o.action(entity) end
+            return o.onSelect({ entity = entity, coords = { x = 1.0, y = 2.0, z = 3.0 }, distance = 1.0 })
+        end,
+    }
+end
+
+local function withClient(fn, stack)
+    stack = stack or H.STACK
     local saved = {}
     for _, n in ipairs(GLOBALS) do saved[n] = { rawget(_G, n) } end
     local env = { log = {}, nui = {}, focus = {}, nuiCallbacks = {}, net = {}, handlers = {}, removed = 0, bags = {},
         server = {}, notifies = {}, calls = {}, objects = {}, deleted = {}, released = {}, dicts = {}, anims = {},
-        stopped = 0, targets = {}, targetRemoved = 0, onCache = {}, seats = {}, exported = {}, printed = {} }
+        stopped = 0, targets = {}, targetRemoved = 0, onCache = {}, seats = {}, exported = {}, printed = {},
+        stack = stack, states = {},
+        pd = { citizenid = 'MDT10001', job = { name = 'police', label = 'Polis', type = 'leo', onduty = true,
+            grade = { name = 'Assistent', level = 1 } } } }
+    local cfg = H.STACKS[stack].cfg
+    env.targetResource = cfg.target
+    local convars = { fredpd_bridge_framework = cfg.framework, fredpd_bridge_target = cfg.target,
+        fredpd_bridge_doorlock = cfg.doorlock }
+    local playerData = { GetPlayerData = function() return H.copy(env.pd) end }
+    local upstream = {}
+    if stack == 'qb' then
+        -- qb-target a3ea78b2 registration.lua: AddTargetModel(models, { options, distance }), removal by label.
+        upstream['qb-target'] = {
+            AddTargetModel = function(_, models, params)
+                env.targets[#env.targets + 1] = { models = models, options = params.options, distance = params.distance }
+            end,
+            RemoveTargetModel = function(_, _, labels) env.targetRemoved = env.targetRemoved + 1; env.removedName = labels[1] end,
+        }
+        upstream['qb-core'] = playerData
+        upstream['qb-doorlock'] = { GetDoorList = function() return {} end }
+    else
+        upstream.ox_target = {
+            addModel = function(_, models, options) env.targets[#env.targets + 1] = { models = models, options = options } end,
+            removeModel = function(_, _, names) env.targetRemoved = env.targetRemoved + 1; env.removedName = names[1] end,
+        }
+        upstream.qbx_core = playerData
+    end
     env.reply = function(name) if name == 'fredpd:mdt:open' then return H.copy(PAYLOAD) end return { ok = 'x' } end
     local function log(what) env.log[#env.log + 1] = what end
     local globals = {
         cache = { ped = 501, vehicle = false, serverId = 7 },
-        QBX = { PlayerData = { job = { type = 'leo', onduty = true } } },
+        FredBridge = nil,
+        GetConvar = function(name, default) return convars[name] or default end,
         LocalPlayer = { state = {} },
         SetNuiFocus = function(a, b) env.focus[#env.focus + 1] = { a, b }; log('focus:' .. tostring(a)) end,
         SendNUIMessage = function(msg) env.nui[#env.nui + 1] = msg; log('nui:' .. msg.action) end,
@@ -84,16 +134,18 @@ local function withClient(fn)
             log('anim')
         end,
         GetPedInVehicleSeat = function(_, seat) return env.seats[seat] or 0 end,
-        GetResourceState = function() return 'started' end,
-        exports = setmetatable({
-            ox_target = {
-                addModel = function(_, models, options) env.targets[#env.targets + 1] = { models = models, options = options } end,
-                removeModel = function(_, _, name) env.targetRemoved = env.targetRemoved + 1; env.removedName = name end,
-            },
-        }, { __call = function(_, name, f) env.exported[name] = f end }),
+        GetResourceState = function(res) return env.states[res] or 'started' end,
+        exports = setmetatable(upstream, { __call = function(_, name, f) env.exported[name] = f end }),
         GetCurrentResourceName = function() return 'fredpd_mdt' end,
         LoadResourceFile = function(res, path)
             if res == 'fredpd_mdt' and path == 'web/build/index.html' and not env.noUi then return '<html></html>' end
+            if res == 'fredpd_core' then -- bridge/client.lua reads its implementation files from fredpd_core
+                local f = io.open(CORE .. path, 'rb')
+                if not f then return nil end
+                local text = f:read('a')
+                f:close()
+                return text
+            end
             return nil
         end,
         RegisterCommand = function(name, cb, restricted) env.commands = env.commands or {}; env.commands[name] = { cb, restricted } end,
@@ -120,6 +172,8 @@ local function withClient(fn)
     for k, v in pairs(globals) do rawset(_G, k, v) end
     local ok, err = pcall(function()
         H.forget()
+        -- fxmanifest client_scripts: '@fredpd_core/bridge/client.lua' first, then client/main.lua.
+        env.FB = dofile(CORE .. 'bridge/client.lua')
         env.M = H.run('client/main.lua')
         fn(env, env.M)
     end)
@@ -263,7 +317,7 @@ tests['5 death closes; death handlers exist only while the tablet is open'] = fu
         env.LocalPlayer = nil
         LocalPlayer.state.isDead = true
         useItem(env)
-        t.eq(M.isOpen(), false, 'qbx isDead state')
+        t.eq(M.isOpen(), false, 'isDead player state')
         LocalPlayer.state.isDead = nil
         -- The qbx isDead state bag and baseevents close too.
         useItem(env)
@@ -277,14 +331,15 @@ tests['5 death closes; death handlers exist only while the tablet is open'] = fu
     end)
 end
 
-tests['6 vehicle terminal: ox_target option, no prop, closes on leaving the vehicle'] = function(t)
+tests['6 vehicle terminal: FredBridge.target option, no prop, closes on leaving the vehicle'] = function(t)
     withClient(function(env, M)
         local target = env.targets[1]
-        t.ok(target, 'ox_target addModel at start')
+        t.ok(target, env.targetResource .. ' addModel at start (through FredBridge.target)')
         t.ok(#target.models >= 5, 'police models from config')
-        local option = target.options[1]
-        t.eq(option.name, 'fredpd_mdt:terminal')
+        local option = terminalOption(env)
+        if env.stack == 'ox' then t.eq(option.name, 'fredpd_mdt:terminal') end -- qb-target keys options by label
         t.eq(option.label, 'Använd fordonsdatorn')
+        t.eq(option.distance, 2.5)
         t.eq(option.canInteract(4242), false, 'not seated in it')
         cache.vehicle = 4242
         env.seats[-1] = 501
@@ -293,12 +348,13 @@ tests['6 vehicle terminal: ox_target option, no prop, closes on leaving the vehi
         t.eq(option.canInteract(4242), false, 'back seat')
         env.seats[1], env.seats[0] = 0, 501
         t.eq(option.canInteract(4242), true, 'front passenger')
-        QBX.PlayerData.job.onduty = false
+        env.net['QBCore:Client:SetDuty'](false) -- kept current by bridge/client.lua (both frameworks fire it)
         t.eq(option.canInteract(4242), false, 'off duty')
-        QBX.PlayerData.job.onduty = true
+        env.net['QBCore:Client:SetDuty'](true)
+        t.eq(option.canInteract(4242), true, 'on duty again')
 
         env.inVehicle = true
-        option.onSelect({ entity = 4242 })
+        option.select(4242)
         t.eq(env.calls[1].req, { mode = 'terminal' })
         t.eq(M.isOpen(), true)
         t.eq(next(env.objects), nil, 'no prop in the terminal')
@@ -319,7 +375,7 @@ tests['6 vehicle terminal: ox_target option, no prop, closes on leaving the vehi
         cache.vehicle = 4242
         env.onAwait = function() cache.vehicle = false end
         local before = #env.server
-        option.onSelect({ entity = 4242 })
+        option.select(4242)
         t.eq(M.isOpen(), false)
         t.eq(env.server[before + 1].name, 'fredpd:mdt:closed')
     end)
@@ -384,7 +440,7 @@ tests['8 one NUI callback per action, forwarding { action, input }; nothing is s
     end)
 end
 
-tests['9 resource stop, logout and ox_target restarts'] = function(t)
+tests['9 resource stop, server-driven logout and target resource restarts'] = function(t)
     withClient(function(env, M)
         useItem(env)
         local prop = env.attached.entity
@@ -395,21 +451,29 @@ tests['9 resource stop, logout and ox_target restarts'] = function(t)
         t.eq(env.focus[#env.focus], { false, false })
         t.eq(env.deleted[prop], true)
         t.eq(env.targetRemoved, 1)
-        t.eq(env.removedName, 'fredpd_mdt:terminal')
-        -- ox_target restarted: the option is added again.
+        t.eq(env.removedName, env.stack == 'ox' and 'fredpd_mdt:terminal' or 'Använd fordonsdatorn',
+            'removed by name (ox_target) / label (qb-target)')
+        -- The target resource restarted: the option is added again (once).
         for _, h in ipairs(env.handlers) do
-            if h.name == 'onClientResourceStart' then h.fn('ox_target') end
+            if h.name == 'onClientResourceStart' then h.fn(env.targetResource) end
         end
         t.eq(#env.targets, 2)
+        for _, h in ipairs(env.handlers) do
+            if h.name == 'onClientResourceStart' then h.fn('some_other_resource') end
+        end
+        t.eq(#env.targets, 2, 'other resources do not re-add')
         useItem(env)
-        env.net['QBCore:Client:OnPlayerUnload']()
+        -- Logout: the server (fredpd:bridge:playerUnloaded) sends forceClose; the client listens to no framework event.
+        env.net['QBCore:Client:OnPlayerUnload']() -- only bridge/client.lua's job hint listens to this
+        t.eq(M.isOpen(), true, 'no framework unload handler in fredpd_mdt')
+        env.net['fredpd:client:forceClose'](nil)
         t.eq(M.isOpen(), false, 'logout closes')
-        -- Closed already: logout/forceClose must not touch focus (another NUI, e.g. multicharacter, may hold it).
+        -- Closed already: forceClose must not touch focus (another NUI, e.g. multicharacter, may hold it).
         local focusCalls = #env.focus
-        env.net['QBCore:Client:OnPlayerUnload']()
+        env.net['fredpd:client:forceClose'](nil)
         env.net['fredpd:client:forceClose']('tablet.revoked')
         t.eq(#env.focus, focusCalls, 'no focus release while closed')
-        t.eq(#env.server, 1, 'only the first logout told the server')
+        t.eq(#env.server, 0, 'server-driven closes send nothing back')
     end)
 end
 
@@ -460,4 +524,90 @@ tests['10 prop: closed while streaming releases the model; a failed load still o
     end)
 end
 
+tests['12 server-side item use (qb-inventory): fredpd:client:openTablet shows the server\'s answer, same as the callback'] = function(t)
+    withClient(function(env, M)
+        env.net['fredpd:client:openTablet'](H.copy(PAYLOAD))
+        t.eq(#env.calls, 0, 'no second server round trip: the server already checked')
+        t.eq(M.isOpen(), true)
+        t.eq(env.nui[1], { action = 'open', grants = PAYLOAD.grants, unit = 'igv', me = PAYLOAD.me })
+        t.ok(env.attached, 'prop in item mode')
+        -- A second use while open is ignored (the server session stays).
+        env.net['fredpd:client:openTablet'](H.copy(PAYLOAD))
+        t.eq(#env.nui, 1)
+        t.eq(#env.server, 0)
+        M.close(true)
+        -- Refusal from the server: Swedish notification, nothing opens.
+        env.net['fredpd:client:openTablet']({ error = 'tablet.revoked' })
+        t.eq(M.isOpen(), false)
+        t.eq(env.notifies[#env.notifies], { type = 'error', description = 'Surfplattan är spärrad. Kontakta ledningen.' })
+        env.net['fredpd:client:openTablet']('junk')
+        t.eq(M.isOpen(), false)
+        -- Dead by the time the answer arrives: not shown, the server's session is released.
+        local before = #env.server
+        env.dead = true
+        env.net['fredpd:client:openTablet'](H.copy(PAYLOAD))
+        t.eq(M.isOpen(), false)
+        t.eq(env.server[before + 1], { name = 'fredpd:mdt:closed', args = {} })
+    end)
+    withClient(function(env, M)
+        env.noUi = true
+        env.net['fredpd:client:openTablet'](H.copy(PAYLOAD))
+        t.eq(M.isOpen(), false)
+        t.eq(#env.focus, 0, 'never focus without a page')
+        t.eq(env.server, { { name = 'fredpd:mdt:closed', args = {} } })
+        t.eq(env.notifies[1], { type = 'error', description = 'Du kan inte använda surfplattan just nu.' })
+    end)
+end
+
+tests['13 target resource down at start: no terminal, no error; added once it starts'] = function(t)
+    withClient(function(env, M)
+        t.eq(#env.targets, 1)
+        env.states[env.targetResource] = 'stopped'
+        for _, h in ipairs(env.handlers) do
+            if h.name == 'onClientResourceStop' then h.fn(env.targetResource) end
+        end
+        t.eq(M.addTerminal(), false, 'down: nothing added, no raise')
+        env.states[env.targetResource] = 'started'
+        for _, h in ipairs(env.handlers) do
+            if h.name == 'onClientResourceStart' then h.fn(env.targetResource) end
+        end
+        t.eq(#env.targets, 2)
+        t.eq(M.addTerminal(), false, 'already added: not twice')
+        t.eq(#env.targets, 2)
+    end)
+end
+
+tests['14 server-side item answer while another open is in flight: refusal shown, success kept for a refused open'] = function(t)
+    withClient(function(env, M)
+        -- Refusal arriving mid-flight is shown; the in-flight open still wins.
+        env.onAwait = function() env.net['fredpd:client:openTablet']({ error = 'tablet.notOnDuty' }) end
+        useItem(env)
+        t.eq(env.notifies[1], { type = 'error', description = H.SV['tablet.notOnDuty'] })
+        t.eq(M.isOpen(), true)
+        t.eq(#env.nui, 1)
+        M.close(true)
+        -- Success arriving mid-flight while the in-flight open succeeds: the in-flight one is shown, once.
+        env.onAwait = function() env.net['fredpd:client:openTablet'](H.copy(PAYLOAD)) end
+        local nuiBefore, serverBefore = #env.nui, #env.server
+        useItem(env)
+        t.eq(M.isOpen(), true)
+        t.eq(#env.nui, nuiBefore + 1)
+        t.eq(#env.server, serverBefore, 'the server session is left alone')
+        M.close(true)
+        -- Success arriving mid-flight while the in-flight open is refused: the server-side item session is shown.
+        env.reply = function() return { error = 'errors.rateLimited' } end
+        nuiBefore = #env.nui
+        useItem(env)
+        t.eq(M.isOpen(), true)
+        t.eq(env.nui[#env.nui], { action = 'open', grants = PAYLOAD.grants, unit = 'igv', me = PAYLOAD.me })
+        t.eq(#env.nui, nuiBefore + 1)
+        M.close(true)
+        env.onAwait = nil
+        -- Nothing queued is left over for a later refused open.
+        useItem(env)
+        t.eq(M.isOpen(), false)
+    end)
+end
+
+if ... == 'mdt_client_test' then return { withClient = withClient, terminalOption = terminalOption, tests = tests } end
 return tests

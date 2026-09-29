@@ -2,7 +2,7 @@
 # Module: fredpd_breach + housing adapters
 
 Tasks 6.1 (breach, scene evidence) and 6.2 (housing adapters). Implements IMPLEMENTATION.md §5.6 and
-docs/contracts.md §C16 (`tool:ram`, on duty, locked ox_doorlock door → progress → unlock; audited `breach.door`;
+docs/contracts.md §C16 (`tool:ram`, on duty, locked door (qb-doorlock or ox_doorlock via the §C17 bridge) → progress → unlock; audited `breach.door`;
 server-only export `sceneEvidence(kind, coords, suspectSrc)`, kinds = `SceneKindSchema` in
 `packages/types/src/evidence.ts`).
 
@@ -10,30 +10,41 @@ server-only export `sceneEvidence(kind, coords, suspectSrc)`, kinds = `SceneKind
 
 | File | Role |
 |---|---|
-| `resources/[fredpd]/fredpd_breach/fxmanifest.lua` | cerulean, lua54, `ox_lib 'locale'`; deps ox_lib, ox_doorlock, ox_inventory, ox_target, fredpd_core |
+| `resources/[fredpd]/fredpd_breach/fxmanifest.lua` | cerulean, lua54, `ox_lib 'locale'`; deps ox_lib, fredpd_core; client `@fredpd_core/bridge/client.lua` first |
 | `fredpd_breach/config.lua` | item, grant, ram prop (placeholder), anim candidates, timings, distance, `breachEvidence`, scene cooldown/bounds |
 | `fredpd_breach/config/scene_evidence.lua` | §5.6 table keyed by SceneKind (server-only) |
 | `fredpd_breach/server/breach.lua` | `start` / `finish` (token flow), `forget` on drop |
 | `fredpd_breach/server/scene.lua` | `sceneEvidence` validation, cooldown, evidences call, audit |
-| `fredpd_breach/server/main.lua` | callbacks `fredpd:breach:start`, `fredpd:breach:finish`, export `sceneEvidence`, `playerDropped` |
-| `fredpd_breach/client/main.lua` | door list, ox_target option, progress bar, grant copy |
+| `fredpd_breach/server/main.lua` | callbacks `fredpd:breach:start`, `fredpd:breach:finish`, export `sceneEvidence`, `playerDropped`, `fredpd:bridge:playerLoaded/Unloaded` → client `fredpd:breach:client:character` |
+| `fredpd_breach/client/main.lua` | door list (`FredBridge.doorlock`), one box zone per door (`FredBridge.target`), progress bar, grant copy |
 | `fredpd_core/adapters/housing/ps_housing.lua` | ps-housing adapter (no longer a stub) |
 | `fredpd_core/adapters/housing/ox_doorlock_only.lua` + `.json` | mapping adapter (no longer a stub) |
 | `fredpd_core/adapters/housing/none.lua`, `qbx_properties.lua` | + `getAddress` helper; qbx_properties stays a stub (no API) |
-| `patches/ox_inventory.30-breach-items.patch` | item `pd_ram` (after patches 10 and 20) |
+| `patches/ox_inventory.30-breach-items.patch` | item `pd_ram` for ox_inventory (after patches 10 and 20); qb: `patches/qb-core.10-fredpd-items.patch` (bridge module) |
 | `locales/pending/breach.json` | 5 new keys |
-| `tests/lua/breach_server_test.lua`, `breach_client_test.lua`, `housing_adapter_test.lua` | 33 + 7 + 8 tests |
+| `tests/lua/breach_server_test.lua`, `breach_client_test.lua`, `breach_bridge_test.lua`, `housing_adapter_test.lua` | 39 + 12 + 21 + 8 tests (see Tests) |
 
 ## Breach flow
 
-1. **Client, once at start**: `exports.ox_target:addGlobalObject({ 'Forcera dörr' })`; door list from ox_doorlock's own
-   callback `lib.callback('ox_doorlock:getDoors')`; grant copy from `fredpd:getMyGrants` (+ `fredpd:client:grantsChanged`,
-   `QBCore:Client:OnPlayerLoaded`). No loop. `canInteract(entity)`: `Entity(entity).state.doorId` (set by ox_doorlock
-   on the door entities it manages) → door state 1 in the local list → `Grants.has(copy, 'tool', 'ram')` →
-   `ox_inventory:GetItemCount('pd_ram') > 0`. All hints.
+1. **Client** (through `FredBridge`, docs/contracts.md §C17): door list `FredBridge.doorlock.listDoors()` (in a
+   thread; ox_doorlock answers through its server callback, qb-doorlock from its client `GetDoorList`) at start, when
+   the doorlock resource restarts, and `config.doorReloadDelayMs` (2 s) after the character loads (the server sends
+   `fredpd:breach:client:character(true)` on `fredpd:bridge:playerLoaded`; qb-doorlock fills its client list from a
+   callback on the same load); kept current by `FredBridge.doorlock.onDoorChanged` (a change for an unknown door
+   re-reads the list once). Grant copy from `fredpd:getMyGrants` (+ `fredpd:client:grantsChanged`, re-read on load).
+   While the copy holds `tool:ram`, one `FredBridge.target.addBoxZone('fredpd_breach:door:<id>', { coords = door
+   coords, size = config.doorZoneSize })` per door with the option "Forcera dörr"; without the grant (civilians) no
+   zones at all; zone name `fredpd_breach:door:<type>:<id>` so qb-doorlock keys `1` and `'1'` never collide;
+   logout (`character(false)`) removes them. No loop. `canInteract`: door locked in the local list →
+   `Grants.has(copy, 'tool', 'ram')`. All hints. (Before the bridge: one ox_target global object option reading
+   ox_doorlock's `Entity(entity).state.doorId` statebag, which qb-doorlock does not have.)
 2. **Server `fredpd:breach:start(doorId)`**: `local src = source` → grant `tool:ram` → on duty → rate limit (1/s) and
-   cooldown (10 s after a successful breach) → door id integer 1..1e6 → `ox_inventory:GetItemCount(src, 'pd_ram') > 0`
-   → `ox_doorlock:getDoor(id)` exists, is not in `config.denyDoors` (→ `denied`) and `state == 1` → `#(GetEntityCoords(GetPlayerPed(src)) - door.coords) <= 3.0`.
+   cooldown (10 s after a successful breach) → door id (integer 1..1e6, also as a numeric string, or a qb-doorlock
+   string key of ≤ 64 bytes of valid UTF-8 without control characters, so `häktet_1` works; a numeric-string key such
+   as `'1'` is read as the integer 1) → inventory resource running (`bridgeInfo().inventory`, else `unavailable`
+   `inventory`) and `exports.fredpd_core:count(src, 'pd_ram') > 0` → doorlock running (else `unavailable` `doorlock`)
+   and `exports.fredpd_core:getDoor(id)` exists, is not in `config.denyDoors` (→ `denied`) and `locked` →
+   `#(GetEntityCoords(GetPlayerPed(src)) - door.coords) <= 3.0`.
    Returns `{ ok, data = { token (32 hex), doorId, durationMs = 4000 } }`. One live token per player (a new start
    replaces it); expired tokens are pruned on each start (no timer).
 3. **Client**: `lib.progressBar` 4 s, `canCancel`, movement/combat disabled, `prop` = `config.ramModel` (ox_lib
@@ -42,26 +53,31 @@ server-only export `sceneEvidence(kind, coords, suspectSrc)`, kinds = `SceneKind
 4. **Server `fredpd:breach:finish(token)`**: token must be 32 hex; per-player rate limit (`finishRateMs` 250 ms, i.e.
    4/s, before the token lookup; a rate-limited attempt does not consume the token); token must exist and belong to `src` (another player's token →
    `not_found`, left untouched); consumed; `> 8 s` → `expired`; `< progressMs - 500 ms` → `too_early` (the bar cannot be
-   skipped); grant, duty, item, deny list, locked, distance again → `exports.ox_doorlock:setDoorState(id, 0)` → audit
+   skipped); grant, duty, item, deny list, locked, distance again → `exports.fredpd_core:setLocked(id, false, src)` → audit
    `breach.door` (target `door`/id, meta `{ doorId, name, coords }`) → optional `config.breachEvidence`.
 
 Error codes (`{ ok = false, error, reason }`): `unauthorized` (grant/off_duty), `rate_limited` (rate/cooldown),
 `validation` (door/denied/no_item/not_locked/too_far/too_early/token), `not_found` (door/token), `expired`, `unavailable`.
 The client maps each to Swedish text (`breach.*`, `errors.*`; `denied` → `breach.notSupported`).
 
-**Deny list.** By default every ox_doorlock door can be breached, including the station's own cell, armory and
-evidence doors (a `tool:ram` holder could force them). `config.denyDoors` lists doors that can never be breached: an
-ox_doorlock id (number), an exact door name (string) or a Lua pattern on the name (`{ pattern = '^mrpd_evidence' }`).
+**Deny list.** By default every door of the doorlock resource can be breached, including the station's own cell, armory and
+evidence doors (a `tool:ram` holder could force them). `config.denyDoors` lists doors that can never be breached: a
+door id (number; qb-doorlock string keys too), an exact door name (string; qb-doorlock: `doorLabel`) or a Lua pattern
+on the name (`{ pattern = '^mrpd_evidence' }`).
 It is checked on the server at start and again at finish. It is empty by default because door names are
 server-specific; server owners should add their station's secure doors. The client still shows the option on a
 denied door (the list is not used as a client hint); selecting it answers "Dörren kan inte forceras."
 
-**Item missing.** `Breach.checkItem()` at start: `exports.ox_inventory:Items('pd_ram') == nil` → one warning; starts
-then answer `no_item` (GetItemCount returns 0 for unknown items, `modules/inventory/server.lua:2324-2326`).
+**Item missing.** `Breach.checkItem()` at start (and once on the first `no_item`): the item definition files of the
+selected stack are read with `LoadResourceFile` — `<bridgeInfo().inventory>/data/items.lua` (ox_inventory) and
+`<bridgeInfo().framework>/shared/items.lua` (qb-core; qb-inventory has no item file) — and when a file exists but
+defines no `pd_ram` (`name = 'pd_ram'` / `['pd_ram'] =`) → one warning; starts then answer `no_item` (both inventories
+count unknown items as 0). No file readable → no verdict, no warning.
 
-**Why the export and not `TriggerEvent('ox_doorlock:setState', …)`**: both skip ox_doorlock's own authorisation from
-the server (docs/deps-verification.md §7); the export returns `true/false`, so a failure is reported
-(`unavailable`/`doorlock`) instead of being audited as a success.
+**Why the bridge `setLocked` (ox: export `setDoorState`; qb: the patched `setDoorState`)**: both skip the doorlock's
+own authorisation from the server (docs/deps-verification.md §7); they return `true/false`, so a failure is reported
+(`unavailable`/`doorlock`) instead of being audited as a success. `src` is passed so qb-doorlock plays its door
+animation for the officer. Without the qb-doorlock patch the bridge warns once and `getDoor` is nil → `not_found`.
 
 ## Scene evidence
 
@@ -125,6 +141,28 @@ ps-housing's own zone/target) and ps-housing exposes no export to open or raid a
 event `ps-housing:server:raidProperty`, which needs a player source, job grade ≥ 3 and its own `police_stormram` item.
 Shell raids therefore stay on ps-housing's own flow; FredPD cannot audit them.
 
+## Framework bridge (docs/contracts.md §C17)
+
+| Before (ox only) | Now (qb and ox stacks) |
+|---|---|
+| fxmanifest deps ox_doorlock, ox_inventory, ox_target | deps ox_lib, fredpd_core; client `@fredpd_core/bridge/client.lua` |
+| server `ox_inventory:GetItemCount`, `Items` | `fredpd_core:count`; item guard through `bridgeInfo()` + the stack's item file |
+| server `ox_doorlock:getDoor` (`state == 1`), `setDoorState(id, 0)` | `fredpd_core:getDoor` (`locked`), `setLocked(id, false, src)` |
+| client `lib.callback('ox_doorlock:getDoors')`, net `ox_doorlock:setState` / `editDoorlock` | `FredBridge.doorlock.listDoors` / `onDoorChanged` (+ re-read for unknown doors) |
+| client ox_target `addGlobalObject` + ox_doorlock statebag `doorId` | `FredBridge.target.addBoxZone` per door (grant holders only) |
+| client `ox_inventory:GetItemCount(item)` hint | dropped (no client inventory in the bridge): the option shows without the ram; the server answers "Du har ingen murbräcka" |
+| client `QBCore:Client:OnPlayerLoaded/Unload` | server `fredpd:bridge:playerLoaded/Unloaded` → `fredpd:breach:client:character` |
+| scene evidence when `evidences` is started | only while `fredpd_core:hasFeature('evidence')` (ox_inventory + ox_target + evidences); otherwise one warning, `unavailable` |
+
+Behaviour differences on the ox stack (small, deliberate): the option sits on a box zone at the door's coords
+instead of the door entity; an in-game-created door gets its zone at its first state change (ox's `editDoorlock` is
+not in the bridge); the item hint is gone (see above).
+
+Tests: `lua5.4 tests/lua/run.lua breach_` → **72 passed** on the default qb stack and with `FREDPD_STACK=ox`
+(`breach_server` 39 and `breach_client` 12 through the real fredpd_core `server/bridge.lua` / `bridge/client.lua`
+over the stack's mocks; scene-evidence tests always on ox, plus a qb degradation test; `breach_bridge` 21 = static
+check + 4 client and 6 server tests on both stacks). Stack helper: `tests/lua/dispatch_stack_test.lua`.
+
 ## Ram model
 
 GTA V has no battering ram. Searched 2026-09-29 for a free model compatible with GPL-3.0 redistribution:
@@ -142,10 +180,14 @@ Result: **placeholder kept** (`ramModel = 'prop_tool_shovel'`). Rami can stream 
 - Anim `missheistfbi3b_ig7` / `lift_fibagent_loop` (§5.6 names only the dict) and the fallback
   `melee@large_wpn@streamed_core` / `ground_attack_on_spot`: the client checks `DoesAnimDictExist` + `GetAnimDuration > 0`
   and falls back / plays none, so a wrong name cannot break the breach.
-- `Entity(entity).state.doorId` is a client-local statebag written by ox_doorlock's runtime; reading it from
-  fredpd_breach's runtime on the same client is assumed to work (statebags are per entity, not per resource).
-- `addGlobalObject` targets the door entity ox_doorlock found with `GetClosestObjectOfType`; doors ox_doorlock has not
-  yet resolved (> 80 m on approach) get the option once it has.
+- Box zones at the doorlock's door coords (object origin, usually the hinge side) with `doorZoneSize` 1.6 × 1.6 × 2.6 m
+  cover the door on both qb-target (PolyZone `BoxZone`, length/width/minZ/maxZ) and ox_target; to be checked on a
+  few MRPD doors (double doors: qb uses the first leaf's coords, ox the midpoint). Many doors = many zones (only for
+  grant holders); PolyZone/ox_target cost with ~100 zones not measured.
+- qb-doorlock's client `GetDoorList` holding server states 2 s after the character load (its own
+  `setupDoors` callback); before that, lock states are the config defaults (a hint only).
+- qb-doorlock `setDoorState(id, false, src)` (patched) plays the door animation for the officer (bridge UNVERIFIED 6).
+- `LoadResourceFile('<qb-core|ox_inventory>', '<items file>')` from fredpd_breach reads another resource's file.
 - `getAdapter('housing')` returns the adapter table across resources; its `getAddresses` does `MySQL.query.await` in
   fredpd_core when fredpd_records calls it (cross-resource function reference yielding).
 - `exports.evidences:syncEvidence(…, 'atCoords', vector3, meta)` from another resource: the signature is verified in
@@ -169,17 +211,25 @@ Result: **placeholder kept** (`ramModel = 'prop_tool_shovel'`). Rami can stream 
    `Config.RaidItem = 'pd_ram'` in the server's own ps-housing config (a local setting, not a FredPD patch: ps-housing
    is CC BY-NC-SA) or keep both items.
 5. **Service catalog** — grant `tool:ram` must be listed.
+6. **fredpd_core bridge (owner: core)** — a client inventory count, e.g. `FredBridge.inventory.count(item)` (ox:
+   `exports.ox_inventory:GetItemCount(item)`, qb: `GetPlayerData().items`), would restore the "carries pd_ram" hint;
+   a doorlock "door list changed" client event (ox `editDoorlock`) would add in-game-created doors at once. Also
+   `adapters/housing/ps_housing.lua` / `ox_doorlock_only.lua` still call `exports.ox_doorlock` directly (tested by
+   `housing_adapter_test.lua`, which this module owns and left unchanged).
+7. **server.cfg.example** — `ensure` the doorlock/target/inventory resources and fredpd_core before fredpd_breach;
+   qb servers need `patches/qb-doorlock.10-fredpd-bridge.patch` and `patches/qb-core.10-fredpd-items.patch` applied.
 
 ## In-game test (§5.6 acceptance, ≤ 8 steps)
 
-1. `node scripts/apply-patches.mjs`, restart ox_inventory; `ensure fredpd_breach`. Console: no pd_ram warning.
+1. `node scripts/apply-patches.mjs` (qb: qb-core items + qb-doorlock patches; ox: ox_inventory 30), restart the
+   inventory/doorlock; `ensure fredpd_breach`. Console: no pd_ram warning, no "qb-doorlock has no FredPD exports".
 2. Give an officer role grant `tool:ram`; go on duty; `/giveitem <id> pd_ram 1`.
-3. At a locked ox_doorlock door (e.g. a MRPD cell door): target it → "Forcera dörr" is shown.
+3. At a locked door of the doorlock resource (e.g. a MRPD cell door): target it → "Forcera dörr" is shown.
 4. Select it: 4 s progress bar with a prop in hand and an animation; the door unlocks; "Dörren är forcerad."
 5. Portal/DB: `fredpd_audit` has `breach.door` with the door id and coords.
 6. Remove the grant: the option disappears. Go off duty instead (grant kept): the option may still show (duty is
    checked on the server only); selecting it gives "Du är inte i tjänst" and the door stays locked.
-7. From a small server-side test resource (exports cannot be called from the console): `exports.fredpd_breach:sceneEvidence('burglary', GetEntityCoords(GetPlayerPed(<id>)), <id>)`
+7. (ox stack with evidences only; on qb the call answers `unavailable`.) From a small server-side test resource (exports cannot be called from the console): `exports.fredpd_breach:sceneEvidence('burglary', GetEntityCoords(GetPlayerPed(<id>)), <id>)`
    → as a Tekniker with `forensic_kit`, a fingerprint can be collected at that spot; audit `breach.scene`. The
    burglary fingerprint has chance 80: if none spawned (the result's `spawned` list has no `fingerprint`), repeat the
    call more than 5 m away (the cooldown is per 5 m / 60 s), or set its chance to 100 in

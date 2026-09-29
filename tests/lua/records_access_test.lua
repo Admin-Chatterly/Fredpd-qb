@@ -39,9 +39,33 @@ tests['access 01 POI: create, canView shapes, edit rights, level rules'] = funct
         t.eq(open.editable, false)
         t.eq(P(mods).updatePoi(2, { citizenid = 'RP502', warnings = { 'bomb' } }), { ok = false, error = 'validation' })
         t.eq(P(mods).updatePoi(2, { citizenid = 'RP502', photoUrl = 'javascript:alert(1)' }), { ok = false, error = 'validation' })
-        t.eq(P(mods).updatePoi(2, { citizenid = 'RP502', photoUrl = '/uploads/abc-123.webp' }).data.poi.photoUrl, '/uploads/abc-123.webp')
+        -- photo URLs: only fredpd_service uploads (<public url>/upload/<32 hex>.<png|jpg|webp> or '/upload/<file>')
+        local file = ('0123456789abcdef'):rep(2) .. '.webp'
+        _env.convars.fredpd_service_url = 'http://127.0.0.1:3000'
+        _env.convars.fredpd_service_public_url = 'https://mdt.example.se/'
+        for _, bad in ipairs({ 'https://evil.example.com/upload/' .. file, 'https://mdt.example.se/uploads/' .. file,
+            'https://mdt.example.se/upload/' .. file:upper(), 'https://mdt.example.se/upload/abc.webp',
+            'https://mdt.example.se/upload/' .. file:gsub('webp$', 'gif'), 'https://mdt.example.se.evil.com/upload/' .. file,
+            'https://mdt.example.se/upload/../' .. file, '/uploads/abc-123.webp', 'http://127.0.0.1:3000/upload/' .. file }) do
+            t.eq(P(mods).updatePoi(2, { citizenid = 'RP502', photoUrl = bad }), { ok = false, error = 'validation' }, bad)
+        end
+        t.eq(P(mods).updatePoi(2, { citizenid = 'RP502', photoUrl = 'https://mdt.example.se/upload/' .. file }).data.poi.photoUrl,
+            'https://mdt.example.se/upload/' .. file, 'public service URL')
+        _env.convars.fredpd_service_public_url = nil
+        t.eq(P(mods).updatePoi(2, { citizenid = 'RP502', photoUrl = 'http://127.0.0.1:3000/upload/' .. file }).data.poi.photoUrl,
+            'http://127.0.0.1:3000/upload/' .. file, 'fredpd_service_url when no public URL is set')
+        -- mixed-case base path: scheme/host case-insensitive, path exact
+        _env.convars.fredpd_service_public_url = 'HTTPS://MDT.Example.se/FredPD/'
+        for _, good in ipairs({ 'https://mdt.example.se/FredPD/upload/' .. file, 'HTTPS://Mdt.Example.SE/FredPD/upload/' .. file }) do
+            t.eq(P(mods).updatePoi(2, { citizenid = 'RP502', photoUrl = good }).data.poi.photoUrl, good, good)
+        end
+        t.eq(P(mods).updatePoi(2, { citizenid = 'RP502', photoUrl = 'https://mdt.example.se/fredpd/upload/' .. file }),
+            { ok = false, error = 'validation' }, 'base path compared exactly')
+        _env.convars.fredpd_service_public_url = nil
+        t.eq(P(mods).updatePoi(2, { citizenid = 'RP502', photoUrl = '/upload/' .. file }).data.poi.photoUrl, '/upload/' .. file,
+            'service-relative path')
         t.eq(#_env.named('poi.create'), 1)
-        t.eq(#_env.named('poi.update'), 2)
+        t.eq(#_env.named('poi.update'), 6)
         H.run("UPDATE fredpd_poi SET updated_at = '2026-09-10 10:00:00';")
         H.golden(t, 'poi.full', P(mods).getPoi(2, { citizenid = 'RP502' }).data)
     end)
@@ -149,6 +173,7 @@ tests['access 04 §5.3 acceptance: a released case carries no Begränsad/Hemlig 
         t.eq(req.ok, true)
         t.eq(env.notifies[#env.notifies].data.description, 'release.submitted', 'requester told via L()')
         t.eq(env.pushes[#env.pushes].targets, { 3 }, 'queue pushed to records.admin only')
+        t.eq(env.pushes[#env.pushes].topic, 'ledning', 'documented Ledning topic, not case')
         t.eq(Rel(mods).createReleaseRequest(4, { description = 'Igen direkt' }), { ok = false, error = 'rate_limited' })
         t.eq(Rel(mods).decideReleaseRequest(2, { id = req.data.id, decision = 'approved' }), { ok = false, error = 'unauthorized' })
         local decided = Rel(mods).decideReleaseRequest(3, { id = req.data.id, decision = 'partial', note = 'Maskerat enligt OSL' })
@@ -251,6 +276,7 @@ tests['access 06 obehörig sökning: unlinked lookups reach the threshold -> loo
         t.ok(env.notifies[1].data.description:find('Anna Patrull', 1, true) ~= nil)
         local pushed = env.pushes[#env.pushes]
         t.eq(pushed.payload.type, 'lookupFlag')
+        t.eq(pushed.topic, 'ledning')
         t.eq(pushed.targets, { 3 })
         Summary.person(1, { citizenid = 'RP502' })
         t.eq(#env.named('lookup.flag'), 1, 'flagged once per window')

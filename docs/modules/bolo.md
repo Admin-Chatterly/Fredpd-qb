@@ -10,16 +10,16 @@ The create/resolve **UI** is the NUI's (fredpd_mdt / apps/nui); this module prov
 
 | File | Role |
 |---|---|
-| `fxmanifest.lua` | deps `ox_lib`, `oxmysql`, `qbx_core`, `fredpd_core`; ox_target, fredpd_dispatch, fredpd_mdt optional (runtime checks) |
+| `fxmanifest.lua` | deps `ox_lib`, `oxmysql`, `fredpd_core`; client scripts `@fredpd_core/bridge/client.lua` first; the target resource, fredpd_dispatch, fredpd_mdt optional (runtime checks) |
 | `shared/input.lua` | pure: Lua mirror of `BoloCreateInput`/`BoloResolveInput`/`BoloListInput`/`PlateSchema`/`CitizenIdSchema`, `normalizePlate` |
 | `shared/view.lua` | pure: plate-check context menu, markdown escaping, error texts (client) |
 | `server/store.lua` | SQL: the single loader (joins persons/vehicles_idx/officers, `isoSelect` times), insert/resolve/expire, registry lookups, `fredpd_plate_checks` rows |
 | `server/cache.lua` | in-memory `byId` / `activeByPlate` / `activeByCitizen`, generation counter, lazy expiry |
 | `server/visibility.lua` | canView → wire Bolo (full/masked/notice/none), kontaktnotis text, SQL filter for paginated lists |
 | `server/fanout.lua` | audit, tablet push, `fredpd:boloChanged`, hit alerts with the 60 s cooldown, throttled logging |
-| `server/service.lua` | the exports' behaviour, the ox_target callback, the hit handler |
+| `server/service.lua` | the exports' behaviour, the plate-check (target) callback, the hit handler |
 | `server/main.lua` | exports, `lib.callback`, server-only events, start-up rebuild, dev command `/fredpd_testbolo` |
-| `client/main.lua` | ox_target global vehicle option "Kontrollera registreringsskylt", result menu |
+| `client/main.lua` | global vehicle option "Kontrollera registreringsskylt" through `FredBridge.target` (qb-target or ox_target), job hint `FredBridge.framework.getJob`, result menu |
 | `test/contract.test.ts`, `test/golden/*.json` | Lua output vs `packages/types/src/mdt.ts` (+ `AlertCreateInputSchema`) |
 | `db/migrations/010_plate_checks.sql` | `fredpd_plate_checks`; widens `fredpd_bolos.resolve_note` to 500 |
 
@@ -104,10 +104,10 @@ hit/boloId/via — the lookup audit of §4.5; the `fredpd_plate_checks` row itse
   'bolo'`, meta `{ boloId, hit, plate, radar }`. Alerts reach every on-duty officer, so for level > 0 the description
   carries the kontaktnotis instead of the reason. The payload of `fredpd:boloHit` is not trusted: the BOLO is looked
   up by id in the cache and must be live. The police bridge's own per-camera cooldown is separate.
-- **ox_target plate check**: the client sends only the vehicle's network id; the server checks grant
+- **Target plate check** (qb-target or ox_target through the bridge): the client sends only the vehicle's network id; the server checks grant
   `mdt_page:search`, duty, 1 request/s per player, that the entity exists and is a vehicle (`GetEntityType == 2`),
   that it is within 10 m of the officer, and reads the plate with `GetVehicleNumberPlateText` itself. Option: whole
-  vehicle (no bone: many models lack `platelight`), 3 m, added once at start (and again if ox_target restarts),
+  vehicle (no bone: many models lack `platelight`), 3 m, added once at start (and again if the target resource restarts),
   removed on stop. Result: ox_lib context menu, hit first (red icon + full red bar + frontend sound), then owner and
   model; values are markdown-escaped (ox_lib renders context text as markdown). One request at a time per client.
 - **In-flight flags never stick** (docs/deps-verification.md §10: `MySQL.*.await` may never resume): the rebuild
@@ -121,9 +121,28 @@ hit/boloId/via — the lookup audit of §4.5; the `fredpd_plate_checks` row itse
   `Time.isoSelect`; tests run every session at `+02:00`. `checkedAt` = `Time.nowIso()`.
 - **Lua cannot send `null`**: nullable fields are absent on the wire (same as fredpd_dispatch).
 
+## Framework bridge (docs/contracts.md §C17)
+
+fredpd_bolo calls no framework or target resource directly (static check in `tests/lua/bolo_bridge_test.lua`):
+
+| Before (qbx/ox only) | Now (qb and ox stacks) |
+|---|---|
+| fxmanifest dep `qbx_core`, client `@qbx_core/modules/playerdata.lua` | deps `ox_lib`, `oxmysql`, `fredpd_core`; client `@fredpd_core/bridge/client.lua` |
+| `canInteract`: `QBX.PlayerData.job` | `FredBridge.framework.getJob()` (hint; the server re-checks grant + duty) |
+| `exports.ox_target:addGlobalVehicle` / `removeGlobalVehicle`, re-add on `ox_target` start | `FredBridge.target.addGlobalVehicle` / `remove(handle)`, re-add when `FredBridge.target.resource` starts |
+| audit actor via qbx_core (fredpd_core) | unchanged code: fredpd_core's audit resolves the actor through the bridge |
+
+The server side needed no change (grants, duty, citizenid, audit and canView were already fredpd_core exports).
+Behaviour on the ox stack is unchanged. On qb-target the option is keyed by its label (removal by label) and
+`onSelect` gets no distance (the server measures it anyway).
+
 ## Tests
 
-- **39 passed** in fredpd_bolo's own suites: `lua5.4 tests/lua/run.lua bolo_input` 7 (validation mirror, plate
+- **Stacks**: the main suites run on the stack chosen by `FREDPD_STACK` (default `qb` = qb-core + qb-target;
+  `FREDPD_STACK=ox` = qbx_core + ox_target), through the real `fredpd_core/server/bridge.lua` and
+  `bridge/client.lua` (`tests/lua/dispatch_stack_test.lua`). `bolo_bridge_test` (13) re-runs 3 client and 3 server
+  tests on both stacks every run, plus the static check. `run.lua bolo_` → **79 passed** on each stack.
+- Previously: **39 passed** in fredpd_bolo's own suites: `lua5.4 tests/lua/run.lua bolo_input` 7 (validation mirror, plate
   normalisation vs `detectSearchType`, menu/escaping/errors), `bolo_server` 26 against MariaDB database
   `fredpd_test_bolo_lua` (session `+02:00`; real fredpd_core audit/mirror/canview modules), `bolo_client` 6.
   `run.lua bolo` reports **54** because it also picks up `police_bolo_test` (15, not ours), which uses the same
@@ -138,8 +157,9 @@ hit/boloId/via — the lookup audit of §4.5; the `fredpd_plate_checks` row itse
 
 1. Server-side `NetworkGetEntityFromNetworkId` / `GetVehicleNumberPlateText` / `GetEntityType` on a vehicle the
    officer targets (OneSync; the plate is padded to 8 characters — normalisation strips it).
-2. ox_target `addGlobalVehicle` with a function `canInteract` from another resource, `data.entity` in `onSelect`,
-   and `onClientResourceStart/Stop` for ox_target restarts.
+2. `FredBridge.target.addGlobalVehicle` on both target resources: ox_target with a function `canInteract` from
+   another resource and `data.entity` in `onSelect`; qb-target `AddGlobalVehicle({ options, distance })` with
+   `action(entity)` → `onSelect`; removal by label on qb-target; `onClientResourceStart/Stop` for target restarts.
 3. `lib.registerContext` with `readOnly`, `progress` + `colorScheme = 'red'`, `iconColor`; escaped punctuation
    renders as the plain character in ox_lib's react-markdown.
 4. The plate-check round trip within 200 ms (one awaited SELECT on the hot path; the check row and audit are not
@@ -167,14 +187,15 @@ hit/boloId/via — the lookup audit of §4.5; the `fredpd_plate_checks` row itse
   `reason`s above; consider `BoloPushSchema` in mdt.ts and a `visibility` field on `BoloSchema` (open question 1).
 - **apps/service catalog**: perms `bolo.create`, `bolo.resolve` (already in §C12).
 - **locales**: done — `locales/pending/bolo.json` was merged into `locales/sv.json` / `en.json` (commit 82fd2e9); all `L()` keys used here exist.
-- **server.cfg.example**: `ensure fredpd_bolo` after `fredpd_core` (and after `ox_target`, `fredpd_dispatch` when used).
+- **server.cfg.example**: `ensure fredpd_bolo` after `fredpd_core` (and after the target resource, `fredpd_dispatch` when used).
 - **qbx_police patch 30** (police): its requests are met — `checkPlate` takes any spelling, ignores expired rows and
   never waits; `resolveOnImpound` returns true/false and never raises; radar `fredpd:boloHit` gets a check row and the
   alert (per plate, 60 s).
 
 ## In-game test
 
-1. Build (`node scripts/build.mjs`), ensure order ox_target → fredpd_core → fredpd_dispatch → fredpd_bolo; restart.
+1. Build (`node scripts/build.mjs`), ensure order qb-target (or ox_target) → fredpd_core → fredpd_dispatch → fredpd_bolo;
+   restart.
    Two officers A and B with `mdt_page:search`, `mdt_page:bolos`, `mdt_page:alerts`, `perm:bolo.create`,
    `perm:bolo.resolve`, both `/duty` on.
 2. With `set fredpd_dev true`, A sits in a player-owned car (in the register) and runs `/fredpd_testbolo` (or

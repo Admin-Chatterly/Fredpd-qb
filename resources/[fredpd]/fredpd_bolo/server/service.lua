@@ -10,7 +10,7 @@
 -- (any resource can call an export).
 -- Server lookups (no player, no canView; never wait): checkPlate(plate) -> Bolo|nil, checkPerson(citizenid) ->
 -- Bolo|nil. For records: getBolosFor(src, kind, id) -> Bolo[] (canView-filtered), hasVisibleBolo(src, kind, id) ->
--- boolean (memory, canView on the cached entry). Impound: resolveOnImpound(plate, src) -> boolean. ox_target:
+-- boolean (memory, canView on the cached entry). Impound: resolveOnImpound(plate, src) -> boolean. Target:
 -- targetCheck(source, netId) behind lib.callback 'fredpd:bolo:plateCheck'.
 --
 -- Hits and canView 'none' (docs/modules/bolo.md "Hidden BOLOs"): the checking officer's result is shaped by their own
@@ -30,8 +30,8 @@ local Time = require '@fredpd_core.shared.time'
 
 local M = {}
 
-M.TARGET_RATE_MS = 1000 -- ox_target plate check: 1 per second per player (server side)
-M.TARGET_DISTANCE = 10.0 -- metres between the officer and the vehicle (ox_target option distance is 3)
+M.TARGET_RATE_MS = 1000 -- target plate check: 1 per second per player (server side)
+M.TARGET_DISTANCE = 10.0 -- metres between the officer and the vehicle (the target option distance is 3)
 M.REBUILD_ATTEMPTS = 5
 -- In-flight flags (rebuild, create per subject) hold the GetGameTimer() they were set at. MySQL.*.await never resumes
 -- when the pool cannot hand out a connection (docs/deps-verification.md §10), so a flag older than this is treated as
@@ -463,7 +463,7 @@ function M.plateCheck(src, input)
     return M.checkVehicle(actor, plate, { source = 'tablet' })
 end
 
-local lastTarget = {} -- [src] = GetGameTimer() of the last accepted ox_target check
+local lastTarget = {} -- [src] = GetGameTimer() of the last accepted target check
 
 --- Forget a player's rate-limit state (playerDropped).
 function M.forget(src)
@@ -478,9 +478,10 @@ local function xyz(v)
     return x, y, z
 end
 
---- lib.callback 'fredpd:bolo:plateCheck' (ox_target "Kontrollera registreringsskylt"). The client sends only the
---- vehicle's network id; the plate is read from the entity here. Order: grant mdt_page:search -> on duty -> 1/s ->
---- entity -> distance -> plate. Returns PlateCheckResult or { error, reason? }.
+--- lib.callback 'fredpd:bolo:plateCheck' (target option "Kontrollera registreringsskylt", qb-target or ox_target
+--- through fredpd_core's bridge). The client sends only the vehicle's network id; the plate is read from the entity
+--- here. Order: grant mdt_page:search -> on duty -> 1/s -> entity -> distance -> plate. Returns PlateCheckResult or
+--- { error, reason? }.
 function M.targetCheck(source, netId)
     local src = math.tointeger(tonumber(source))
     if not src or src < 1 then return { error = 'unauthorized' } end

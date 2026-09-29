@@ -13,7 +13,7 @@ local tests = {}
 
 local function dictionaries()
     local sv, en = helper.readJson('locales/sv.json'), helper.readJson('locales/en.json')
-    for _, file in ipairs({ 'locales/pending/core.json', 'locales/pending/mdt.json' }) do
+    for _, file in ipairs({ 'locales/pending/core.json', 'locales/pending/mdt.json', 'locales/pending/mdt-bridge.json' }) do
         for k, v in pairs(helper.readJson(file)) do
             if type(v) == 'table' then sv[k], en[k] = v.sv, v.en end
         end
@@ -53,12 +53,14 @@ tests['every key fredpd_mdt shows exists in sv and en with the same placeholders
     t.ok(n >= 15, 'found the keys (' .. n .. ')')
 end
 
-tests['pending/mdt.json adds only new keys and has both languages'] = function(t)
+tests['pending/mdt.json and pending/mdt-bridge.json add only new keys and have both languages'] = function(t)
     local base = helper.readJson('locales/sv.json')
-    for key, v in pairs(helper.readJson('locales/pending/mdt.json')) do
-        if key:sub(1, 1) ~= '$' then
-            t.eq(base[key], nil, key .. ' already in sv.json')
-            t.ok(type(v) == 'table' and v.sv and v.en, key .. ' has sv and en')
+    for _, file in ipairs({ 'locales/pending/mdt.json', 'locales/pending/mdt-bridge.json' }) do
+        for key, v in pairs(helper.readJson(file)) do
+            if key:sub(1, 1) ~= '$' then
+                t.eq(base[key], nil, key .. ' already in sv.json')
+                t.ok(type(v) == 'table' and v.sv and v.en, key .. ' has sv and en')
+            end
         end
     end
 end

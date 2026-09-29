@@ -271,5 +271,5 @@ export type MdtInput<A extends MdtActionName> = z.input<(typeof MDT_ACTIONS)[A][
 export type MdtOutput<A extends MdtActionName> = z.infer<(typeof MDT_ACTIONS)[A]['output']>;
 
 /** Server → tablet push topics (`fredpd:client:push` → NUI `{ action: 'push', topic, payload }`). */
-export const PUSH_TOPICS = ['alerts', 'units', 'bolo', 'case', 'grants'] as const;
+export const PUSH_TOPICS = ['alerts', 'units', 'bolo', 'case', 'grants', 'ledning'] as const;
 export type PushTopic = (typeof PUSH_TOPICS)[number];

@@ -60,6 +60,18 @@ function M.start()
     AddEventHandler('playerDropped', function()
         Breach.forget(source)
     end)
+
+    -- Character load / logout (fredpd_core's normalised bridge events, docs/contracts.md §C17; server-local, so no
+    -- client can fire them): the client re-reads its grants and the door list (qb-doorlock fills its client list
+    -- only after the character loads), or drops its door zones.
+    AddEventHandler('fredpd:bridge:playerLoaded', function(src)
+        src = math.tointeger(tonumber(src))
+        if src and src > 0 then TriggerClientEvent('fredpd:breach:client:character', src, true) end
+    end)
+    AddEventHandler('fredpd:bridge:playerUnloaded', function(src)
+        src = math.tointeger(tonumber(src))
+        if src and src > 0 then TriggerClientEvent('fredpd:breach:client:character', src, false) end
+    end)
 end
 
 M.start()

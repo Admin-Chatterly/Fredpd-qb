@@ -15,7 +15,7 @@ local Config = require 'config'
 
 local M = {}
 
-M.PUSH_TOPICS = { alerts = true, units = true, bolo = true, case = true, grants = true } -- mdt.ts PUSH_TOPICS
+M.PUSH_TOPICS = { alerts = true, units = true, bolo = true, case = true, grants = true, ledning = true } -- mdt.ts PUSH_TOPICS
 --- Extra recipient rules per topic (dispatch.md: live alerts/units only for holders of mdt_page:alerts).
 M.TOPIC_GRANTS = { alerts = { 'mdt_page', 'alerts' }, units = { 'mdt_page', 'alerts' } }
 M.UNIT_PATTERN = '^[A-Za-z0-9_%-]+$' -- actions.ts UNIT_CODE_RE ({1,32})
@@ -119,39 +119,21 @@ local function fail(key)
     return { error = key }
 end
 
-local function inventory(fn, ...)
-    local args = table.pack(...)
-    local ok, res = pcall(function()
-        local inv = exports.ox_inventory
-        return inv[fn](inv, table.unpack(args, 1, args.n))
-    end)
-    if not ok then
-        C.logThrottled('inv:' .. fn, 'error', 'ox_inventory:%s failed: %s', fn, tostring(res))
-        return false, nil
-    end
-    return true, res
-end
-
---- The serial of the tablet being used: the slot ox_inventory reported to the client if it really holds a pd_tablet,
---- else the first pd_tablet slot with a serial. Returns ok, serial|nil.
+--- The serial of the tablet being used: the slot the inventory reported (ox: the client's item export; qb: qb-core's
+--- usable-item callback, server-side) if it really holds a pd_tablet (its serial, or none), else the first pd_tablet
+--- slot with a serial. Through the bridge `find` (metadata = ox metadata / qb info). Returns ok, serial|nil.
 local function findSerial(src, slot)
-    if slot then
-        local ok, data = inventory('GetSlot', src, slot)
-        if not ok then return false end
-        if type(data) == 'table' and data.name == Config.item then
-            local serial = type(data.metadata) == 'table' and data.metadata.serial or nil
-            return true, type(serial) == 'string' and serial or nil
-        end
+    local list = C.findItems(src, Config.item)
+    if not list then return false end
+    local first = nil
+    for _, s in ipairs(list) do
+        local serial = type(s) == 'table' and type(s.metadata) == 'table' and s.metadata.serial or nil
+        if type(serial) ~= 'string' then serial = nil end
+        -- The used tablet decides, even without a serial (it must not borrow another tablet's registration).
+        if slot and type(s) == 'table' and s.slot == slot then return true, serial end
+        first = first or serial
     end
-    local ok, slots = inventory('Search', src, 'slots', Config.item)
-    if not ok then return false end
-    if type(slots) == 'table' then
-        for _, s in pairs(slots) do
-            local serial = type(s) == 'table' and type(s.metadata) == 'table' and s.metadata.serial or nil
-            if type(serial) == 'string' then return true, serial end
-        end
-    end
-    return true, nil
+    return true, first
 end
 
 local TERMINAL_MODELS = nil -- model hash set, built on first use (joaat needs FiveM)
@@ -240,9 +222,10 @@ function M.open(src, req)
     local needItem = mode == 'item' or Config.terminal.requireItem
     if mode == 'terminal' and not M.inTerminalVehicle(src) then return fail('tablet.unavailable') end
     if needItem then
-        local ok, count = inventory('GetItemCount', src, Config.item)
-        if not ok then return fail('tablet.unavailable') end
-        if (tonumber(count) or 0) < 1 then return fail('tablet.noItem') end
+        local count = C.itemCount(src, Config.item)
+        if not count then return fail('tablet.unavailable') end
+        -- The bridge answers 0 while the inventory is down: say "unavailable" then, not "no tablet".
+        if count < 1 then return fail(C.inventoryUp() and 'tablet.noItem' or 'tablet.unavailable') end
     end
     if not C.anyMdtGrant(src) then return fail('tablet.noGrant') end
     if not C.isOnDuty(src) then return fail('tablet.notOnDuty') end
@@ -272,6 +255,20 @@ function M.open(src, req)
         callsign = me.callsign } }
 end
 
+--- Tablet item used where the inventory reports the use on the server (qb: qb-inventory -> qb-core usable item ->
+--- fredpd_core registerUsable -> here; ox_inventory too if its item definition ever uses server.export =
+--- 'fredpd_core.useItem'). `slot` comes from the inventory resource, never from a client. Runs the same open flow as
+--- the 'fredpd:mdt:open' callback (the ox client.export path) and sends its result to the player's client, which
+--- shows the tablet or the refusal (fredpd:client:openTablet). Call from a thread (MySQL await).
+function M.useItem(src, slot)
+    src = C.playerSrc(src)
+    if not src then return false end
+    slot = math.tointeger(tonumber(slot))
+    local res = M.open(src, { mode = 'item', slot = slot })
+    TriggerClientEvent('fredpd:client:openTablet', src, res)
+    return res.error == nil
+end
+
 ---------------------------------------------------------------------------------------------------------------
 -- Server-side reasons to close
 
@@ -281,10 +278,16 @@ function M.onGrantsChanged(src)
     if src and Open[src] and not C.anyMdtGrant(src) then M.forceClose(src, 'tablet.noGrant') end
 end
 
---- QBCore:Server:SetDuty(src, onDuty) / OnJobUpdate: close when the player is no longer on duty.
+--- fredpd:bridge:dutyChanged / jobChanged (fredpd_core bridge): close when the player is no longer on duty.
 function M.onDutyChanged(src)
     src = C.playerSrc(src)
     if src and Open[src] and not C.isOnDuty(src) then M.forceClose(src, 'tablet.notOnDuty') end
+end
+
+--- fredpd:bridge:playerUnloaded (logout or drop): clear the session and close the client's tablet (the server decides;
+--- the client listens to no framework event).
+function M.onUnloaded(src)
+    return M.forceClose(src, nil)
 end
 
 function M.onDropped(src)

@@ -8,7 +8,11 @@
 -- link authorization, tag numbering incl. a concurrent link, visibility shaping, chain cap, containers, UTC, and
 -- writes the golden JSON checked by resources/[fredpd]/fredpd_forensics/test/contract.test.ts.
 -- Database fredpd_test_forensics_lua (reset once per run); every session at time_zone '+02:00' (§C7).
--- Run: lua5.4 tests/lua/run.lua forensics_server
+-- Framework bridge (docs/contracts.md §C17): the fredpd_core mock's bridgeInfo is the REAL server/bridge.lua, loaded
+-- with ox_inventory + ox_target (evidences needs them) and the framework of FREDPD_FORENSICS_STACK: qb (default,
+-- qb-core mock) or qbx (qbx_core mock); the real fredpd_core audit resolves the actor through it.
+-- tests/lua/forensics_bridge_test.lua reuses this environment (require returns H) for the qb/ox matrix.
+-- Run: lua5.4 tests/lua/run.lua forensics_server   (FREDPD_FORENSICS_STACK=qbx for the Qbox framework)
 local shim = require('mysql_shim')
 local helper = require('helper')
 
@@ -22,6 +26,16 @@ local FP1 = 'A1B2C3D4E5F60718'
 local FP2 = 'FFEEDDCCBBAA0099'
 
 local tests = {}
+
+local STACK = os.getenv('FREDPD_FORENSICS_STACK') == 'qbx' and 'qbx' or 'qb'
+
+--- Bridge config per stack name: the framework of the stack with the ox pair evidences needs; 'qb-only' is the
+--- plain QBCore server (qb-inventory + qb-target: evidence off).
+local BRIDGE_CFG = {
+    qb = { framework = 'qb-core', inventory = 'ox_inventory', target = 'ox_target' },
+    qbx = { framework = 'qbx_core', inventory = 'ox_inventory', target = 'ox_target' },
+    ['qb-only'] = { framework = 'qb-core', inventory = 'qb-inventory', target = 'qb-target' },
+}
 
 ---------------------------------------------------------------------------------------------------------------
 -- Environment
@@ -102,7 +116,7 @@ local prepared, notified = nil, false
 local GLOBALS = { 'MySQL', 'LoadResourceFile', 'GetCurrentResourceName', 'exports', 'GetPlayers', 'GetPlayerName',
     'GetGameTimer', 'SetTimeout', 'CreateThread', 'TriggerEvent', 'TriggerClientEvent', 'GetResourceState',
     'AddEventHandler', 'lib', 'GetEntityCoords', 'GetPlayerPed', 'GetPlayerIdentifierByType', 'source', 'locale',
-    'vec3', 'vec4' }
+    'vec3', 'vec4', 'SetConvarReplicated' }
 
 local function clearModules()
     for _, name in ipairs(MODULES) do package.loaded[name] = nil end
@@ -126,7 +140,8 @@ local function loadResource()
     return mods
 end
 
-local function makeEnv()
+local function makeEnv(opts)
+    opts = opts or {}
     local Audit = require('server.audit')
     local CanView = require('shared.canview')
     local Grants = require('shared.grants')
@@ -138,8 +153,12 @@ local function makeEnv()
         now = 100000, timers = {}, players = defaultPlayers(), events = {}, clientEvents = {}, pushes = {},
         audits = {}, handlers = {}, exported = {}, callbacks = {}, logs = {}, hooks = {}, stashes = {},
         inv = {}, positions = {}, sqlCalls = 0, uidSeq = 0, rules = rules,
-        resources = { fredpd_mdt = 'started', ox_inventory = 'started', evidences = 'started', fredpd_core = 'started' },
+        resources = { fredpd_mdt = 'started', ox_inventory = 'started', evidences = 'started', fredpd_core = 'started',
+            ox_target = 'started', ['qb-core'] = 'started', qbx_core = 'started' },
+        oxAccess = {}, -- every exports.ox_inventory:<fn> looked up, in order
+        convars = {},
     }
+    for k, v in pairs(opts.resources or {}) do env.resources[k] = v ~= false and v or nil end
 
     local function player(src) return env.players[tonumber(src)] end
     local function setOf(p)
@@ -166,6 +185,7 @@ local function makeEnv()
             for i, r in ipairs(records) do out[i] = CanView.evaluate(viewer(src), r, rules) end
             return out
         end,
+        bridgeInfo = function() return require('server.bridge').info() end,
         audit = function(_, src, action, targetType, targetId, meta)
             env.audits[#env.audits + 1] = { src = src, action = action, targetType = targetType, targetId = targetId,
                 meta = meta }
@@ -181,6 +201,17 @@ local function makeEnv()
         GetPlayer = function(_, src)
             local p = player(src)
             return p and { PlayerData = { citizenid = p.cid, source = tonumber(src) } } or nil
+        end,
+    }
+    -- qb-core (shared/main.lua:7-18 GetCoreObject, server/functions.lua:46-52 GetPlayer), what the qb bridge reads.
+    local qbcore = {
+        GetCoreObject = function()
+            return { Functions = {
+                GetPlayer = function(src)
+                    local p = player(src)
+                    return p and { PlayerData = { citizenid = p.cid, source = tonumber(src) }, Functions = {} } or nil
+                end,
+            } }
         end,
     }
 
@@ -408,7 +439,11 @@ local function makeEnv()
     local shimLoad = LoadResourceFile
 
     env.globals = {
-        exports = setmetatable({ fredpd_core = core, fredpd_mdt = mdt, qbx_core = qbx, ox_inventory = inventory }, {
+        exports = setmetatable({ fredpd_core = core, fredpd_mdt = mdt, qbx_core = qbx, ['qb-core'] = qbcore,
+            ox_inventory = setmetatable({}, { __index = function(_, k)
+                env.oxAccess[#env.oxAccess + 1] = k
+                return inventory[k]
+            end }) }, {
             __call = function(_, name, fn) env.exported[name] = fn end,
         }),
         LoadResourceFile = function(resource, path)
@@ -434,6 +469,7 @@ local function makeEnv()
             env.clientEvents[#env.clientEvents + 1] = { name = name, target = target, args = { ... } }
         end,
         GetResourceState = function(name) return env.resources[name] or 'missing' end,
+        SetConvarReplicated = function(name, value) env.convars[name] = value end,
         AddEventHandler = function(name, fn)
             env.handlers[name] = env.handlers[name] or {}
             table.insert(env.handlers[name], fn)
@@ -459,14 +495,21 @@ local function makeEnv()
         end
     end
 
-    -- The real fredpd_core audit resolves the actor through the framework bridge (docs/contracts.md §C17): load it
-    -- with the qbx_core implementation over the `qbx` mock above.
-    require('bridge_harness_test').useQbx()
+    -- The real fredpd_core bridge (docs/contracts.md §C17): audit resolves the actor through it and the core mock's
+    -- bridgeInfo reports it; resource states are env.resources, live.
+    env.stack = opts.stack or STACK
+    local quiet = function() end
+    env.bridgeCfg = BRIDGE_CFG[env.stack] or opts.bridge
+    require('server.bridge').load(env.bridgeCfg, {
+        stateOf = function(name) return env.resources[name] or 'missing' end,
+        log = { info = quiet, warn = quiet, error = quiet, debug = quiet }, defer = quiet,
+    })
     return env
 end
 
 --- Run fn(t, env, mods) with MariaDB + mocks installed; restores every global afterwards.
-local function withEnv(t, fn)
+--- opts = { stack = 'qb' | 'qbx' | 'qb-only' (default FREDPD_FORENSICS_STACK), resources = { name = state | false } }.
+local function withEnv(t, fn, opts)
     local ok, reason = shim.available()
     if not ok then
         if not notified then
@@ -518,7 +561,7 @@ local function withEnv(t, fn)
         end
         MySQL.query.await("INSERT INTO linked_fingerprint (fingerprint, identifier) VALUES (?, 'SUS00001')", { FP1 })
         MySQL.query.await("INSERT INTO firearms_registry (serial, identifier) VALUES ('SER123456', 'SUS00001')")
-        local env = makeEnv()
+        local env = makeEnv(opts)
         for k, v in pairs(env.globals) do rawset(_G, k, v) end
         rawset(_G, 'source', nil)
         local mods = loadResource()
@@ -527,6 +570,7 @@ local function withEnv(t, fn)
     end)
     for n, v in pairs(saved) do rawset(_G, n, v[1]) end
     clearModules()
+    require('bridge_harness_test').reset()
     shim.sessionTimeZone = nil
     shim.database, shim.resourceName = savedDatabase, savedResource
     if not okRun then error(err, 0) end
@@ -1399,8 +1443,8 @@ tests['21 case page export listCaseEvidence; unlinked person match only for lab 
 
         -- player 9 sees case 1 (open, unit utredning) but has no mdt_page:evidence
         t.eq(S.list(9, { caseId = 1 }), { ok = false, error = 'unauthorized' })
-        t.eq(env.exported.listCaseEvidence, S.listCase)
-        local page = S.listCase(9, { caseId = 1 })
+        local page = env.exported.listCaseEvidence(9, { caseId = 1 }) -- the export (gated) answers as S.listCase
+        t.eq(page, S.listCase(9, { caseId = 1 }))
         t.ok(page.ok, tostring(page.error))
         t.eq(page.data.total, 1)
         t.eq(page.data.items[1].tag, 'B-K-123-26-001')
@@ -1575,6 +1619,11 @@ function(t)
         t.eq(analysed.result.crimeScene, 'Vespucci Blvd', 'not the analysis payload')
         t.eq(chainActions(analysed), { 'collect', 'handin', 'checkout', 'analyse' })
     end)
+end
+
+if ... == 'forensics_server_test' then
+    return { withEnv = withEnv, loadResource = loadResource, collectFingerprint = collectFingerprint, link = link,
+        hookOf = hookOf, set = set, LOCKER = LOCKER, FP1 = FP1, SV = SV }
 end
 
 return tests

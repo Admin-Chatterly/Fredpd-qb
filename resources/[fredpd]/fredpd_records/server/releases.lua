@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- "Begär ut allmän handling" (task 5.6 server; IMPLEMENTATION.md §5.3, fredpd_release_requests in 003 + channel in 013).
 -- Exports:
---   createReleaseRequest(src, { description, reference? })      any player (station ox_target; also lib.callback
+--   createReleaseRequest(src, { description, reference? })      any player (station target zone; also lib.callback
 --                                                                 'fredpd:records:releaseRequest'); 1 per 60 s
 --   createReleaseRequestPortal({ discordId, name, description, reference? })   service -> fredpd_core bridge only
 --   listReleaseRequests(src, { status?, page })                  perm records.admin
@@ -76,7 +76,7 @@ M.load = loadRequest
 
 --- Tell Ledning (open tablets with records.admin) that the release queue changed.
 local function pushQueue(id)
-    C.push('case', { type = 'releaseRequest', id = id }, function(target) return C.perm(target, 'records.admin') end)
+    C.push(C.TOPIC_LEDNING, { type = 'releaseRequest', id = id }, function(target) return C.perm(target, 'records.admin') end)
 end
 
 --- Shared insert. Returns the new id.

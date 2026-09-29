@@ -12,6 +12,7 @@
 -- Run: lua5.4 tests/lua/run.lua bolo_server
 local shim = require('mysql_shim')
 local helper = require('helper')
+local Stack = require('dispatch_stack_test')
 
 local DB = 'fredpd_test_bolo_lua'
 local BOLO = './resources/[fredpd]/fredpd_bolo/'
@@ -186,15 +187,18 @@ local function makeEnv()
             return { id = #env.alerts }
         end,
     }
-    local qbx = {
-        GetPlayer = function(_, src)
-            local p = player(src)
-            return p and { PlayerData = { citizenid = p.cid, source = tonumber(src) } } or nil
-        end,
-    }
+    -- The framework of the selected stack (FREDPD_STACK, tests/lua/dispatch_stack_test.lua), read live from
+    -- env.players: the real fredpd_core audit resolves the actor's citizenid through the bridge over it.
+    env.stack = Stack.current()
+    local fwName, fw = Stack.framework(env.stack, player, function()
+        local ids = {}
+        for src in pairs(env.players) do ids[#ids + 1] = src end
+        table.sort(ids)
+        return ids
+    end)
 
     env.globals = {
-        exports = setmetatable({ fredpd_core = core, fredpd_mdt = mdt, fredpd_dispatch = dispatch, qbx_core = qbx }, {
+        exports = setmetatable({ fredpd_core = core, fredpd_mdt = mdt, fredpd_dispatch = dispatch, [fwName] = fw }, {
             __call = function(_, name, fn) env.exported[name] = fn end,
         }),
         GetPlayers = function()
@@ -262,9 +266,6 @@ local function makeEnv()
     env.entities[5003] = { netId = 79, type = 2, plate = 'ZZZ 99Z', coords = { x = 300.0, y = 200.0, z = 30.0 } }
     env.entities[5004] = { netId = 80, type = 2, plate = '        ', coords = { x = 101.0, y = 200.0, z = 30.0 } }
 
-    -- The real fredpd_core audit resolves the actor through the framework bridge (docs/contracts.md §C17): load it
-    -- with the qbx_core implementation over the `qbx` mock above.
-    require('bridge_harness_test').useQbx()
     return env
 end
 
@@ -307,12 +308,15 @@ local function withEnv(t, fn)
         local env = makeEnv()
         for k, v in pairs(env.globals) do rawset(_G, k, v) end
         rawset(_G, 'source', nil)
+        -- fredpd_core's real bridge for the stack (docs/contracts.md §C17): the audit actor goes through it.
+        env.Bridge = Stack.load(env.stack)
         local mods = freshModules()
         mods['server.cache'].reset()
         fn(t, env, mods)
     end)
     forgetModules()
     for n, v in pairs(saved) do rawset(_G, n, v[1]) end
+    Stack.reset()
     shim.sessionTimeZone = nil
     shim.database, shim.resourceName = savedDatabase, savedResource
     if not okRun then error(err, 0) end
@@ -979,6 +983,8 @@ tests['16 resolveOnImpound: resolves with the Swedish note, audits via impound, 
             { 0, 'BOL10002', 'Återkallad automatiskt: fordonet bärgades.' })
         t.eq(env.audits[1].action, 'bolo.resolve')
         t.eq(env.audits[1].meta.via, 'impound')
+        t.eq(q("SELECT actor_citizenid FROM fredpd_audit WHERE action = 'bolo.resolve' ORDER BY id")[1].actor_citizenid,
+            'BOL10002', 'the impounding officer, resolved by fredpd_core through the bridge (' .. env.stack .. ')')
         t.eq(env.pushes[1].payload, { type = 'resolved', id = bolo.id })
 
         t.eq(env.exported.resolveOnImpound('ABC12D', 2), false, 'nothing active any more')
@@ -993,6 +999,9 @@ tests['16 resolveOnImpound: resolves with the Swedish note, audits via impound, 
         env.fire('fredpd:bolo:vehicleImpounded', '', 'ABC12D', nil)
         t.eq(Service.checkPlate('ABC12D'), nil)
         t.eq(scalar('SELECT resolved_by IS NULL FROM fredpd_bolos WHERE id = ?', { again.id }), 1)
+        local rows = q("SELECT actor_citizenid FROM fredpd_audit WHERE action = 'bolo.resolve' ORDER BY id")
+        t.eq(#rows, 2)
+        t.eq(rows[2].actor_citizenid, nil, 'system actor: no citizenid')
     end)
 end
 

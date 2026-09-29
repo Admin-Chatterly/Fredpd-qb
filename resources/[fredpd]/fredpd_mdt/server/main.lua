@@ -2,6 +2,8 @@
 -- fredpd_mdt server entry (IMPLEMENTATION.md §5.2, docs/contracts.md §C12, docs/modules/mdt.md). Registers the two
 -- callbacks, the close event, the exports and the /surfplatta command at start; no threads, timers or loops.
 --
+-- Server-side use of the pd_tablet item: registered through fredpd_core's bridge (registerUsable).
+--
 -- Exports: isTabletOpen(src) -> boolean, pushToOpenTablets(topic, payload[, filter]) -> n, pushTo(src, topic,
 -- payload) -> boolean, closeTablet(src[, reasonKey]) -> boolean.
 
@@ -56,19 +58,47 @@ AddEventHandler('fredpd:grantsChanged', function(src)
     if fromServer() then Open.onGrantsChanged(src) end
 end)
 
--- qbx_core (docs/deps-verification.md §5): duty toggles and job changes.
-AddEventHandler('QBCore:Server:SetDuty', function(src, onDuty)
+-- fredpd_core's normalised framework events (docs/modules/bridge.md; server-local TriggerEvent, the same on qb-core
+-- and qbx_core): duty toggles, job changes and logout.
+AddEventHandler('fredpd:bridge:dutyChanged', function(src, onDuty)
     if fromServer() and not onDuty then Open.onDutyChanged(src) end
 end)
-AddEventHandler('QBCore:Server:OnJobUpdate', function(src)
+AddEventHandler('fredpd:bridge:jobChanged', function(src)
     if fromServer() then Open.onDutyChanged(src) end
 end)
-AddEventHandler('QBCore:Server:OnPlayerUnload', function(src)
-    if fromServer() then Open.markClosed(src) end
+AddEventHandler('fredpd:bridge:playerUnloaded', function(src)
+    if fromServer() then Open.onUnloaded(src) end
 end)
 
 AddEventHandler('playerDropped', function()
     Open.onDropped(source)
+end)
+
+---------------------------------------------------------------------------------------------------------------
+-- Tablet item use reported on the server (docs/modules/mdt.md "Tablet item"). qb: fredpd_core's registerUsable ->
+-- qb-core CreateUseableItem; ox: a no-op in the bridge (ox_inventory's pd_tablet uses client.export =
+-- 'fredpd_mdt.open', which asks the 'fredpd:mdt:open' callback). Both end in Open.open.
+
+local function onTabletUsed(src, slot)
+    CreateThread(function() Open.useItem(src, slot) end)
+end
+
+local usableWarned = false
+local function registerTablet()
+    local ok, res = C.core('registerUsable', Config.item, onTabletUsed)
+    if (not ok or res ~= true) and not usableWarned then
+        usableWarned = true
+        C.log('warn', 'registerUsable(%s) failed: the tablet item opens only through the inventory\'s client export',
+            Config.item)
+    end
+    return ok and res == true
+end
+
+registerTablet()
+
+-- fredpd_core restarted: its bridge forgot the usable item (it re-applies it itself when the inventory restarts).
+AddEventHandler('onResourceStart', function(resource)
+    if resource == 'fredpd_core' then registerTablet() end
 end)
 
 ---------------------------------------------------------------------------------------------------------------

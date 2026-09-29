@@ -10,6 +10,7 @@
 -- Run: lua5.4 tests/lua/run.lua dispatch_server
 local shim = require('mysql_shim')
 local helper = require('helper')
+local Stack = require('dispatch_stack_test')
 
 local DB = 'fredpd_test_dispatch_lua'
 local DISPATCH = './resources/[fredpd]/fredpd_dispatch/'
@@ -159,29 +160,35 @@ local function makeEnv()
             env.pushes[#env.pushes + 1] = { topic = topic, payload = payload }
         end,
     }
-    local qbx = {
-        GetPlayer = function(_, src)
-            local p = player(src)
-            return p and { PlayerData = { citizenid = p.cid, source = tonumber(src) } } or nil
-        end,
-    }
+    -- The framework of the selected stack (FREDPD_STACK, tests/lua/dispatch_stack_test.lua), read live from
+    -- env.players; fredpd_core's real bridge runs over it (getPlayers, the audit actor, the normalised events).
+    env.stack = Stack.current()
+    local fwName, fw = Stack.framework(env.stack, player, function()
+        local ids = {}
+        for src in pairs(env.players) do ids[#ids + 1] = src end
+        table.sort(ids)
+        return ids
+    end)
+    core.getPlayers = function() return env.Bridge.getPlayers() end
 
     env.globals = {
-        exports = setmetatable({ fredpd_core = core, fredpd_mdt = mdt, qbx_core = qbx }, {
+        exports = setmetatable({ fredpd_core = core, fredpd_mdt = mdt, [fwName] = fw }, {
             __call = function(_, name, fn) env.exported[name] = fn end,
         }),
-        GetPlayers = function()
-            local ids = {}
-            for src in pairs(env.players) do ids[#ids + 1] = tostring(src) end
-            table.sort(ids)
-            return ids
-        end,
+        -- the player list comes from fredpd_core's bridge getPlayers (players with a character), not the native
+        GetPlayers = function() error('fredpd_dispatch must use exports.fredpd_core:getPlayers()', 2) end,
         GetPlayerName = function(src) local p = player(src); return p and p.name or nil end,
         GetPlayerIdentifierByType = function(src) return ('discord:%d'):format(900000000000000000 + tonumber(src)) end,
         GetGameTimer = function() return env.now end,
         SetTimeout = function(ms, fn) env.timers[#env.timers + 1] = { at = env.now + ms, fn = fn } end,
         CreateThread = function(fn) fn() end,
-        TriggerEvent = function(name, ...) env.events[#env.events + 1] = { name = name, args = { ... } } end,
+        TriggerEvent = function(name, ...)
+            env.events[#env.events + 1] = { name = name, args = { ... } }
+            -- fredpd_core's normalised bridge events reach this resource's handlers (server-local, FiveM)
+            if name:find('^fredpd:bridge:') then
+                for _, fn in ipairs(env.handlers[name] or {}) do fn(...) end
+            end
+        end,
         TriggerClientEvent = function(name, target, ...)
             env.clientEvents[#env.clientEvents + 1] = { name = name, target = target, args = { ... } }
         end,
@@ -211,9 +218,6 @@ local function makeEnv()
         rawset(_G, 'source', saved)
     end
 
-    -- The real fredpd_core audit resolves the actor through the framework bridge (docs/contracts.md §C17): load it
-    -- with the qbx_core implementation over the `qbx` mock above.
-    require('bridge_harness_test').useQbx()
     return env
 end
 
@@ -243,6 +247,9 @@ local function withEnv(t, fn)
         local env = makeEnv()
         for k, v in pairs(env.globals) do rawset(_G, k, v) end
         rawset(_G, 'source', nil)
+        -- The real fredpd_core bridge for the stack: the audit actor, getPlayers and the upstream framework events
+        -- (bound to env.handlers) all go through it (docs/contracts.md §C17).
+        env.Bridge = Stack.load(env.stack, { register = true })
         -- Clean slate per test (the schema stays).
         MySQL.query.await('DELETE FROM fredpd_alert_units')
         MySQL.query.await('DELETE FROM fredpd_alerts')
@@ -254,6 +261,7 @@ local function withEnv(t, fn)
         fn(t, env, freshModules())
     end)
     for n, v in pairs(saved) do rawset(_G, n, v[1]) end
+    Stack.reset()
     shim.sessionTimeZone = nil
     shim.database, shim.resourceName = savedDatabase, savedResource
     if not okRun then error(err, 0) end
@@ -912,8 +920,8 @@ tests['16 main: exports, server-only events and the roster triggers are register
         loadMain(env)
         t.eq(keys(env.exported), { 'assignSelf', 'closeAlert', 'createAlert', 'getUnits', 'leaveAlert', 'listAlerts',
             'takeAlert', 'takeNewest' })
-        for _, name in ipairs({ 'fredpd:dispatch:incoming', 'QBCore:Server:SetDuty', 'QBCore:Server:OnJobUpdate',
-            'QBCore:Server:PlayerLoaded', 'QBCore:Server:OnPlayerUnload', 'qbx_core:server:playerLoggedOut',
+        for _, name in ipairs({ 'fredpd:dispatch:incoming', 'fredpd:bridge:dutyChanged', 'fredpd:bridge:jobChanged',
+            'fredpd:bridge:playerLoaded', 'fredpd:bridge:playerUnloaded',
             'fredpd:officerChanged', 'playerDropped', 'fredpd:devtools:fakeUnits' }) do
             t.ok(env.handlers[name], name)
         end
@@ -937,9 +945,11 @@ tests['16 main: exports, server-only events and the roster triggers are register
         -- duty change -> one debounced rebuild
         env.advance(5000) -- run the rebuild the takes above scheduled
         env.clear()
+        -- the framework's own event (both qb-core and qbx_core fire it), normalised by fredpd_core's bridge
         env.players[2].duty = false
         env.fire('QBCore:Server:SetDuty', '', 2, false)
-        env.fire('QBCore:Server:OnJobUpdate', '', 2, {})
+        t.eq(#env.eventsNamed('fredpd:bridge:dutyChanged'), 1, 'normalised by the bridge')
+        env.fire('fredpd:bridge:jobChanged', '', 2)
         t.eq(#env.timers, 1)
         env.fire('fredpd:devtools:fakeUnits', 4, { { id = 'FAKE001', callsign = 'X' } })
         env.advance(5000)

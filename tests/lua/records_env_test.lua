@@ -4,7 +4,7 @@
 --    its name as `...`);
 --  * run.lua's `dofile` (no `...`) returns this file's own small suite (harness self-checks).
 -- H.with(t, fn) runs fn(t, env, mods) against a real MariaDB (tests/lua/mysql_shim.lua runs the migrations into
--- fredpd_test_records_lua, reset once per run, every session at time_zone '+02:00') with FiveM mocked:
+-- a per-run database fredpd_test_records_lua_<stack>_<token> (H.DB), created once per run, every session at time_zone '+02:00') with FiveM mocked:
 -- exports.fredpd_core (hasGrant, getTier, getCitizenId, canView/canViewMany evaluated by shared/canview.lua with the
 -- seeded default rules, audit capture, refreshPlate = the real mirror code, getAdapter housing), exports.fredpd_bolo
 -- (checkPlate, checkPerson, hasVisibleBolo, getBolosFor), GetResourceState, LoadResourceFile (config/formats.json), lib.print.
@@ -13,10 +13,20 @@
 -- test. FREDPD_UPDATE_GOLDEN=1 rewrites them instead.
 local shim = require('mysql_shim')
 local helper = require('helper')
+local BridgeH = require('bridge_harness_test')
 
 local H = {}
 
-H.DB = 'fredpd_test_records_lua'
+--- Per-run database: fredpd_test_records_lua_<stack>_<token>, token = FREDPD_TEST_RUN_ID (sanitised) or random, so
+--- concurrent qb/qbx or parallel workflow runs never reset each other's tables. Leftovers of runs that ended more
+--- than an hour ago are dropped by H.dropStale() at prepare time (run.lua exits without closing the Lua state).
+H.DB_PREFIX = 'fredpd_test_records_lua_'
+do
+    local stack = os.getenv('FREDPD_RECORDS_STACK') == 'qbx' and 'qbx' or 'qb'
+    local token = (os.getenv('FREDPD_TEST_RUN_ID') or ''):gsub('[^%w]', ''):sub(1, 16)
+    if token == '' then token = ('%08x'):format(math.random(0, 0x7fffffff)) end
+    H.DB = (H.DB_PREFIX .. stack .. '_' .. token):lower()
+end
 H.ROOT = './resources/[fredpd]/fredpd_records/'
 H.GOLDEN = H.ROOT .. 'test/golden/'
 H.MODULES = { 'server.common', 'server.caserefs', 'server.search', 'server.lookupflag', 'server.summary', 'server.cases',
@@ -28,6 +38,7 @@ package.preload['@fredpd_core.shared.format'] = function() return require('share
 package.preload['@fredpd_core.shared.time'] = function() return require('shared.time') end
 package.preload['@fredpd_core.shared.canview'] = function() return require('shared.canview') end
 package.preload['@fredpd_core.shared.sha256'] = function() return require('shared.sha256') end
+package.preload['@fredpd_core.server.db'] = function() return require('server.db') end
 
 -- Viewers. 1 IGV patrol (tier 0), 2 Utredning investigator (tier 1), 3 Ledning with records.admin (tier 2),
 -- 4 civilian (no grants), 5 officer grants but no character loaded (no citizenid).
@@ -76,7 +87,40 @@ H.PLATE_CHECKS_DDL = [[CREATE TABLE IF NOT EXISTS fredpd_plate_checks (
 
 local GLOBALS = { 'MySQL', 'LoadResourceFile', 'GetCurrentResourceName', 'exports', 'GetResourceState', 'lib',
     'source', 'CreateThread', 'TriggerEvent', 'TriggerClientEvent', 'GetPlayerPed', 'GetEntityCoords',
-    'GetPlayerRoutingBucket', 'GetPlayers', 'GetInvokingResource', 'AddEventHandler', 'GetGameTimer' }
+    'GetPlayerRoutingBucket', 'GetPlayers', 'GetInvokingResource', 'AddEventHandler', 'GetGameTimer', 'GetConvar',
+    'SetConvarReplicated' }
+
+--- Framework stack for the records suites: FREDPD_RECORDS_STACK=qbx (qbx_core) or anything else = qb (qb-core, the
+--- target server's framework). records_bridge_test.lua runs a smoke matrix on both regardless.
+function H.stack()
+    return os.getenv('FREDPD_RECORDS_STACK') == 'qbx' and 'qbx' or 'qb'
+end
+
+--- Load the real fredpd_core bridge for env.stack (quiet logs kept in env.bridgeLogs; resource states from
+--- env.resources, read live, so a test can stop the framework).
+function H.loadBridge(env)
+    local Bridge = require('server.bridge')
+    env.bridgeLogs = { info = {}, warn = {}, error = {}, debug = {} }
+    local function logger(level)
+        return function(fmt, ...)
+            local msg = select('#', ...) > 0 and fmt:format(...) or tostring(fmt)
+            env.bridgeLogs[level][#env.bridgeLogs[level] + 1] = msg
+        end
+    end
+    local cfg = env.stack == 'qbx'
+        and { framework = 'qbx_core', inventory = 'ox_inventory', target = 'ox_target', doorlock = 'ox_doorlock' }
+        or { framework = 'qb-core', inventory = 'qb-inventory', target = 'qb-target', doorlock = 'qb-doorlock' }
+    for _, res in pairs(cfg) do
+        if env.resources[res] == nil then env.resources[res] = 'started' end
+    end
+    Bridge.load(cfg, {
+        stateOf = function(res) return env.resources[res] or 'missing' end,
+        log = { info = logger('info'), warn = logger('warn'), error = logger('error'), debug = logger('debug') },
+        defer = function() end,
+    })
+    env.Bridge = Bridge
+    return Bridge
+end
 
 local prepared = nil -- nil: not tried, true: ready, false: failed
 local notified = false
@@ -116,7 +160,7 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- Mocked world
 
-function H.makeEnv()
+function H.makeEnv(stack)
     local CanView = require('shared.canview')
     local Mirror = require('server.mirror')
     local env = {
@@ -129,8 +173,8 @@ function H.makeEnv()
         -- Phase 5 world: auditDb = also insert audit rows into fredpd_audit (timeline, obehörig sökning);
         -- coords/buckets per src, bank balances per citizenid, captured notifications/pushes/events/jails.
         auditDb = false, coords = {}, buckets = {}, bank = {}, notifies = {}, pushes = {}, events = {}, jails = {},
-        evidence = {}, intelNotices = nil, tokens = 0, tokenFails = false, jailResult = false, bankingStarted = true,
-        depositFails = false, invoking = nil, gameTimer = 0,
+        evidence = {}, intelNotices = nil, tokens = 0, tokenFails = false, jailResult = false,
+        invoking = nil, gameTimer = 0, convars = {}, stack = stack or H.stack(),
     }
 
     local function player(src) return env.players[tonumber(src)] end
@@ -197,6 +241,11 @@ function H.makeEnv()
         getUnits = function(_, src) local p = player(src); return p and p.units or {} end,
         isOnDuty = function(_, src) local p = player(src); return p ~= nil and p.duty == true end,
         L = function(_, key, vars) return key .. (vars and (' ' .. json.encode(vars)) or '') end,
+        -- §C17 bridge exports: the real fredpd_core bridge (env.Bridge, loaded by H.with for env.stack).
+        getPlayer = function(_, src) return env.Bridge.getPlayer(src) end,
+        getPlayerByCitizenId = function(_, cid) return env.Bridge.getPlayerByCitizenId(cid) end,
+        removeMoney = function(_, src, account, amount, reason) return env.Bridge.removeMoney(src, account, amount, reason) end,
+        addMoney = function(_, src, account, amount, reason) return env.Bridge.addMoney(src, account, amount, reason) end,
         getAdapter = function(_, kind)
             env.calls.getAdapter = env.calls.getAdapter + 1
             if kind == 'prison' then
@@ -267,33 +316,54 @@ function H.makeEnv()
         end
         return nil
     end
-    local function qbxPlayer(src, p)
-        return { PlayerData = { source = src, citizenid = p.cid }, Functions = {
-            RemoveMoney = function(account, amount)
-                assert(account == 'bank')
-                local have = env.bank[p.cid] or 0
-                if have < amount then return false end
-                env.bank[p.cid] = have - amount
-                return true
+    -- Framework through the REAL fredpd_core bridge (server/bridge.lua, loaded in H.with) over the bridge harness's
+    -- upstream mocks (tests/lua/bridge_harness_test.lua: qb-core GetCoreObject/Player.Functions, qbx_core exports).
+    -- Players with a character and online ~= false are loaded; bank = env.bank[citizenid] (read and written live).
+    local function playerData(src, p)
+        local pd = BridgeH.playerData(src, p.cid)
+        pd.money = setmetatable({}, {
+            __index = function(_, k)
+                if k == 'bank' then return env.bank[p.cid] or 0 end
+                if k == 'cash' or k == 'crypto' then return 0 end
+                return nil
             end,
-            AddMoney = function(account, amount)
-                assert(account == 'bank')
-                env.bank[p.cid] = (env.bank[p.cid] or 0) + amount
-                return true
+            __newindex = function(_, k, v)
+                assert(k == 'bank', 'only the bank account is used')
+                env.bank[p.cid] = v
             end,
-        } }
+        })
+        return pd
     end
-    local qbx = {
-        GetPlayerByCitizenId = function(_, cid)
-            local src, p = byCid(cid)
-            return src and qbxPlayer(src, p) or nil
-        end,
-        GetPlayer = function(_, src)
-            local p = player(src)
+    local loaded = setmetatable({}, {
+        __index = function(_, src)
+            local p = env.players[tonumber(src)]
             if not p or not p.cid or p.online == false then return nil end
-            return qbxPlayer(tonumber(src), p)
+            return playerData(tonumber(src), p)
         end,
-    }
+        __pairs = function()
+            local map = {}
+            for src, p in pairs(env.players) do
+                if p.cid and p.online ~= false then map[src] = playerData(src, p) end
+            end
+            return next, map, nil
+        end,
+    })
+    env.moneyCalls = {}
+    local framework
+    if env.stack == 'qbx' then
+        framework = BridgeH.qbxCore(loaded, env.moneyCalls)
+        -- qbx_core's removeMoney hook (server/player.lua:1383-1387, triggerEventHooks) can refuse a payment.
+        local remove = framework.RemoveMoney
+        framework.RemoveMoney = function(self, id, mt, amount, reason)
+            if env.moneyHookRefuses then return false end
+            return remove(self, id, mt, amount, reason)
+        end
+        env.resources.qbx_core = 'started'
+    else
+        framework = BridgeH.qbCore(loaded, env.moneyCalls)
+        env.resources['qb-core'] = 'started'
+    end
+    env.framework = framework
     local records = {
         -- CSPRNG stand-in for server/random.js: 32 bytes from /dev/urandom, base64url.
         randomToken = function(_, n)
@@ -335,21 +405,13 @@ function H.makeEnv()
     local intel = {
         getPersonNotices = function(_, _src, _cid) return env.intelNotices or {} end,
     }
-    local banking = {
-        addAccountMoney = function(_, account, amount)
-            env.deposits = env.deposits or {}
-            if env.depositFails then return false end
-            env.deposits[#env.deposits + 1] = { account = account, amount = amount }
-            return true
-        end,
-    }
     env.resources.fredpd_mdt = 'started'
     env.resources.fredpd_forensics = 'started'
-    env.resources['Renewed-Banking'] = 'started'
 
     env.globals = {
-        exports = setmetatable({ fredpd_core = core, fredpd_bolo = bolo, qbx_core = qbx, fredpd_records = records,
-            fredpd_mdt = mdt, fredpd_forensics = forensics, fredpd_intel = intel, ['Renewed-Banking'] = banking }, {
+        exports = setmetatable({ fredpd_core = core, fredpd_bolo = bolo, fredpd_records = records,
+            fredpd_mdt = mdt, fredpd_forensics = forensics, fredpd_intel = intel,
+            [env.stack == 'qbx' and 'qbx_core' or 'qb-core'] = framework }, {
             __call = function(_, name, fn) env.exported[name] = fn end,
         }),
         GetResourceState = function(name) return env.resources[name] or 'missing' end,
@@ -383,6 +445,11 @@ function H.makeEnv()
         GetInvokingResource = function() return env.invoking end,
         AddEventHandler = function() end,
         GetGameTimer = function() return env.gameTimer end,
+        GetConvar = function(name, default)
+            local v = env.convars[name]
+            if v == nil then return default end
+            return v
+        end,
         lib = {
             print = setmetatable({}, { __index = function(_, level)
                 return function(msg) env.logs[#env.logs + 1] = { level = level, msg = msg } end
@@ -450,6 +517,23 @@ local function run(sql)
     return out
 end
 H.run = run
+
+--- Drop per-run databases (H.DB_PREFIX..) of other runs whose newest table is more than an hour old. Never this
+--- run's own, never one still being created (no tables yet). Best effort: errors are ignored.
+function H.dropStale()
+    local like = H.DB_PREFIX:gsub('_', '\\\\_') .. '%'
+    local ok, out = shim.run(("SELECT TABLE_SCHEMA AS db FROM information_schema.TABLES WHERE TABLE_SCHEMA LIKE '%s' "
+        .. "GROUP BY TABLE_SCHEMA HAVING MAX(CREATE_TIME) < NOW() - INTERVAL 1 HOUR"):format(like))
+    if not ok then return end
+    local okParse, sets = pcall(shim.parseXml, out)
+    if not okParse or type(sets) ~= 'table' or not sets[1] then return end
+    for _, row in ipairs(sets[1].rows) do
+        local db = row.db
+        if type(db) == 'string' and db ~= H.DB and db:match('^[%w_]+$') and db:sub(1, #H.DB_PREFIX) == H.DB_PREFIX then
+            shim.run(('DROP DATABASE IF EXISTS `%s`'):format(db))
+        end
+    end
+end
 
 --- Clean slate for the tables this module reads (schema stays); officers re-seeded; AUTO_INCREMENTs reset so
 --- ids in golden files are stable.
@@ -590,8 +674,9 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- Runner
 
---- Run fn(t, env, mods) with MariaDB + mocks installed; restores every global afterwards.
-function H.with(t, fn)
+--- Run fn(t, env, mods) with MariaDB + mocks installed; restores every global afterwards. opts.stack = 'qb' | 'qbx'
+--- (default H.stack()).
+function H.with(t, fn, opts)
     local ok, reason = shim.available()
     if not ok then
         if not notified then
@@ -608,6 +693,7 @@ function H.with(t, fn)
         shim.resourceName = 'fredpd_core'
         if prepared == nil then
             prepared = false
+            H.dropStale()
             shim.resetDatabase(H.DB, true)
             require('server.db').migrate({ log = function() end, resource = 'fredpd_core' })
             local okFile, migration = pcall(helper.readFile, H.PLATE_CHECKS_MIGRATION)
@@ -619,14 +705,17 @@ function H.with(t, fn)
             prepared = true
         end
         if not prepared then return end
-        local env = H.makeEnv()
+        local env = H.makeEnv(opts and opts.stack)
         for k, v in pairs(env.globals) do rawset(_G, k, v) end
         rawset(_G, 'source', nil)
+        rawset(_G, 'SetConvarReplicated', nil)
+        H.loadBridge(env)
         captureSql(env)
         H.resetData()
         fn(t, env, H.freshModules())
     end)
     for n, v in pairs(saved) do rawset(_G, n, v[1]) end
+    BridgeH.reset()
     shim.sessionTimeZone = nil
     shim.database, shim.resourceName = savedDatabase, savedResource
     if not okRun then error(err, 0) end

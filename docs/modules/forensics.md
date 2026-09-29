@@ -10,14 +10,14 @@ case link and the tablet actions.
 
 | File | Role |
 |---|---|
-| `fredpd_forensics/fxmanifest.lua` | deps `ox_lib`, `oxmysql`, `ox_inventory`, `ox_target`, `fredpd_core`; evidences and fredpd_mdt optional at runtime |
+| `fredpd_forensics/fxmanifest.lua` | deps `ox_lib`, `oxmysql`, `fredpd_core` (§C17: no ox_inventory/ox_target/framework dependency); client includes `'@fredpd_core/bridge/client.lua'`; evidences, ox_inventory, ox_target and fredpd_mdt checked at runtime |
 | `config.lua` | lab box(es) + local laptop spot, evidence lockers (stashes), locker patterns, container items, lab unit, timings. MRPD defaults are **placeholders** (see below) |
 | `shared/evidence.lua` | pure: item map, uids, result whitelist, same-evidence check, custody action for a move, input validation (mirror of evidence.ts), lab box test |
 | `server/store.lua` | SQL: `fredpd_evidence` writes (insert, append, first analysis, link transaction) and reads; read-only lookups in `fredpd_cases`/`fredpd_case_assignees`, `fredpd_officers`, `fredpd_persons`, evidences' registers |
 | `server/service.lua` | collect (mint + register), give/arrival, uid registry, custody (swapItems post-hook), analysis, visibility/shape, list/get/link, case page list, locker check, dialog callback body |
-| `server/main.lua` | wiring: exports, `evidences:evidenceItemAnalysed`, callback `fredpd:forensics:link`, stashes, ox_inventory hooks `createItem`/`swapItems`/`openInventory` (again after an ox_inventory restart), formats |
+| `server/main.lua` | bridge switch (`bridgeInfo().evidence`), wiring: exports (gated), `evidences:evidenceItemAnalysed`, callback `fredpd:forensics:link`, stashes, ox_inventory hooks `createItem`/`swapItems`/`openInventory` (again after an ox_inventory restart), formats, replicated convar `fredpd_forensics_evidence` |
 | `db/migrations/011_evidence.sql` | `fredpd_evidence.item_name`, `ident` (uid registry, Decision 5.2); additive, `ADD COLUMN IF NOT EXISTS` |
-| `client/main.lua` | lab zone (`lib.zones.box`) → "Analysera", local lab laptop, locker target, "Koppla till ärende" dialog |
+| `client/main.lua` | lab zone (`lib.zones.box`) → "Analysera", local lab laptop, locker target (`FredBridge.target`), "Koppla till ärende" dialog; nothing until evidence is on |
 | `test/contract.test.ts`, `test/golden/*.json` | Lua output vs `EvidenceItemSchema` / `EVIDENCE_ACTIONS.listEvidence.output` |
 | `patches/evidences.20-fredpd-integration.patch` | evidences: biometric analysis event fix, inventory passed with the event, `openLaptop` client export |
 | `patches/evidences.30-sv-locale.patch` | evidences: `locales/sv.json` (276 strings; laptop UI too) |
@@ -82,6 +82,31 @@ link      dialog → lib.callback fredpd:forensics:link { id, caseNumber } (or t
           UPDATE evidence SET case_id, n, tag, level, chain += link WHERE case_id IS NULL] → retry once on a
           (case_id, n) conflict → audit evidence.link → fredpd:evidenceLinked(caseId, id) → push 'case'
 ```
+
+## Framework bridge (docs/contracts.md §C17)
+
+evidences needs ox_inventory + ox_target (its fxmanifest), so fredpd_forensics only works on that pair. The server
+runs qb-core + qb-inventory + qb-target today; there the resource **stays idle** and qb-policejob keeps its own evidence.
+
+| | evidence on (`exports.fredpd_core:bridgeInfo().evidence` and `.inventory == 'ox_inventory'`) | evidence off |
+|---|---|---|
+| server | everything below (hooks, stashes, `evidences:evidenceItemAnalysed`, callback `fredpd:forensics:link`, `playerDropped`); replicated convar `fredpd_forensics_evidence = 'on'`; net event `fredpd:forensics:client:enable` to all clients; one info line | nothing registered except the four exports and one `onResourceStart` listener; convar `'off'`; **one** warning `evidence is not available (bridge: inventory=…, target=…, evidences …)` |
+| exports `listEvidence`/`getEvidence`/`linkEvidence`/`listCaseEvidence` | as before | `{ ok = false, error = 'unavailable', reason = 'evidence_off' }` (fresh table); fredpd_mdt passes code + reason to the NUI; fredpd_records' case page shows no evidence |
+| client | lab zones, locker boxes and the laptop "Koppla till ärende" option through `FredBridge.target`; offer net event | nothing registered |
+
+- **Late start:** evidences (or ox_inventory, or ox_target) starting after fredpd_forensics → `onResourceStart` → one look at the
+  bridge `RECHECK_MS` (1 s) later (one-shot `SetTimeout`, not a loop; the bridge's `hasFeature` wants `started`).
+  Wiring happens at most once; it is never undone (evidences stopping just stops its event).
+- **Client switch:** active when the server says so (convar at join, or the enable event later) **and** locally
+  `FredBridge.target.impl == 'ox_target'`, ox_target started and ox_inventory started; re-tried on
+  `onClientResourceStart` of ox_target/ox_inventory. A forged local enable event on a qb client does nothing.
+- **ox_inventory stays direct, gated:** hooks (`registerHook`), `RegisterStash`, `GetSlotsWithItem` on stashes,
+  `GetSlot`, `SetMetadata`, `GetContainerFromSlot`, `GetInventoryItems` have no bridge equivalent (§C17 `hooks` are
+  ox-only; the bridge `find` takes a player src only). Server code reaches them only through `Service.inventory()`,
+  which raises unless `cfg.inventory == 'ox_inventory'` (set from `bridgeInfo()` at activation); every caller is in a
+  `pcall`. The client opens a locker with `exports.ox_inventory:openInventory` only while active.
+- **Framework calls:** none. Actor, grants, duty, units, tier and canView come from fredpd_core's exports
+  (`getCitizenId`, `hasGrant`, `isOnDuty`, …), which use the bridge; the audit actor resolves through it too.
 
 ## Exports, events, callbacks
 
@@ -254,8 +279,15 @@ story is collect → analyse → link → hand-in (tested, and the steps above).
 
 ## Tests
 
-- `lua5.4 tests/lua/run.lua forensics_` → 40: `forensics_shared_test` (9, pure), `forensics_client_test` (7, mocked
-  ox_lib/ox_target/natives), `forensics_server_test` (24, MariaDB `fredpd_test_forensics_lua`, session time zone
+- `lua5.4 tests/lua/run.lua forensics_` → 49, on both stacks: default `FREDPD_FORENSICS_STACK` (qb: qb-core
+  framework + ox pair) and `FREDPD_FORENSICS_STACK=qbx` (qbx_core + ox pair); the fredpd_core mock's `bridgeInfo` and
+  the audit actor are the REAL `server/bridge.lua`. `forensics_bridge_test` (6): plain qb stack idle (nothing
+  registered, one warning, exports `unavailable`, ox_inventory never touched, also after evidences starts), ox pair
+  with evidences started late (idle → wired once by the re-check, enable event + convar), qb/qbx smoke (collect,
+  link, audit actor), `Service.inventory()` gate, static check (no qb-core/qbx/ox_target/doorlock calls,
+  ox_inventory only in the two gated places, fxmanifest deps). `forensics_shared_test` (9, pure),
+  `forensics_client_test` (10, the REAL `bridge/client.lua` over mocked ox_target/qb-target, ox_lib, natives; 08-10:
+  qb-target stack registers nothing, enable event, late ox_inventory start), `forensics_server_test` (24, MariaDB `fredpd_test_forensics_lua`, session time zone
   `+02:00`, an ox_inventory double that runs the registered hooks with upstream's filter/post-event semantics,
   including `giveItem` and `AddItem`'s repeated `Items.Metadata`):
   wiring, collect + UTC + no phantom rows, hook never blocks / no SQL in the hook / failed moves, the §5.7 story (4
@@ -293,6 +325,10 @@ story is collect → analyse → link → hand-in (tested, and the steps above).
   `ox_lib:notify` reaching the player.
 - `exports.ox_inventory:GetInventoryItems(src)` listing a held container item with `metadata.container` (the analysis
   holder check), and evidences passing a player inventory as a number (msgpack) in `arguments.inventory`.
+
+- Bridge: `SetConvarReplicated` at runtime reaching already-connected clients (the enable event covers them anyway);
+  `onResourceStart('evidences')` + 1 s being late enough for `GetResourceState('evidences') == 'started'`;
+  `onClientResourceStart` firing for ox_inventory/ox_target that start after this resource on a client.
 
 ## Integration requests
 
@@ -339,3 +375,13 @@ story is collect → analyse → link → hand-in (tested, and the steps above).
     fredpd_forensics) next to 006.
 12. **Role config**: opening an evidence locker now needs `mdt_page:evidence` + on duty (`config.lockerGrant`); give
     it to every role that hands in evidence (patrol included), or set `lockerGrant = false`.
+13. **NUI (Bevis page)**: while evidence is off the tablet actions answer `unavailable` with reason `evidence_off`.
+    Today `errorLocaleKey` shows the generic `errors.serviceUnavailable` ("Tjänsten är inte tillgänglig just nu. Försök
+    igen om en stund.") with a retry. Add `evidence_off: 'evidence.unavailable'` to `REASON_LOCALE_KEYS`
+    (apps/nui/src/api/errors.ts), treat it as not retryable, and ideally hide the Bevis nav entry / case-page evidence
+    block; key in `locales/pending/forensics-bridge.json`.
+14. **docs/contracts.md §C17 owner**: document the forensics switch (convar `fredpd_forensics_evidence`, net event
+    `fredpd:forensics:client:enable`, reason `evidence_off`); the bridge doc still lists `ox_inventory`/`ox_target`
+    among this resource's direct calls, now limited to `Service.inventory()` and the client locker open.
+15. **fredpd_core (bridge)**: optional `inventory` in `clientBridgeInfo()` / a replicated `fredpd_bridge_inventory`
+    convar would let the client check the selected inventory itself instead of "ox_inventory started".

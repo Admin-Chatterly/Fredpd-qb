@@ -1,16 +1,19 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- fredpd_forensics client/main.lua with ox_lib, ox_target, evidences and natives mocked: lab zone (Analysera option
 -- only inside, local laptop prop), locker target, "Koppla till ärende" offers (dialog at once, or waiting while the
--- evidences laptop holds NUI focus), error texts, cleanup.
+-- evidences laptop holds NUI focus), error texts, cleanup. The REAL fredpd_core bridge/client.lua is loaded first (as
+-- the fxmanifest's '@fredpd_core/bridge/client.lua' is), so the targets go through FredBridge.target over the ox_target
+-- mock; tests 08-10 cover the bridge switch (qb-target stack: nothing registered; enable event; late ox start).
 -- Run: lua5.4 tests/lua/run.lua forensics_client
 local helper = require('helper')
 
 local FORENSICS = './resources/[fredpd]/fredpd_forensics/'
+local CORE = './resources/[fredpd]/fredpd_core/'
 local MODULES = { 'config', 'client.main' }
 local GLOBALS = { 'lib', 'exports', 'GetHashKey', 'IsNuiFocused', 'GetResourceState', 'RegisterNetEvent',
     'AddEventHandler', 'CreateThread', 'GetCurrentResourceName', 'locale', 'vec3', 'vec4', 'CreateObject',
     'SetEntityHeading', 'FreezeEntityPosition', 'SetModelAsNoLongerNeeded', 'PlayEntityAnim', 'DoesEntityExist',
-    'DeleteEntity' }
+    'DeleteEntity', 'FredBridge', 'GetConvar', 'LoadResourceFile', 'print' }
 
 package.preload['@fredpd_core.shared.locale'] = function() return require('shared.locale') end
 
@@ -24,16 +27,37 @@ end)()
 
 local tests = {}
 
-local function makeEnv()
+--- opts = { stack = 'ox' (default) | 'qb', convar = 'on' (default) | 'off' }
+local function makeEnv(opts)
+    opts = opts or {}
+    local qb = opts.stack == 'qb'
     local env = {
         zones = {}, models = {}, removed = {}, boxes = {}, notifies = {}, dialogs = {}, awaits = {}, contexts = {},
         shown = {}, netEvents = {}, handlers = {}, objects = {}, deleted = {}, opened = {}, stashes = {},
         focused = false, dialogAnswer = { 'K-123-26' }, awaitAnswer = { ok = true, tag = 'B-K-123-26-001',
             caseNumber = 'K-123-26' }, openLaptopResult = true, resources = { evidences = 'started' },
-        nextEntity = 500,
+        nextEntity = 500, printed = {}, qbTarget = {},
+        convars = { fredpd_bridge_target = qb and 'qb-target' or 'ox_target', fredpd_bridge_framework = 'qb-core',
+            fredpd_bridge_doorlock = qb and 'qb-doorlock' or 'ox_doorlock', fredpd_forensics_evidence = opts.convar or 'on' },
     }
+    if qb then
+        env.resources['qb-target'], env.resources['qb-inventory'] = 'started', 'started'
+    else
+        env.resources.ox_target = 'started'
+        if opts.oxInventory ~= false then env.resources.ox_inventory = 'started' end
+    end
     env.globals = {
         GetHashKey = function(name) return 'hash:' .. name end,
+        GetConvar = function(name, default) return env.convars[name] or default end,
+        print = function(line) env.printed[#env.printed + 1] = line end,
+        LoadResourceFile = function(res, path) -- bridge/client.lua reads its implementation files from fredpd_core
+            if res ~= 'fredpd_core' then return nil end
+            local f = io.open(CORE .. path, 'rb')
+            if not f then return nil end
+            local text = f:read('a')
+            f:close()
+            return text
+        end,
         IsNuiFocused = function() return env.focused end,
         GetResourceState = function(name) return env.resources[name] or 'missing' end,
         RegisterNetEvent = function(name, fn) env.netEvents[name] = fn end,
@@ -58,20 +82,33 @@ local function makeEnv()
             env.deleted[#env.deleted + 1] = e
         end,
         exports = {
+            -- ox_target client/api.lua:235-272 (addModel/removeModel take lists), :54-61 (addBoxZone -> id)
             ox_target = {
-                addModel = function(_, model, options)
-                    for _, o in ipairs(options) do env.models[#env.models + 1] = { model = model, option = o } end
+                addModel = function(_, models, options)
+                    for _, model in ipairs(models) do
+                        for _, o in ipairs(options) do env.models[#env.models + 1] = { model = model, option = o } end
+                    end
                 end,
-                removeModel = function(_, model, name)
-                    env.removed[#env.removed + 1] = { model = model, name = name }
-                    for i = #env.models, 1, -1 do
-                        if env.models[i].model == model and env.models[i].option.name == name then
-                            table.remove(env.models, i)
+                removeModel = function(_, models, names)
+                    for _, model in ipairs(models) do
+                        for _, name in ipairs(names) do
+                            env.removed[#env.removed + 1] = { model = model, name = name }
+                            for i = #env.models, 1, -1 do
+                                if env.models[i].model == model and env.models[i].option.name == name then
+                                    table.remove(env.models, i)
+                                end
+                            end
                         end
                     end
                 end,
-                addBoxZone = function(_, zone) env.boxes[#env.boxes + 1] = zone end,
+                addBoxZone = function(_, zone)
+                    env.boxes[#env.boxes + 1] = zone
+                    return #env.boxes
+                end,
             },
+            ['qb-target'] = setmetatable({}, { __index = function(_, k)
+                return function(...) env.qbTarget[#env.qbTarget + 1] = { k, ... } end
+            end }),
             evidences = {
                 openLaptop = function(_, entity)
                     env.opened[#env.opened + 1] = entity
@@ -113,15 +150,17 @@ local function makeEnv()
     return env
 end
 
-local function withClient(t, fn)
+local function withClient(t, fn, opts)
     local saved = {}
     for _, n in ipairs(GLOBALS) do saved[n] = { rawget(_G, n) } end
-    local env = makeEnv()
+    local env = makeEnv(opts)
     for k, v in pairs(env.globals) do rawset(_G, k, v) end
+    rawset(_G, 'FredBridge', nil)
     for _, name in ipairs(MODULES) do package.loaded[name] = nil end
     local savedPath = package.path
     package.path = FORENSICS .. '?.lua;' .. package.path
     local ok, err = pcall(function()
+        env.FB = dofile(CORE .. 'bridge/client.lua') -- fxmanifest: '@fredpd_core/bridge/client.lua' first
         local client = require('client.main')
         package.path = savedPath
         fn(t, env, client)
@@ -172,7 +211,7 @@ tests['02 lab: entering adds Analysera + a local laptop, which opens evidences; 
         t.eq(env.lastNotify().description, 'Bevislaptopen är inte tillgänglig just nu.')
         zone.onExit()
         t.eq(env.option('fredpd_forensics:analyse'), nil)
-        t.eq(env.removed[1], { model = 'hash:p_laptop_02_s', name = 'fredpd_forensics:analyse' })
+        t.eq(env.removed[1], { model = 'hash:p_laptop_02_s', name = 'fredpd_forensics:analyse' }, 'removed by name')
         t.eq(env.objects[entity], nil, 'prop deleted')
         -- re-entering does not add the option twice
         zone.onEnter()
@@ -278,6 +317,55 @@ tests['07 malformed offers are ignored; resource stop deletes the lab laptop'] =
         env.handlers.onResourceStop('fredpd_forensics')
         t.eq(env.objects[entity], nil)
     end)
+end
+
+---------------------------------------------------------------------------------------------------------------
+-- Framework bridge (docs/contracts.md §C17)
+
+local function registered(env)
+    return #env.zones + #env.boxes + #env.models + #env.qbTarget
+end
+
+tests['08 bridge qb stack (qb-target, qb-inventory): nothing is registered, not even with the server on'] = function(t)
+    withClient(t, function(_, env, client)
+        t.eq(env.FB.target.impl, 'qb-target')
+        t.eq(client.active, false)
+        t.eq(registered(env), 0, 'no zone, box or target option')
+        t.eq(env.netEvents['fredpd:forensics:client:offerLink'], nil, 'no offer handler')
+        env.netEvents['fredpd:forensics:client:enable']() -- even a (forged) enable changes nothing here
+        env.handlers.onClientResourceStart('ox_inventory')
+        t.eq(client.active, false)
+        t.eq(registered(env), 0)
+    end, { stack = 'qb' })
+end
+
+tests['09 bridge ox stack, server off at join: idle until the enable event, then everything once'] = function(t)
+    withClient(t, function(_, env, client)
+        t.eq(env.FB.target.impl, 'ox_target')
+        t.eq(client.active, false)
+        t.eq(registered(env), 0)
+        env.netEvents['fredpd:forensics:client:enable']()
+        t.eq(client.active, true)
+        t.eq({ #env.zones, #env.boxes, #env.models }, { 1, 1, 1 })
+        t.eq(env.boxes[1].name, 'fredpd_forensics:locker:evidence_locker_mrpd')
+        t.eq(env.boxes[1].options[1].label, 'Öppna bevisförrådet')
+        t.ok(env.netEvents['fredpd:forensics:client:offerLink'])
+        env.netEvents['fredpd:forensics:client:enable']()
+        t.eq({ #env.zones, #env.boxes, #env.models }, { 1, 1, 1 }, 'not twice')
+    end, { convar = 'off' })
+end
+
+tests['10 bridge ox stack: ox_inventory starting on the client after this resource activates it'] = function(t)
+    withClient(t, function(_, env, client)
+        t.eq(client.active, false, 'ox_inventory missing at start')
+        t.eq(registered(env), 0)
+        env.handlers.onClientResourceStart('ox_target') -- still no ox_inventory
+        t.eq(client.active, false)
+        env.resources.ox_inventory = 'started'
+        env.handlers.onClientResourceStart('ox_inventory')
+        t.eq(client.active, true)
+        t.eq({ #env.zones, #env.boxes, #env.models }, { 1, 1, 1 })
+    end, { oxInventory = false })
 end
 
 return tests

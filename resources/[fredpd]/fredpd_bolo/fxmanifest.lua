@@ -1,7 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-only
--- fredpd_bolo: efterlysningar (BOLO), plate checks (ox_target "Kontrollera registreringsskylt"), hit alerts.
--- ox_target, fredpd_dispatch and fredpd_mdt are optional at runtime (the option, the alerts and the tablet pushes
--- are skipped while they are not started). locales/ is copied in by scripts/build.mjs (git-ignored here).
+-- fredpd_bolo: efterlysningar (BOLO), plate checks (target option "Kontrollera registreringsskylt"), hit alerts.
+-- Framework and target go through fredpd_core's bridge (docs/contracts.md §C17: qb-core/qbx_core, qb-target/
+-- ox_target). The target resource, fredpd_dispatch and fredpd_mdt are optional at runtime (the option, the alerts
+-- and the tablet pushes are skipped while they are not started). locales/ is copied in by scripts/build.mjs (git-ignored here).
 fx_version 'cerulean'
 game 'gta5'
 lua54 'yes'
@@ -15,7 +16,6 @@ version '0.1.0'
 dependencies {
     'ox_lib',
     'oxmysql',
-    'qbx_core',
     'fredpd_core',
 }
 
@@ -31,7 +31,7 @@ server_scripts {
 }
 
 client_scripts {
-    '@qbx_core/modules/playerdata.lua',
+    '@fredpd_core/bridge/client.lua',
     'client/main.lua',
 }
 

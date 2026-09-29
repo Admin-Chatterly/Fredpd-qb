@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- fredpd_bolo server entry (IMPLEMENTATION.md §5.4, docs/contracts.md §C12, docs/modules/bolo.md). Exports, the
--- ox_target callback and the server events are registered synchronously at start; the active-BOLO cache is loaded
+-- plate-check callback and the server events are registered synchronously at start; the active-BOLO cache is loaded
 -- once oxmysql is ready and after every change (no timers, no loops).
 
 local L = require('@fredpd_core.shared.locale').L
@@ -27,8 +27,9 @@ exports('hasVisibleBolo', Service.hasVisibleBolo)
 exports('resolveOnImpound', Service.resolveOnImpound)
 
 ---------------------------------------------------------------------------------------------------------------
--- ox_target "Kontrollera registreringsskylt": the client sends the vehicle's network id only; the server checks
--- grant mdt_page:search, duty, 1/s, the entity and the distance, and reads the plate from the entity itself.
+-- Target option "Kontrollera registreringsskylt" (qb-target or ox_target via fredpd_core's bridge): the client
+-- sends the vehicle's network id only; the server checks grant mdt_page:search, duty, 1/s, the entity and the
+-- distance, and reads the plate from the entity itself.
 
 lib.callback.register('fredpd:bolo:plateCheck', function(source, netId)
     return Service.targetCheck(source, netId)

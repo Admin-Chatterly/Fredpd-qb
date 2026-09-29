@@ -2,7 +2,8 @@
 -- fredpd_mdt settings (client and server; loaded with ox_lib `require 'config'`). Nothing secret: every client can
 -- read this file. Changing it needs a resource restart.
 return {
-    --- ox_inventory item name (patches/ox_inventory.10-fredpd-items.patch).
+    --- Inventory item name (patches/qb-core.10-fredpd-items.patch for qb-inventory,
+    --- patches/ox_inventory.10-fredpd-items.patch for ox_inventory).
     item = 'pd_tablet',
 
     --- Tablet prop and animation (IMPLEMENTATION.md §5.2). The clip is a seated bus-passenger idle; that it looks
@@ -20,8 +21,8 @@ return {
         flag = 49, -- upper body, loop, controllable
     },
 
-    --- Vehicle terminal ("Fordonsdator"): an ox_target option on these models, usable from the driver or front
-    --- passenger seat. The server checks the model and the seat again.
+    --- Vehicle terminal ("Fordonsdator"): a target option (FredBridge.target: qb-target or ox_target) on these models,
+    --- usable from the driver or front passenger seat. The server checks the model and the seat again.
     terminal = {
         enabled = true,
         requireItem = false, -- true: the terminal also needs a registered pd_tablet in the inventory

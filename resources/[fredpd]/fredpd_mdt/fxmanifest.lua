@@ -2,7 +2,10 @@
 -- fredpd_mdt: the police tablet (item pd_tablet + vehicle terminal), the NUI host and the tablet action dispatcher
 -- (IMPLEMENTATION.md §5.2, docs/contracts.md §C12, docs/modules/mdt.md). web/build (the apps/nui bundle) and
 -- locales/ are copied in by scripts/build.mjs (git-ignored here). The item itself comes from
--- patches/ox_inventory.10-fredpd-items.patch.
+-- patches/qb-core.10-fredpd-items.patch (qb-inventory) or patches/ox_inventory.10-fredpd-items.patch. Framework,
+-- inventory and target are reached only through fredpd_core's bridge (docs/contracts.md §C17): server exports on
+-- fredpd_core, client FredBridge from '@fredpd_core/bridge/client.lua'. No qb-*/qbx_*/ox_inventory/ox_target
+-- dependency: which of them runs is fredpd_core's config/integrations.json.
 fx_version 'cerulean'
 game 'gta5'
 lua54 'yes'
@@ -16,9 +19,6 @@ version '0.1.0'
 dependencies {
     'ox_lib',
     'oxmysql',
-    'ox_inventory',
-    'ox_target',
-    'qbx_core',
     'fredpd_core',
 }
 
@@ -36,7 +36,7 @@ server_scripts {
 }
 
 client_scripts {
-    '@qbx_core/modules/playerdata.lua',
+    '@fredpd_core/bridge/client.lua',
     'client/main.lua',
 }
 

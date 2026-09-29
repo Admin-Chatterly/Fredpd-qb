@@ -4,6 +4,9 @@
 -- evidence lockers, tablet actions listEvidence / getEvidence / linkEvidence.
 -- evidences is optional at start (its event simply never fires without it) but needs
 -- patches/evidences.20-fredpd-integration.patch for fingerprint/DNA analyses and "Analysera".
+-- Framework bridge (docs/contracts.md §C17): no hard dependency on ox_inventory / ox_target / a framework. evidences
+-- needs ox_inventory + ox_target, so the resource wires itself only while exports.fredpd_core:bridgeInfo().evidence
+-- is true; on qb-inventory / qb-target it stays idle (one warning) and the tablet's Bevis page says "not available".
 -- locales/ is copied in by scripts/build.mjs (git-ignored here).
 fx_version 'cerulean'
 game 'gta5'
@@ -18,8 +21,6 @@ version '0.1.0'
 dependencies {
     'ox_lib',
     'oxmysql',
-    'ox_inventory',
-    'ox_target',
     'fredpd_core',
 }
 
@@ -35,6 +36,7 @@ server_scripts {
 }
 
 client_scripts {
+    '@fredpd_core/bridge/client.lua',
     'client/main.lua',
 }
 

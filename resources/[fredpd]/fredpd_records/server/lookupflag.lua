@@ -8,7 +8,7 @@
 -- is asynchronous (fredpd_core Audit.write), so the current row may or may not be in the table yet; a set makes the
 -- result the same either way. When the count reaches config/integrations.json unauthorizedLookupThreshold (default 3;
 -- window unauthorizedLookupWindowMinutes, default 60) the officer is flagged once per window: audit 'lookup.flag'
--- (target 'officer', meta { count, windowMinutes, persons }), a 'case'-topic push { type = 'lookupFlag' } to open
+-- (target 'officer', meta { count, windowMinutes, persons }), a 'ledning'-topic push { type = 'lookupFlag', officer, count } to open
 -- tablets holding perm records.admin, and a notification to on-duty records.admin players (Ledning).
 
 local C = require 'server.common'
@@ -52,7 +52,7 @@ end
 local function tellLedning(officer, count)
     local name = Refs.officers({ officer })[officer]
     local label = name and name.displayName or officer
-    C.push('case', { type = 'lookupFlag', officer = officer, count = count }, function(target)
+    C.push(C.TOPIC_LEDNING, { type = 'lookupFlag', officer = officer, count = count }, function(target)
         return C.perm(target, 'records.admin')
     end)
     local players = type(GetPlayers) == 'function' and GetPlayers() or {}

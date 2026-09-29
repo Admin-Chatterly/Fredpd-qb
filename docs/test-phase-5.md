@@ -15,6 +15,9 @@ Tick each step. If one fails, copy the F8 console and the txAdmin Live Console l
 1. `node scripts/merge-pending-locales.mjs`, then `scripts\build.ps1`, copy `resources\[fredpd]` to the server and
    restart. The console shows migration `013_records.sql` and seed `report_templates_sv.sql` applied once.
 2. SQL: `SELECT id, name FROM fredpd_report_templates;` → Anmälan, PM, Beslagsprotokoll, Förhör.
+3. `config/integrations.json`: `framework` `qb-core` (qb-inventory, qb-target, qb-doorlock) and `"prison": "xt-prison"`.
+   The console line `bridge: framework=qb-core, …` appears once; fredpd_records logs nothing about qbx_core,
+   Renewed-Banking or ox_*.
 
 ## Steps
 
@@ -45,13 +48,15 @@ opens the report: readable, **not** editable. Both press Ny rapport at the same 
 ### 5. Charges with sums ☐
 
 A in the report: Lägg till brott → "Misshandel" × 2 and "Ringa misshandel": totals show 14 000 kr and 20 min.
-Save. The person page of the suspect lists the three rows under Belastningsregister. Change nothing in the catalogue:
+Save. The person page of the suspect lists the three rows under Belastningsregister. With the suspect's character
+standing ≤ 5 m from A when saving, xt-prison takes them in for 20 min (`charges.apply` audit meta `jailed = true`). Change nothing in the catalogue:
 Brottskatalog page lists ≈120 rows, search "hastighet" finds the speeding codes.
 
 ### 6. Ordningsbot: class, distance, money ☐
 
 B stands next to A's character (≤ 5 m), Utfärda ordningsbot → "Förargelseväckande beteende": A's bank balance drops
-1 500 kr, A gets "Du har fått en ordningsbot på 1 500 kr." B walks 10 m away and tries again: refused (too far).
+1 500 kr, A gets "Du har fått en ordningsbot på 1 500 kr." (The money is not credited to any police account yet.)
+B walks 10 m away and tries again: refused (too far).
 Choosing a non-ordningsbot charge (e.g. Ringa misshandel) is refused. Two fines within 2 s: the second is refused.
 
 ### 7. Sekretess: levels and lowering ☐

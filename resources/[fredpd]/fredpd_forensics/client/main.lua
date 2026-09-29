@@ -1,9 +1,13 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- fredpd_forensics client (IMPLEMENTATION.md §5.7, docs/modules/forensics.md). Event- and zone-driven only:
---   * station lab: lib.zones.box per config lab; entering adds the laptop option "Analysera" (ox_target, on the
---     evidences laptop model) and spawns a local laptop prop, leaving removes both. "Analysera" opens evidences' own
---     laptop UI (export openLaptop from patches/evidences.20-fredpd-integration.patch); no analysis logic here.
---   * evidence lockers: one ox_target box per configured stash, added once at start, opening the ox_inventory stash.
+--   * station lab: lib.zones.box per config lab; entering adds the laptop option "Analysera" (FredBridge.target, on
+--     the evidences laptop model) and spawns a local laptop prop, leaving removes both. "Analysera" opens evidences'
+--     own laptop UI (export openLaptop from patches/evidences.20-fredpd-integration.patch); no analysis logic here.
+--   * evidence lockers: one FredBridge.target box per configured stash, opening the ox_inventory stash.
+--   * Framework bridge (docs/contracts.md §C17): nothing above exists until the server says evidence is on
+--     (replicated convar fredpd_forensics_evidence = 'on' at join, or the net event fredpd:forensics:client:enable
+--     when it turns on later) AND the bridge's target here is ox_target with ox_inventory started (evidences needs
+--     both). Otherwise (qb-target / qb-inventory) the client registers no zone, target or offer handler.
 --   * "Koppla till ärende": the server offers it after an analysis (fredpd:forensics:client:offerLink). The dialog
 --     (lib.inputDialog) opens at once unless evidences' laptop holds NUI focus; then the offer waits as the laptop
 --     option "Koppla till ärende" (a second NUI focus on top of the laptop would leave the player stuck in it).
@@ -203,20 +207,55 @@ end
 function M.enterLab(lab)
     local first = not anyInside()
     M.inside[lab.id] = true
-    if first then exports.ox_target:addModel(laptopHash(), { analyseOption() }) end
+    if first and not M.analyseHandle then
+        M.analyseHandle = FredBridge.target.addModel(laptopHash(), analyseOption())
+    end
     CreateThread(function() M.spawnLaptop(lab) end)
 end
 
 function M.exitLab(lab)
     M.inside[lab.id] = nil
     M.removeLaptop(lab.id)
-    if not anyInside() then exports.ox_target:removeModel(laptopHash(), M.ANALYSE_OPTION) end
+    if not anyInside() and M.analyseHandle then
+        FredBridge.target.remove(M.analyseHandle)
+        M.analyseHandle = nil
+    end
 end
 
 ---------------------------------------------------------------------------------------------------------------
 -- Start
 
-function M.start()
+M.CONVAR = 'fredpd_forensics_evidence' -- replicated by server/main.lua: 'on' while the server side is wired
+M.active = false
+M.serverOn = false  -- the server's enable event arrived (the convar may lag behind it)
+M.handles = {}      -- FredBridge.target handles added by M.activate (lockers, link option)
+M.analyseHandle = nil
+
+--- Local half of the evidence switch: the bridge's target here is ox_target and ox_inventory runs (evidences needs
+--- both; the server decides the rest).
+function M.localReady()
+    local target = type(FredBridge) == 'table' and FredBridge.target or nil
+    return target ~= nil and target.impl == 'ox_target' and target.available() == true
+        and GetResourceState('ox_inventory') == 'started'
+end
+
+function M.serverSaysOn()
+    return M.serverOn or GetConvar(M.CONVAR, 'off') == 'on'
+end
+
+--- Open an evidence locker stash (ox_inventory: only reachable while active, which needs ox_inventory).
+function M.openLocker(id)
+    local okOpen, err = pcall(function() exports.ox_inventory:openInventory('stash', id) end)
+    if not okOpen then
+        print(('^1[fredpd_forensics] openInventory %s failed: %s^0'):format(tostring(id), tostring(err)))
+        notify('error', L('errors.serviceUnavailable'))
+    end
+end
+
+--- Register the lab zones, locker targets, the waiting-offer laptop option and the offer event (once).
+function M.activate()
+    if M.active then return true end
+    M.active = true
     for _, lab in ipairs(Config.labs or {}) do
         lib.zones.box({
             name = 'fredpd_forensics:lab:' .. lab.id,
@@ -230,46 +269,59 @@ function M.start()
 
     for _, locker in ipairs(Config.lockers or {}) do
         if locker.coords then
-            exports.ox_target:addBoxZone({
-                name = 'fredpd_forensics:locker:' .. locker.id,
+            M.handles[#M.handles + 1] = FredBridge.target.addBoxZone('fredpd_forensics:locker:' .. locker.id, {
                 coords = locker.coords,
                 size = locker.size,
                 rotation = locker.rotation or 0.0,
-                options = {
-                    {
-                        name = M.LOCKER_OPTION,
-                        label = L('evidence.action.openLocker'),
-                        icon = 'fa-solid fa-box-archive',
-                        distance = 2.0,
-                        onSelect = function()
-                            exports.ox_inventory:openInventory('stash', locker.id)
-                        end,
-                    },
-                },
+            }, {
+                name = M.LOCKER_OPTION,
+                label = L('evidence.action.openLocker'),
+                icon = 'fa-solid fa-box-archive',
+                distance = 2.0,
+                onSelect = function() M.openLocker(locker.id) end,
             })
         end
     end
 
     -- Pending "Koppla till ärende" offers, on any evidences laptop (only while an offer waits).
-    exports.ox_target:addModel(laptopHash(), {
-        {
-            name = M.LINK_OPTION,
-            label = L('evidence.link.action'),
-            icon = 'fa-solid fa-link',
-            distance = 2.0,
-            canInteract = function() return next(M.pending) ~= nil end,
-            onSelect = function()
-                CreateThread(M.chooseOffer)
-            end,
-        },
+    M.handles[#M.handles + 1] = FredBridge.target.addModel(laptopHash(), {
+        name = M.LINK_OPTION,
+        label = L('evidence.link.action'),
+        icon = 'fa-solid fa-link',
+        distance = 2.0,
+        canInteract = function() return next(M.pending) ~= nil end,
+        onSelect = function()
+            CreateThread(M.chooseOffer)
+        end,
     })
 
     RegisterNetEvent('fredpd:forensics:client:offerLink', M.onOffer)
+    return true
+end
+
+--- Activate when both halves agree; otherwise nothing is registered.
+function M.tryActivate()
+    if M.active or not M.serverSaysOn() or not M.localReady() then return M.active end
+    return M.activate()
+end
+
+function M.start()
+    -- The server turned evidence on after this client joined (evidences started later).
+    RegisterNetEvent('fredpd:forensics:client:enable', function()
+        M.serverOn = true
+        M.tryActivate()
+    end)
+    -- ox_target / ox_inventory starting on this client after this resource.
+    AddEventHandler('onClientResourceStart', function(resource)
+        if resource == 'ox_target' or resource == 'ox_inventory' then M.tryActivate() end
+    end)
 
     AddEventHandler('onResourceStop', function(resource)
         if resource ~= GetCurrentResourceName() then return end
         for labId in pairs(M.props) do M.removeLaptop(labId) end
     end)
+
+    M.tryActivate()
 end
 
 M.start()

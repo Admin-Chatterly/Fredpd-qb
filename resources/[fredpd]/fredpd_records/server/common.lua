@@ -310,7 +310,16 @@ end
 
 M.MDT = 'fredpd_mdt'
 
---- The actor's citizenid, from fredpd_core (qbx_core), never from an argument. nil when no character is loaded.
+--- Push topics this resource sends (docs/modules/records.md "Push topics"):
+---   'case'     { type = 'caseUpdated', caseId }                  open tablets of the case's owner/assignees
+---   'ledning'  { type = 'releaseRequest', id }                   open tablets holding perm records.admin
+---              { type = 'lookupFlag', officer, count }           (release queue changed / obehörig sökning flagged)
+--- 'ledning' must be in packages/types PUSH_TOPICS and fredpd_mdt's open.lua PUSH_TOPICS (integration request); until
+--- then fredpd_mdt refuses it (its throttled warning, 0 tablets) and Ledning only gets the ox_lib notification.
+M.TOPIC_CASE = 'case'
+M.TOPIC_LEDNING = 'ledning'
+
+--- The actor's citizenid, from fredpd_core (framework bridge), never from an argument. nil when no character is loaded.
 function M.actor(src)
     return M.citizenid(M.str(M.coreOr('getCitizenId', src)))
 end
@@ -441,18 +450,34 @@ function M.push(topic, payload, filter)
     return tonumber(n) or 0
 end
 
---- Online server id of a character (qbx_core GetPlayerByCitizenId), or nil.
+---------------------------------------------------------------------------------------------------------------
+-- Framework through the fredpd_core bridge (docs/contracts.md §C17, docs/modules/bridge.md): this resource never calls
+-- qb-core/qbx_core (or a banking resource) itself. The bridge validates, checks the framework resource's state and
+-- answers nil/false (one warning, in fredpd_core) while it is down.
+
+--- Online server id of a character (bridge getPlayerByCitizenId), or nil.
 function M.onlineSrc(citizenid)
-    local ok, player = pcall(function() return exports.qbx_core:GetPlayerByCitizenId(citizenid) end)
-    if not ok or type(player) ~= 'table' or type(player.PlayerData) ~= 'table' then return nil end
-    return M.playerSrc(player.PlayerData.source)
+    if type(citizenid) ~= 'string' or citizenid == '' then return nil end
+    return M.playerSrc(M.coreOr('getPlayerByCitizenId', citizenid))
 end
 
---- qbx_core player object of a server id, or nil.
-function M.qbxPlayer(src)
-    local ok, player = pcall(function() return exports.qbx_core:GetPlayer(src) end)
-    if ok and type(player) == 'table' then return player end
+--- Normalised bridge player { source, citizenid, name, job, charinfo } of a server id, or nil (no character).
+function M.player(src)
+    src = M.playerSrc(src)
+    if not src then return nil end
+    local p = M.coreOr('getPlayer', src)
+    if type(p) == 'table' and type(p.citizenid) == 'string' then return p end
     return nil
+end
+
+--- Bridge removeMoney(src, account, amount, reason) -> true when taken (false: refused, insufficient, framework down).
+function M.removeMoney(src, account, amount, reason)
+    return M.coreOr('removeMoney', src, account, amount, reason) == true
+end
+
+--- Bridge addMoney(src, account, amount, reason) -> true when added.
+function M.addMoney(src, account, amount, reason)
+    return M.coreOr('addMoney', src, account, amount, reason) == true
 end
 
 --- Per-src, per-key minimum interval in milliseconds (in memory, no timers). true = allowed (and consumed).

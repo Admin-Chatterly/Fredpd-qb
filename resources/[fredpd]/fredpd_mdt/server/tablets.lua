@@ -3,7 +3,7 @@
 -- (IMPLEMENTATION.md §5.2, docs/contracts.md §C12). Every write is audited through fredpd_core (tablet.issue,
 -- tablet.revoke, tablet.reinstate). Timestamps are written with UTC_TIMESTAMP() and read with Time.isoSelect (§C7).
 --
---   issue(actorSrc, targetSrc)          /surfplatta <id>: row + ox_inventory item with metadata { serial, owner }
+--   issue(actorSrc, targetSrc)          /surfplatta <id>: row + inventory item (bridge add) with metadata { serial, owner }
 --   list(src, { page })                 action listTablets     -> TabletListOutput
 --   setRevoked(src, { serial, revoked }) action setTabletRevoked -> Tablet; revoking force-closes that tablet
 
@@ -98,19 +98,6 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- Issue (/surfplatta)
 
-local function inventory(fn, ...)
-    local args = table.pack(...)
-    local ok, res = pcall(function()
-        local inv = exports.ox_inventory
-        return inv[fn](inv, table.unpack(args, 1, args.n))
-    end)
-    if not ok then
-        C.logThrottled('inv:' .. fn, 'error', 'ox_inventory:%s failed: %s', fn, tostring(res))
-        return false, nil
-    end
-    return true, res
-end
-
 --- Name for the messages: the officer's Discord display name (§4.9), else the citizenid (never the character name).
 local function officerName(src, citizenid)
     local ok, officer = C.core('getOfficer', src)
@@ -133,9 +120,9 @@ function M.issue(actorSrc, targetSrc)
         issuedBy = C.citizenId(actorSrc)
         if not issuedBy then return false, 'errors.unauthorized' end
     end
-    local okCarry, canCarry = inventory('CanCarryItem', target, Config.item, 1)
-    if not okCarry then return false, 'tablet.unavailable' end
-    if canCarry ~= true then return false, 'tablet.issueCannotCarry' end
+    -- No CanCarryItem in the bridge (§C17): a full inventory shows up as add() == false below, after the row insert,
+    -- which is then rolled back. A stopped inventory is refused here, before anything is written.
+    if not C.inventoryUp() then return false, 'tablet.unavailable' end
 
     local serial = nil
     for _ = 1, M.SERIAL_ATTEMPTS do
@@ -161,11 +148,14 @@ function M.issue(actorSrc, targetSrc)
     end
 
     local metadata = { serial = serial, owner = owner, description = C.L('tablet.itemSerial', { serial = serial }) }
-    local okAdd, added = inventory('AddItem', target, Config.item, 1, metadata)
-    if not okAdd or not added then
-        -- Never issued: remove the row again so the list does not show a tablet nobody holds.
+    if not C.addItem(target, Config.item, 1, metadata) then
+        -- Never issued: remove the row again so the list does not show a tablet nobody holds. The bridge cannot say
+        -- why (full inventory, pd_tablet missing from the inventory's items, inventory stopped meanwhile).
         pcall(MySQL.update.await, M.DELETE_SQL, { serial })
-        return false, 'tablet.issueFailed'
+        -- Item patches: patches/qb-core.10-fredpd-items.patch, patches/ox_inventory.10-fredpd-items.patch.
+        C.logThrottled('issue:add', 'warn', 'could not add %s to player %d (inventory full, or the item is missing from '
+            .. 'the inventory\'s item list: apply the FredPD item patch)', Config.item, target)
+        return false, 'tablet.issueNotAdded'
     end
 
     C.audit(actorSrc, 'tablet.issue', 'tablet', serial, { owner = owner, target = target })

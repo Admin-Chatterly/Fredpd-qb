@@ -8,8 +8,8 @@
 --   contributor editor or any assignee: add subjects (reports: see server/reports.lua).
 -- Level rules: never above the actor's tier; lowering needs records.admin; closing keeps the level.
 -- Numbering: case_number = formatId(formats.caseNumber, { seq, date }) with seq from fredpd_sequences ('case', year in
--- Europe/Stockholm) allocated by one atomic statement (INSERT … ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1),
--- as fredpd_core/server/db.lua NEXT_SEQ_SQL). oxmysql's transaction.await is a fixed batch (docs/deps-verification.md
+-- Europe/Stockholm) allocated by fredpd_core's db.nextSeq (fredpd_core/server/db.lua, loaded with ox_lib
+-- `require '@fredpd_core.server.db'`; one atomic INSERT … ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)). oxmysql's transaction.await is a fixed batch (docs/deps-verification.md
 -- §10), so the number is allocated first and the insert follows; a failed insert leaves a gap, never a duplicate
 -- (uq_case_number would reject one and the insert retries with the next number).
 -- Every write is audited through exports.fredpd_core:audit (meta.label = the short, safe TimelineEntry.detail), pushed
@@ -21,6 +21,7 @@ local Refs = require 'server.caserefs'
 local Search = require 'server.search'
 local Time = require '@fredpd_core.shared.time'
 local Format = require '@fredpd_core.shared.format'
+local Db = require '@fredpd_core.server.db'
 
 local M = {}
 
@@ -29,8 +30,6 @@ M.LIST_SCAN = 500      -- candidate rows read for one list request (visibility i
 M.TIMELINE_MAX = 100
 M.NUMBER_ATTEMPTS = 3
 
-M.NEXT_SEQ_SQL = 'INSERT INTO fredpd_sequences (seq_type, year, value) VALUES (?, ?, LAST_INSERT_ID(1)) '
-    .. 'ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1), updated_at = UTC_TIMESTAMP()'
 
 M.CASE_SQL = 'SELECT c.id, c.case_number, c.title, c.summary, c.status, c.level, c.unit, c.owner_citizenid, '
     .. Time.isoSelect('c.created_at', 'createdAt') .. ', ' .. Time.isoSelect('c.closed_at', 'closedAt')
@@ -319,7 +318,7 @@ function M.announce(c, extra)
     if c.owner then members[c.owner] = true end
     for _, a in ipairs(c.assignees or {}) do members[a] = true end
     for _, cid in ipairs(extra or {}) do members[cid] = true end
-    C.push('case', { type = 'caseUpdated', caseId = c.id }, function(target)
+    C.push(C.TOPIC_CASE, { type = 'caseUpdated', caseId = c.id }, function(target)
         local cid = C.actor(target)
         return cid ~= nil and members[cid] == true
     end)
@@ -407,14 +406,6 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- Writes
 
---- Next value of a fredpd_sequences counter (atomic; the insert id of NEXT_SEQ_SQL is the allocated value).
-function M.nextSeq(seqType, year)
-    local id = MySQL.insert.await(M.NEXT_SEQ_SQL, { seqType, year })
-    local n = C.int(id)
-    if not n or n < 1 then error(('nextSeq(%s, %d): no insert id'):format(seqType, year), 0) end
-    return n
-end
-
 --- Stockholm calendar year of an ISO timestamp (formats.json tz), via the shared formatter.
 function M.yearOf(iso)
     return math.tointeger(tonumber(Format.formatId('{{yyyy}}', { date = iso })))
@@ -434,7 +425,7 @@ function M.insertNumbered(fields)
     local now = Time.nowIso()
     local year = M.yearOf(now)
     for _ = 1, M.NUMBER_ATTEMPTS do
-        local seq = M.nextSeq('case', year)
+        local seq = Db.nextSeq('case', year)
         local number = Format.formatId(template, { seq = seq, date = now })
         local params = { number, fields.title }
         local sql = 'INSERT INTO fredpd_cases (case_number, title, summary, status, level, unit, owner_citizenid, created_by, '
@@ -489,7 +480,17 @@ function M.createCase(src, input)
     return M.detailOf(src, id)
 end
 
---- export updateCase(src, CaseUpdateInput) -> CaseDetail. summary '' clears it (JSON null cannot cross into Lua).
+--- Is `v` a "clear" marker for a nullable field? JSON null never reaches Lua as a value (the NUI's json.decode and the
+--- export msgpack both turn it into an absent key), so fredpd_mdt's dispatcher transports "clear" as '' (docs/modules/
+--- mdt.md, integration request 2). A decoder's null sentinel (`json.null`, when the runtime's json has one) counts too.
+function M.isNullMarker(v)
+    local j = rawget(_G, 'json')
+    return v ~= nil and type(j) == 'table' and j.null ~= nil and v == j.null
+end
+
+--- export updateCase(src, CaseUpdateInput) -> CaseDetail. summary: absent = no change; '' (after trim), a json.null
+--- sentinel or `clearSummary = true` (with no non-empty summary) = clear it (stored NULL, the zod `null` of
+--- CaseUpdateInput). JSON null itself cannot cross into Lua (it arrives as an absent key).
 function M.updateCase(src, input)
     local actor
     src, actor = C.gate(src, 'mdt_page', 'cases')
@@ -498,10 +499,17 @@ function M.updateCase(src, input)
     local id = C.id(input.id)
     local title = C.optText(input.title, 3, 160)
     local summary = nil
-    if input.summary ~= nil then
+    if input.clearSummary ~= nil and type(input.clearSummary) ~= 'boolean' then return C.fail('validation') end
+    if M.isNullMarker(input.summary) then
+        summary = ''
+    elseif input.summary ~= nil then
         if type(input.summary) ~= 'string' then return C.fail('validation') end
         summary = C.body(C.trim(input.summary), 20000, true)
         if summary == nil then return C.fail('validation') end
+    end
+    if input.clearSummary == true then
+        if summary ~= nil and summary ~= '' then return C.fail('validation') end
+        summary = ''
     end
     local level = C.optLevel(input.level, nil)
     if not id or title == false or level == false then return C.fail('validation') end

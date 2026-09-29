@@ -3,8 +3,9 @@
 -- Server-side checks read only the server's copy; the client uses the item/prop/anim/timing keys for display.
 
 return {
-    -- ox_inventory item (patches/ox_inventory.30-breach-items.patch). Without it in ox_inventory the resource still
-    -- starts, logs one warning, and nobody can breach.
+    -- Inventory item, defined by patches/qb-core.10-fredpd-items.patch (qb-inventory) or
+    -- patches/ox_inventory.30-breach-items.patch (ox_inventory). Without the definition the resource still starts,
+    -- logs one warning, and nobody can breach.
     ramItem = 'pd_ram',
 
     -- FredPD grant needed to breach (docs/contracts.md §C2 / §C16).
@@ -34,16 +35,22 @@ return {
     cooldownMs = 10000,                     -- after a successful breach, per player
     finishRateMs = 250,                     -- finish attempts per player: at most 4 per second
 
-    -- ox_doorlock doors that can never be breached (checked on the server at start and finish). An entry is a door
-    -- id (number), an exact door name (string) or a Lua pattern on the name ({ pattern = '^mrpd_' }). Empty = every
-    -- ox_doorlock door can be breached, including the station's own cell/armory/evidence doors; list those here.
+    -- Doors that can never be breached (checked on the server at start and finish). An entry is a door id (number;
+    -- for qb-doorlock also its Config.DoorList string key), an exact door name (string; qb-doorlock: doorLabel) or a
+    -- Lua pattern on the name ({ pattern = '^mrpd_' }). Empty = every door of the doorlock resource can be breached,
+    -- including the station's own cell/armory/evidence doors; list those here.
     -- Example: denyDoors = { 'mrpd_armory', { pattern = '^mrpd_evidence' }, 57 },
     denyDoors = {},
 
-    -- Max distance (metres) between the player's ped (server-side position) and the door's ox_doorlock coords, at
-    -- start and again at finish. ox_target shows the option within targetDistance.
+    -- Max distance (metres) between the player's ped (server-side position) and the door's coords (doorlock
+    -- resource), at start and again at finish. The target option shows within targetDistance, on a box zone of
+    -- doorZoneSize (metres, x/y/z) centred on the door's coords; zones exist only for players holding the grant.
     maxDistance = 3.0,
     targetDistance = 2.0,
+    doorZoneSize = vec3(1.6, 1.6, 2.6),
+    -- After the character loads, the door list is read again this much later (qb-doorlock fills its client list
+    -- from a server callback on the same load).
+    doorReloadDelayMs = 2000,
 
     -- Evidence left at the door by a breach (optional). A list like a config/scene_evidence.lua entry, spawned with
     -- the breaching officer as owner, or false. evidences has no 'toolmark' type (docs/deps-verification.md

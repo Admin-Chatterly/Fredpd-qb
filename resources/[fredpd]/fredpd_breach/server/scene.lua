@@ -153,9 +153,14 @@ function M.spawnEntries(entries, p, owner, meta)
     return spawned
 end
 
+--- fredpd_core's bridge feature 'evidence' (docs/contracts.md §C17): evidences started on the ox inventory + ox
+--- target stack. On the qb stack (evidences needs both ox resources) scene evidence stays off: one warning, then
+--- 'unavailable' answers.
 function M.evidencesStarted()
-    if GetResourceState('evidences') == 'started' then return true end
-    warnOnce('evidences', 'evidences is not started; scene evidence is disabled')
+    local ok, on = pcall(function() return exports.fredpd_core:hasFeature('evidence') end)
+    if ok and on == true and GetResourceState('evidences') == 'started' then return true end
+    warnOnce('evidences', 'scene evidence is disabled: fredpd_core reports the evidence feature off (evidences '
+        .. 'started, on the ox inventory + target stack, is needed)')
     return false
 end
 

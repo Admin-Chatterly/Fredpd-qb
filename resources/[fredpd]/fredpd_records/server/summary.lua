@@ -53,7 +53,7 @@ local RECORDS_SQL = 'SELECT r.id, r.charge_code, COALESCE(NULLIF(r.title_sv, \'\
     .. "WHERE r.citizenid = ? AND r.status <> 'revoked' ORDER BY r.created_at DESC, r.id DESC LIMIT "
     .. ('%d'):format(M.MAX_RECORDS)
 
---- fredpd_persons.gender (qbx charinfo: 0 man, 1 kvinna) -> PersonSchema gender.
+--- fredpd_persons.gender (qb-core/qbx_core charinfo: 0 man, 1 kvinna) -> PersonSchema gender.
 function M.gender(v)
     return GENDERS[C.int(v)] or 'unknown'
 end
@@ -302,7 +302,7 @@ end
 local MY_CASES_FROM = ' FROM fredpd_cases c JOIN (SELECT id AS case_id FROM fredpd_cases WHERE owner_citizenid = ? '
     .. 'UNION SELECT case_id FROM fredpd_case_assignees WHERE citizenid = ?) m ON m.case_id = c.id'
 
---- The actor's citizenid, from fredpd_core (qbx_core), never from the input.
+--- The actor's citizenid, from fredpd_core (framework bridge), never from the input.
 local function actor(src)
     local cid = C.coreOr('getCitizenId', src)
     return C.citizenid(C.str(cid))

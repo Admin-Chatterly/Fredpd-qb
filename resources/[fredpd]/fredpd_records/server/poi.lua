@@ -124,11 +124,50 @@ function M.warningsInput(v)
     return out
 end
 
---- photo URL: https URL or a service upload path, <= 255 characters, no spaces/quotes. nil = invalid.
+--- Photo URLs are restricted to fredpd_service's own uploads (POST /upload stores <32 hex>.<png|jpg|webp>, docs/
+--- contracts.md §C6): '<service public URL>/upload/<file>' or the service-relative '/upload/<file>'. The public URL is
+--- the convar fredpd_service_public_url (= the service's PUBLIC_URL), else fredpd_service_url; any other host is refused.
+M.PHOTO_EXTS = { png = true, jpg = true, webp = true }
+M.UPLOAD_PATH = '/upload/'
+
+--- The service base URL (scheme://host[:port][/path], no trailing slash, lower-case scheme and host, path case kept)
+--- or nil.
+function M.serviceBase()
+    local get = rawget(_G, 'GetConvar')
+    if type(get) ~= 'function' then return nil end
+    for _, name in ipairs({ 'fredpd_service_public_url', 'fredpd_service_url' }) do
+        local v = get(name, '')
+        if type(v) == 'string' and v ~= '' then
+            v = v:gsub('/+$', '')
+            local scheme, host, rest = v:match('^([hH][tT][tT][pP][sS]?)://([%w%.%-]+:?%d*)(.*)$')
+            if scheme and (rest == '' or rest:match('^/[%w%-_%./]*$')) then
+                return scheme:lower() .. '://' .. host:lower() .. rest
+            end
+        end
+    end
+    return nil
+end
+
+--- An upload file name as the service writes it: 32 lower-case hex + '.png' | '.jpg' | '.webp'.
+local function uploadFile(name)
+    local id, ext = name:match('^(' .. ('%x'):rep(32) .. ')%.(%a+)$')
+    return id ~= nil and id:lower() == id and M.PHOTO_EXTS[ext] == true
+end
+
+--- photoUrl input -> the stored value, '' (clear) or nil (invalid). <= 255 characters.
 function M.photoInput(v)
     if type(v) ~= 'string' or #v > 255 then return nil end
     if v == '' then return '' end
-    if v:match('^https://[%w%.%-]+[%w%./_%-%%%?=&]*$') or v:match('^/uploads/[%w%-_%.]+$') then return v end
+    local file = v:sub(1, #M.UPLOAD_PATH) == M.UPLOAD_PATH and v:sub(#M.UPLOAD_PATH + 1) or nil
+    if not file then
+        local base = M.serviceBase()
+        local prefix = base and (base .. M.UPLOAD_PATH) or nil
+        -- scheme and host compare case-insensitively, the base path and the file name exactly
+        local scheme, host, rest = v:match('^([hH][tT][tT][pP][sS]?)://([%w%.%-]+:?%d*)(/.*)$')
+        local norm = scheme and (scheme:lower() .. '://' .. host:lower() .. rest) or nil
+        if prefix and norm and #norm > #prefix and norm:sub(1, #prefix) == prefix then file = norm:sub(#prefix + 1) end
+    end
+    if file and uploadFile(file) then return v end
     return nil
 end
 

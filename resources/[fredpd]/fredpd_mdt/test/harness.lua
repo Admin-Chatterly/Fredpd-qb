@@ -1,7 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Test harness for tests/lua/mdt_*_test.lua (plain Lua 5.4, run from the repo root by tests/lua/run.lua): loads fresh
 -- copies of the fredpd_mdt server modules and builds a mocked FiveM world — players with grants/duty/officers
--- (fredpd_core exports), an ox_inventory, the routed resources (fredpd_records, fredpd_bolo, fredpd_dispatch,
+-- (fredpd_core exports; the inventory exports go through fredpd_core's REAL bridge, server/bridge.lua, over a
+-- qb-inventory + qb-core or an ox_inventory + qbx_core mock: H.STACK, from FREDPD_MDT_STACK, default 'qb'; opts.stack
+-- per world), the routed resources (fredpd_records, fredpd_bolo, fredpd_dispatch,
 -- fredpd_forensics, fredpd_intel), client events, net/local event handlers, lib.callback / lib.addCommand capture and a clock.
 -- MySQL is left to the caller (a small in-memory double here, or tests/lua/mysql_shim.lua for the DB tests).
 local H = {}
@@ -22,10 +24,18 @@ package.preload['@fredpd_core.shared.locale'] = package.preload['@fredpd_core.sh
 
 local helper = require('helper')
 
+--- Stack the suites run on: 'qb' (qb-core, qb-inventory, qb-target, qb-doorlock) or 'ox' (qbx_core, ox_inventory,
+--- ox_target, ox_doorlock). `FREDPD_MDT_STACK=ox lua5.4 tests/lua/run.lua mdt_` runs every mdt suite on the ox stack.
+H.STACK = os.getenv('FREDPD_MDT_STACK') == 'ox' and 'ox' or 'qb'
+H.STACKS = {
+    qb = { cfg = { framework = 'qb-core', inventory = 'qb-inventory', target = 'qb-target', doorlock = 'qb-doorlock' } },
+    ox = { cfg = { framework = 'qbx_core', inventory = 'ox_inventory', target = 'ox_target', doorlock = 'ox_doorlock' } },
+}
+
 --- sv.json + the pending files fredpd_mdt uses (sv texts).
 H.SV = (function()
     local dict = helper.readJson('locales/sv.json')
-    for _, file in ipairs({ 'locales/pending/core.json', 'locales/pending/mdt.json' }) do
+    for _, file in ipairs({ 'locales/pending/core.json', 'locales/pending/mdt.json', 'locales/pending/mdt-bridge.json' }) do
         for k, v in pairs(helper.readJson(file)) do
             if type(v) == 'table' and v.sv then dict[k] = v.sv end
         end
@@ -140,12 +150,16 @@ end
 --- Build the mocked world. opts.mysql = false to leave MySQL alone (DB tests install the shim themselves).
 function H.world(opts)
     opts = opts or {}
+    local stack = opts.stack or H.STACK
+    local cfg = H.STACKS[stack].cfg
     local env = {
+        stack = stack, cfg = cfg, inventory = cfg.inventory, usable = {}, bridgeLogs = {},
         now = 100000, players = H.players(), tablets = H.tabletRows(), queries = {}, client = {}, audits = {},
         calls = {}, handlers = {}, net = {}, callbacks = {}, commands = {}, exported = {}, logs = {}, events = {},
-        replies = {}, resources = { fredpd_core = 'started', ox_inventory = 'started', fredpd_records = 'started',
+        replies = {}, resources = { fredpd_core = 'started', fredpd_records = 'started',
             fredpd_bolo = 'started', fredpd_dispatch = 'started', fredpd_forensics = 'started',
-            fredpd_intel = 'started' },
+            fredpd_intel = 'started', [cfg.framework] = 'started', [cfg.inventory] = 'started',
+            [cfg.target] = 'started' },
         vehicles = {}, units = nil,
     }
 
@@ -173,6 +187,14 @@ function H.world(opts)
             return { grants = list, denied = {}, tier = p and p.tier or 0, units = p and copy(p.units) or {},
                 computedAt = '2026-09-29T08:00:00Z' }
         end,
+        -- §C17 bridge exports: the real fredpd_core server/bridge.lua (loaded in H.with), over the stack mocks below.
+        count = function(_, ...) if env.coreDown then error('fredpd_core is not running', 0) end return env.Bridge.count(...) end,
+        find = function(_, ...) if env.coreDown then error('fredpd_core is not running', 0) end return env.Bridge.find(...) end,
+        add = function(_, ...) if env.coreDown then error('fredpd_core is not running', 0) end return env.Bridge.add(...) end,
+        remove = function(_, ...) return env.Bridge.remove(...) end,
+        registerUsable = function(_, ...) return env.Bridge.registerUsable(...) end,
+        bridgeInfo = function() return env.Bridge.info() end,
+        hasFeature = function(_, name) return env.Bridge.hasFeature(name) end,
         audit = function(_, src, action, targetType, targetId, meta)
             env.audits[#env.audits + 1] = { src = src, action = action, targetType = targetType, targetId = targetId,
                 meta = meta }
@@ -185,36 +207,67 @@ function H.world(opts)
         local p = player(src)
         return p and p.items or {}
     end
-    local inventory = {
-        GetItemCount = function(_, src, item)
-            if env.inventoryDown then error('ox_inventory is not running', 0) end
-            local n = 0
-            for _, s in ipairs(slotsOf(src)) do if s.name == item then n = n + (s.count or 1) end end
-            return n
-        end,
-        GetSlot = function(_, src, slot)
-            for _, s in ipairs(slotsOf(src)) do if s.slot == slot then return copy(s) end end
-            return nil
-        end,
-        Search = function(_, src, kind, item)
-            assert(kind == 'slots', 'Search kind')
+    local function down()
+        if env.inventoryDown then error(env.inventory .. ' raised', 0) end
+    end
+    local function countOf(src, item)
+        local n = 0
+        for _, it in ipairs(slotsOf(src)) do if it.name == item then n = n + (it.count or 1) end end
+        return n
+    end
+    --- Store an added item (players' items keep the ox shape { slot, name, count, metadata } in both stacks).
+    local function store(src, item, count, metadata, fn)
+        env.calls[#env.calls + 1] = { res = 'inventory', impl = env.inventory, fn = fn, src = src,
+            input = { item = item, count = count, metadata = copy(metadata) } }
+        local p = player(src)
+        if env.addItemFails or not p or p.full then return false end
+        local items = p.items
+        items[#items + 1] = { slot = 40 + #items, name = item, count = count, metadata = copy(metadata) }
+        return true
+    end
+
+    -- qb-inventory dc3d07fc server/functions.lua: items carry `info` and `amount` (AddItem :736-750).
+    local qbInventory = {
+        GetItemCount = function(_, src, item) down(); return countOf(src, item) end,
+        GetItemsByName = function(_, src, item)
+            down()
             local out = {}
-            for _, s in ipairs(slotsOf(src)) do if s.name == item then out[#out + 1] = copy(s) end end
+            for _, it in ipairs(slotsOf(src)) do
+                if it.name == item then
+                    out[#out + 1] = { name = it.name, amount = it.count or 1, slot = it.slot, info = copy(it.metadata) or '' }
+                end
+            end
             return out
         end,
-        CanCarryItem = function(_, src, item, count)
-            env.calls[#env.calls + 1] = { res = 'ox_inventory', fn = 'CanCarryItem', src = src, input = { item, count } }
-            local p = player(src)
-            return p ~= nil and p.full ~= true
+        AddItem = function(_, src, item, amount, slot, info, reason)
+            down()
+            assert(slot == nil and reason == 'fredpd', 'qb AddItem(src, item, amount, nil, info, reason)')
+            return store(src, item, amount, info, 'AddItem')
+        end,
+    }
+    -- qb-core: CreateUseableItem (server/functions.lua:491-510).
+    local qbCore = {
+        CreateUseableItem = function(_, item, fn) env.usable[item] = fn end,
+    }
+    -- ox_inventory 952c128f modules/inventory/server.lua.
+    local oxInventory = {
+        GetItemCount = function(_, src, item) down(); return countOf(src, item) end,
+        GetSlotsWithItem = function(_, src, item, metadata)
+            down()
+            local out = {}
+            for _, it in ipairs(slotsOf(src)) do
+                local match = it.name == item
+                for k, v in pairs(type(metadata) == 'table' and metadata or {}) do
+                    if type(it.metadata) ~= 'table' or it.metadata[k] ~= v then match = false end
+                end
+                if match then out[#out + 1] = copy(it) end
+            end
+            return out
         end,
         AddItem = function(_, src, item, count, metadata)
-            env.calls[#env.calls + 1] = { res = 'ox_inventory', fn = 'AddItem', src = src,
-                input = { item = item, count = count, metadata = copy(metadata) } }
-            if env.addItemFails then return false, 'inventory_full' end
-            local p = player(src)
-            local items = p.items
-            items[#items + 1] = { slot = 40 + #items, name = item, count = count, metadata = copy(metadata) }
-            return true
+            down()
+            if store(src, item, count, metadata, 'AddItem') then return true end
+            return false, 'inventory_full'
         end,
     }
 
@@ -235,7 +288,9 @@ function H.world(opts)
 
     env.exports = setmetatable({
         fredpd_core = core,
-        ox_inventory = inventory,
+        ['qb-inventory'] = stack == 'qb' and qbInventory or nil,
+        ['qb-core'] = stack == 'qb' and qbCore or nil,
+        ox_inventory = stack == 'ox' and oxInventory or nil,
         fredpd_records = routed('fredpd_records',
             { 'search', 'getPersonSummary', 'getVehicleSummary', 'getHomeCases', 'countMyOpenCases',
                 -- RECORDS_ACTIONS (§C14)
@@ -359,12 +414,38 @@ function H.with(opts, fn)
         for k, v in pairs(env.globals) do rawset(_G, k, v) end
         rawset(_G, 'source', nil)
         if opts.before then opts.before(env) end
+        env.Bridge = H.loadBridge(env)
         local mods = H.load()
         fn(env, mods)
     end)
     H.forget()
+    H.resetBridge()
     for n, v in pairs(saved) do rawset(_G, n, v[1]) end
     if not ok then error(err, 0) end
+end
+
+--- fredpd_core's real bridge for the world's stack (resource states from env.resources, logs in env.bridgeLogs).
+function H.loadBridge(env)
+    local Bridge = require('server.bridge')
+    local function logger(level)
+        return function(fmt, ...)
+            local msg = select('#', ...) > 0 and fmt:format(...) or tostring(fmt)
+            env.bridgeLogs[#env.bridgeLogs + 1] = { level = level, msg = msg }
+        end
+    end
+    Bridge.load(env.cfg, {
+        stateOf = function(res) return env.resources[res] or 'missing' end,
+        log = { info = logger('info'), warn = logger('warn'), error = logger('error'), debug = logger('debug') },
+        defer = function() end,
+    })
+    return Bridge
+end
+
+--- Leave fredpd_core's bridge with nothing running (later test files must not inherit this world's mocks).
+function H.resetBridge()
+    local quiet = function() end
+    require('server.bridge').load({}, { stateOf = function() return 'missing' end, defer = quiet,
+        log = { info = quiet, warn = quiet, error = quiet, debug = quiet } })
 end
 
 --- Open a tablet for src through the real open flow (asserts success). Returns the payload.

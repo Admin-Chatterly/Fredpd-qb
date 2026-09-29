@@ -89,9 +89,9 @@ tests['cases 03 numbering stays unique under concurrent creates (interleaved cor
     end)
 end
 
-tests['cases 04 NEXT_SEQ_SQL allocates unique values from parallel client processes'] = function(t)
+tests['cases 04 fredpd_core NEXT_SEQ_SQL (used by createCase) allocates unique values from parallel client processes'] = function(t)
     H.with(t, function(_, _env, mods)
-        local sql = cases(mods).NEXT_SEQ_SQL:gsub('%?', "'conctest'", 1):gsub('%?', '2026', 1)
+        local sql = require('server.db').NEXT_SEQ_SQL:gsub('%?', "'conctest'", 1):gsub('%?', '2026', 1)
         local c = shim.conn
         local out = os.tmpname()
         local script = {}
@@ -160,6 +160,27 @@ tests['cases 05 authorization matrix: owner, lead, member, unit, other unit, rec
         t.eq(C.unassignCase(2, { id = d.id, citizenid = 'REC10006' }), { ok = false, error = 'validation', reason = 'not_assigned' })
         t.eq(C.assignCase(3, { id = d.id, citizenid = 'NOPE0001' }), { ok = false, error = 'validation', reason = 'unknown_officer' })
         t.eq(C.updateCase(3, { id = d.id, summary = '' }).data.summary, nil, 'admin clears summary')
+        -- summary null semantics (docs/modules/records.md "updateCase summary"): absent = no change; '' / whitespace,
+        -- a json.null sentinel or clearSummary = true = clear (NULL)
+        local function summaryOf() return MySQL.scalar.await('SELECT summary FROM fredpd_cases WHERE id = ?', { d.id }) end
+        t.eq(C.updateCase(3, { id = d.id, summary = 'Ny text' }).data.summary, 'Ny text')
+        t.eq(C.updateCase(3, { id = d.id, title = 'Titel utan summary' }).data.summary, 'Ny text', 'absent (JSON null) = no change')
+        t.eq(C.updateCase(3, { id = d.id, summary = '   ' }).data.summary, nil, 'whitespace clears')
+        t.eq(summaryOf(), nil, 'stored NULL')
+        C.updateCase(3, { id = d.id, summary = 'Igen' })
+        t.eq(C.updateCase(3, { id = d.id, clearSummary = true }).data.summary, nil, 'explicit clear flag')
+        t.eq(summaryOf(), nil)
+        C.updateCase(3, { id = d.id, summary = 'Igen' })
+        local savedNull = json.null
+        json.null = savedNull or setmetatable({}, { __tostring = function() return 'null' end })
+        local okNull, cleared = pcall(C.updateCase, 3, { id = d.id, summary = json.null })
+        json.null = savedNull
+        t.ok(okNull, tostring(cleared))
+        t.eq(cleared.data.summary, nil, 'json.null sentinel clears')
+        t.eq(C.updateCase(3, { id = d.id, summary = 'x', clearSummary = true }), { ok = false, error = 'validation' },
+            'clear flag with a text contradicts')
+        t.eq(C.updateCase(3, { id = d.id, clearSummary = 'yes' }), { ok = false, error = 'validation' })
+        t.eq(C.updateCase(3, { id = d.id, summary = '', clearSummary = true }).ok, true, "'' and the flag agree")
         -- hidden/missing -> not_found, never unauthorized
         t.eq(C.getCase(1, { id = 9999 }), { ok = false, error = 'not_found' })
         env.visOverride['case:' .. d.id] = 'none'
