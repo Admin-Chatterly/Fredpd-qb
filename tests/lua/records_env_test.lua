@@ -9,6 +9,8 @@
 -- seeded default rules, audit capture, refreshPlate = the real mirror code, getAdapter housing), exports.fredpd_bolo
 -- (checkPlate, checkPerson, getBolosFor), GetResourceState, LoadResourceFile (config/formats.json), lib.print.
 -- Skips with one notice when MariaDB is unreachable.
+-- Golden files (test/golden/*.json, parsed by contract.test.ts) are compared, not written: a difference fails the
+-- test. FREDPD_UPDATE_GOLDEN=1 rewrites them instead.
 local shim = require('mysql_shim')
 local helper = require('helper')
 
@@ -44,15 +46,21 @@ H.OFFICERS = {
     { 'REC10003', '100000000000000003', 'Lena Ledning', 'LED-01', 'ledning' },
 }
 
+-- fredpd_plate_checks is created by fredpd_bolo's 010 migration (§C12). While fredpd_core/migrations/index.json does
+-- not list it yet, the harness runs db/migrations/010_plate_checks.sql itself; this copy of its CREATE TABLE is only
+-- the last resort when neither file is in the checkout (keep it identical to 010).
+H.PLATE_CHECKS_MIGRATION = 'db/migrations/010_plate_checks.sql'
 H.PLATE_CHECKS_DDL = [[CREATE TABLE IF NOT EXISTS fredpd_plate_checks (
-  id INT UNSIGNED NOT NULL AUTO_INCREMENT,
+  id BIGINT UNSIGNED NOT NULL AUTO_INCREMENT,
   plate VARCHAR(16) NOT NULL,
   officer_citizenid VARCHAR(50) NULL,
   hit TINYINT(1) NOT NULL DEFAULT 0,
   bolo_id INT UNSIGNED NULL,
+  source VARCHAR(16) NOT NULL DEFAULT 'tablet',
   created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id),
-  KEY idx_plate_created (plate, created_at)
+  KEY idx_plate_created (plate, created_at),
+  KEY idx_officer_created (officer_citizenid, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci]]
 
 local GLOBALS = { 'MySQL', 'LoadResourceFile', 'GetCurrentResourceName', 'exports', 'GetResourceState', 'lib',
@@ -186,12 +194,20 @@ function H.makeEnv()
             if env.boloThrows then error('No such export checkPerson in resource fredpd_bolo', 0) end
             return env.bolos.persons[cid]
         end,
+        -- An explicit env.bolos.lists entry wins; otherwise the live BOLO of the check maps, filtered with canView
+        -- the way fredpd_bolo's Visibility.record does (unit, issuer as owner).
         getBolosFor = function(_, src, kind, id)
             env.calls.getBolosFor = env.calls.getBolosFor + 1
             if env.boloThrows then error('No such export getBolosFor in resource fredpd_bolo', 0) end
             local list = env.bolos.lists[kind .. ':' .. id]
             if type(list) == 'function' then return list(src) end
-            return list or {}
+            if list then return list end
+            local b = (kind == 'person' and env.bolos.persons or env.bolos.plates)[id]
+            if type(b) ~= 'table' then return {} end
+            local rec = { type = 'bolo', id = b.id, level = b.level or 0, status = b.active == false and 'closed' or 'open',
+                unit = b.unit, ownerCitizenid = type(b.issuedBy) == 'table' and b.issuedBy.citizenid or nil }
+            if env.evaluate(src, rec) == 'none' then return {} end
+            return { b }
         end,
     }
 
@@ -257,8 +273,9 @@ function H.resetData()
         'DELETE FROM fredpd_records', 'DELETE FROM fredpd_case_subjects', 'DELETE FROM fredpd_case_assignees',
         'DELETE FROM fredpd_cases', 'DELETE FROM fredpd_persons', 'DELETE FROM fredpd_vehicles_idx',
         'DELETE FROM fredpd_officers', 'DELETE FROM fredpd_plate_checks', 'DELETE FROM fredpd_audit',
+        'DELETE FROM fredpd_bolos',
         'ALTER TABLE fredpd_cases AUTO_INCREMENT = 1', 'ALTER TABLE fredpd_records AUTO_INCREMENT = 1',
-        'ALTER TABLE fredpd_plate_checks AUTO_INCREMENT = 1',
+        'ALTER TABLE fredpd_plate_checks AUTO_INCREMENT = 1', 'ALTER TABLE fredpd_bolos AUTO_INCREMENT = 1',
     }
     for _, o in ipairs(H.OFFICERS) do
         parts[#parts + 1] = shim.bind('INSERT INTO fredpd_officers (citizenid, discord_id, display_name, callsign, unit) '
@@ -352,7 +369,8 @@ function H.with(t, fn)
             prepared = false
             shim.resetDatabase(H.DB, true)
             require('server.db').migrate({ log = function() end, resource = 'fredpd_core' })
-            run(H.PLATE_CHECKS_DDL .. ';')
+            local okFile, migration = pcall(helper.readFile, H.PLATE_CHECKS_MIGRATION)
+            run((okFile and migration ~= '') and migration or (H.PLATE_CHECKS_DDL .. ';'))
             local ServerCanView = require('server.canview')
             local rules = {}
             for i, row in ipairs(MySQL.query.await(ServerCanView.RULES_SQL)) do rules[i] = ServerCanView.rowToRule(row) end
@@ -443,14 +461,20 @@ local function canonical(v, indent)
 end
 H.canonical = canonical
 
---- Write test/golden/<name>.json when its content changed. Returns true when written.
-function H.writeGolden(name, value)
+--- Compare `value` with test/golden/<name>.json (canonical JSON). A missing or different file fails the test, so a
+--- shape change can never reach disk during a green run (pnpm test runs Vitest before the Lua suites); with
+--- FREDPD_UPDATE_GOLDEN=1 the file is rewritten instead. Returns true when written.
+function H.golden(t, name, value)
     local text = canonical(value) .. '\n'
     local path = H.GOLDEN .. name .. '.json'
     local f = io.open(path, 'rb')
     local old = f and f:read('a')
     if f then f:close() end
     if old == text then return false end
+    if os.getenv('FREDPD_UPDATE_GOLDEN') ~= '1' then
+        t.ok(false, ('golden %s %s; review the change and rerun with FREDPD_UPDATE_GOLDEN=1 to rewrite it\n%s')
+            :format(path, old and 'differs' or 'is missing', text))
+    end
     os.execute("mkdir -p '" .. H.GOLDEN .. "'")
     local out = assert(io.open(path, 'wb'))
     out:write(text)

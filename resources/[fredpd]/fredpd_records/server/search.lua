@@ -2,8 +2,10 @@
 -- Tablet search (task 2.3 server side; SearchInput/SearchOutput in packages/types/src/mdt.ts, §C12).
 -- 'auto' classifies the query with shared/format.lua detectSearchType and config/formats.json (§C4):
 --   name       -> fredpd_persons FULLTEXT ft_name (MATCH ... AGAINST IN BOOLEAN MODE, '+term*' per term); terms the
---                 index cannot hold (shorter than innodb_ft_min_token_size, or stopwords / their prefixes) use
---                 lastname/firstname LIKE 'term%' instead. Never players.charinfo (IMPLEMENTATION.md §8.6).
+--                 index cannot hold (shorter than innodb_ft_min_token_size, or stopwords / their prefixes) must start
+--                 a word anywhere in the name instead (REGEXP, so 'Li' finds "Anna-Li" and 'la' "de la Cruz"); with
+--                 at least one FULLTEXT term that is only a filter on the rows ft_name already narrowed.
+--                 Never players.charinfo (IMPLEMENTATION.md §8.6).
 --   personId   -> fredpd_persons.personnummer exact (10- and 12-digit spellings, idx_personnummer)
 --   plate      -> fredpd_vehicles_idx primary key; a miss asks exports.fredpd_core:refreshPlate once
 --   caseNumber -> fredpd_cases.case_number exact, shaped by canView (server/caserefs.lua)
@@ -24,7 +26,8 @@ M.MAX_TERM_CHARS = 32
 M.TYPES = { auto = true, person = true, vehicle = true, case = true }
 
 -- InnoDB's default FULLTEXT stopwords (INFORMATION_SCHEMA.INNODB_FT_DEFAULT_STOPWORD, MariaDB 10.11). Stopwords
--- are not indexed, so 'Will' or 'De' can only be found with LIKE; a server-level custom stopword table is not read.
+-- are not indexed, so 'Will' or 'De' can only be found through the word-start REGEXP; a server-level custom stopword
+-- table is not read.
 M.STOPWORDS = {
     'a', 'about', 'an', 'are', 'as', 'at', 'be', 'by', 'com', 'de', 'en', 'for', 'from', 'how', 'i', 'in', 'is', 'it',
     'la', 'of', 'on', 'or', 'that', 'the', 'this', 'to', 'was', 'what', 'when', 'where', 'who', 'will', 'with', 'und',
@@ -119,8 +122,9 @@ function M.terms(query)
     return terms
 end
 
---- Whether a term must use LIKE instead of FULLTEXT: shorter than the index's minimum token size, or (with
---- stopwords on) a stopword or the prefix of one ('wil' would miss 'Will', which the index does not hold).
+--- Whether a term must use the word-start REGEXP instead of FULLTEXT (the name predates the REGEXP): shorter than the
+--- index's minimum token size, or (with stopwords on) a stopword or the prefix of one ('wil' would miss 'Will', which
+--- the index does not hold).
 function M.needsLike(term, settings)
     settings = settings or M.ftSettings()
     if utf8.len(term) < settings.minToken then return true end
@@ -132,33 +136,41 @@ function M.needsLike(term, settings)
     return false
 end
 
---- LIKE pattern 'term%' with LIKE metacharacters escaped (terms hold none, but never rely on that).
-function M.likePrefix(term)
-    return (term:gsub('[\\%%_]', '\\%0')) .. '%'
+--- REGEXP pattern: `term` at the start of a word, i.e. at the start of the name or right after a character that is
+--- not a letter/digit (MariaDB's PCRE2 runs in UCP mode, so Å/Ä/Ö and other letters beyond ASCII are word characters,
+--- and it is case-insensitive under the column's _ci collation). Terms hold only letters/digits; any ASCII character
+--- outside [A-Za-z0-9] is escaped anyway, so a term can never act as a regex operator.
+function M.wordStartPattern(term)
+    return '(^|[^[:alnum:]])' .. (term:gsub('[^%w\128-\255]', '\\%0'))
 end
 
---- WHERE clause and params for a name search, or nil when no usable term is left.
+--- The name a word-start term is matched against: first and last name as one string (the separating space starts
+--- a word, as any separator inside either column does).
+local NAME_TEXT = "CONCAT_WS(' ', p.firstname, p.lastname)"
+
+--- WHERE clause and params for a name search, or nil when no usable term is left. Every term is required. A term the
+--- FULLTEXT index can hold is '+term*' in one MATCH (ft_name); the others must start a word anywhere in the name
+--- (REGEXP). With at least one FULLTEXT term, MATCH picks the rows through ft_name and the REGEXP terms only filter
+--- those; a query of short/stopword terms only (e.g. 'Bo', 'Li') has no index to use and scans fredpd_persons.
 function M.nameWhere(terms, settings)
     settings = settings or M.ftSettings()
-    local ft, likes, params = {}, {}, {}
+    local ft, words, params = {}, {}, {}
     for _, term in ipairs(terms) do
         if M.needsLike(term, settings) then
-            likes[#likes + 1] = term
+            words[#words + 1] = term
         else
             ft[#ft + 1] = '+' .. term .. '*'
         end
     end
-    if #ft == 0 and #likes == 0 then return nil end
+    if #ft == 0 and #words == 0 then return nil end
     local clauses = {}
     if #ft > 0 then
         clauses[#clauses + 1] = 'MATCH (p.firstname, p.lastname) AGAINST (? IN BOOLEAN MODE)'
         params[#params + 1] = table.concat(ft, ' ')
     end
-    for _, term in ipairs(likes) do
-        clauses[#clauses + 1] = '(p.lastname LIKE ? OR p.firstname LIKE ?)'
-        local pattern = M.likePrefix(term)
-        params[#params + 1] = pattern
-        params[#params + 1] = pattern
+    for _, term in ipairs(words) do
+        clauses[#clauses + 1] = NAME_TEXT .. ' REGEXP ?'
+        params[#params + 1] = M.wordStartPattern(term)
     end
     return table.concat(clauses, ' AND '), params
 end

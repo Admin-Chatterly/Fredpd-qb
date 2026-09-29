@@ -181,6 +181,7 @@ local function makeEnv()
     local dispatch = {
         createAlert = function(_, input)
             if env.alertFails then error('dispatch down', 0) end
+            if env.alertRefuses then return nil, 'validation' end
             env.alerts[#env.alerts + 1] = input
             return { id = #env.alerts }
         end,
@@ -645,6 +646,8 @@ tests['10 expiry: lazy deactivation on lookup (UPDATE + bolo.expire audit + push
         local bolo = create(t, Service, 1, vehicleInput({ expiresInHours = 1 }))
         t.ok(Service.checkPlate('ABC12D'), 'active before expiry')
         env.clear()
+        -- an hour later by both clocks: the database's (expires_at now in the past) and FXServer's (os.time)
+        q('UPDATE fredpd_bolos SET expires_at = UTC_TIMESTAMP() - INTERVAL 1 SECOND WHERE id = ?', { bolo.id })
         Cache.clock = function() return os.time() + 3601 end
         t.eq(Service.checkPlate('ABC12D'), nil, 'expired: no hit')
         t.eq(scalar('SELECT active FROM fredpd_bolos WHERE id = ?', { bolo.id }), 0)
@@ -669,6 +672,41 @@ tests['10 expiry: lazy deactivation on lookup (UPDATE + bolo.expire audit + push
         t.eq(Service.listBolos(1, { active = false }).data.items[1].active, false)
         -- and a new BOLO on the plate is allowed
         t.ok(Service.createBolo(1, vehicleInput()).ok)
+    end)
+end
+
+tests['10b expiry: an FXServer clock ahead of the database never deactivates early, and does not loop'] = function(t)
+    withEnv(t, function(_, env, mods)
+        local Service, Cache = mods['server.service'], mods['server.cache']
+        local bolo = create(t, Service, 1, vehicleInput({ expiresInHours = 1 }))
+        env.clear()
+        local updates = 0
+        local update = MySQL.update
+        MySQL.update = setmetatable({ await = update.await }, { __call = function(_, ...)
+            updates = updates + 1
+            return update(...)
+        end })
+        -- this host's clock says the hour is over; the database (expires_at in 1 h) does not
+        Cache.clock = function() return os.time() + 3601 end
+        t.eq(Service.checkPlate('ABC12D'), nil, 'no hit by the host clock')
+        t.eq(updates, 1, 'one refused UPDATE')
+        t.eq(scalar('SELECT active FROM fredpd_bolos WHERE id = ?', { bolo.id }), 1, 'not deactivated early')
+        t.eq(#env.audits, 0, 'no bolo.expire')
+        t.eq(env.pushes, {})
+        t.eq(#env.named('fredpd:boloChanged'), 0)
+        -- a later rebuild meets it again: one more refused UPDATE, no loop
+        Service.scheduleRebuild()
+        t.eq(updates, 2)
+        t.eq(Service.checkPlate('ABC12D'), nil)
+        t.eq(#env.audits, 0)
+        -- once the database clock agrees, the next rebuild deactivates it (once)
+        q('UPDATE fredpd_bolos SET expires_at = UTC_TIMESTAMP() - INTERVAL 1 SECOND WHERE id = ?', { bolo.id })
+        Service.scheduleRebuild()
+        t.eq(scalar('SELECT active FROM fredpd_bolos WHERE id = ?', { bolo.id }), 0)
+        t.eq(#env.audits, 1)
+        t.eq(env.audits[1].action, 'bolo.expire')
+        t.eq(env.pushes, { { topic = 'bolo', payload = { type = 'expired', id = bolo.id } } })
+        MySQL.update = update
     end)
 end
 
@@ -890,6 +928,20 @@ tests['15 hit fan-out: one alert per plate per 60 s, radar row, kontaktnotis for
         for _, l in ipairs(env.logs) do if l.msg:find('createAlert', 1, true) then logged = true end end
         t.ok(logged, 'failure logged')
         t.eq(Fanout.HIT_COOLDOWN_MS, 60000)
+        -- the failed alert gave the cooldown back: the next hit (same second) retries
+        env.alertFails = false
+        env.fire('fredpd:boloHit', '', { id = bolo.id }, { source = 'radar' })
+        t.eq(#env.alerts, 4, 'retried after the failure')
+        -- createAlert refusing (nil, 'validation') also gives it back
+        env.now = env.now + 60000
+        env.alertRefuses = true
+        env.fire('fredpd:boloHit', '', { id = bolo.id }, { source = 'radar' })
+        t.eq(#env.alerts, 4)
+        env.alertRefuses = false
+        env.fire('fredpd:boloHit', '', { id = bolo.id }, { source = 'radar' })
+        t.eq(#env.alerts, 5)
+        env.fire('fredpd:boloHit', '', { id = bolo.id }, { source = 'radar' })
+        t.eq(#env.alerts, 5, 'cooling down again after the success')
     end)
 end
 
@@ -942,8 +994,8 @@ tests['17 main: exports, callback, server-only events, start-up rebuild'] = func
         package.path = BOLO .. '?.lua;' .. package.path
         assert(pcall(dofile, BOLO .. 'server/main.lua'))
         package.path = savedPath
-        t.eq(keys(env.exported), { 'checkPerson', 'checkPlate', 'createBolo', 'getBolosFor', 'listBolos', 'plateCheck',
-            'resolveBolo', 'resolveOnImpound' })
+        t.eq(keys(env.exported), { 'checkPerson', 'checkPlate', 'createBolo', 'getBolosFor', 'hasVisibleBolo',
+            'listBolos', 'plateCheck', 'resolveBolo', 'resolveOnImpound' })
         t.eq(keys(env.callbacks), { 'fredpd:bolo:plateCheck' })
         t.eq(keys(env.handlers), { 'fredpd:bolo:vehicleImpounded', 'fredpd:boloHit', 'playerDropped' })
         t.eq(env.commands, {}, 'dev command only with fredpd_dev')
@@ -1121,6 +1173,8 @@ tests['21 golden: Bolo / list / plate check / push / alert input JSON for contra
         local Service = mods['server.service']
         q('ALTER TABLE fredpd_bolos AUTO_INCREMENT = 1')
         local v = create(t, Service, 1, vehicleInput())
+        local createdPush = env.pushes[1]
+        t.eq(createdPush and createdPush.topic, 'bolo')
         local p = create(t, Service, 2, { kind = 'person', citizenid = 'FPD10003', reason = 'Hot mot tjänsteman',
             level = 1, expiresInHours = 48 })
         local r = create(t, Service, 1, { kind = 'person', citizenid = 'FPD10001', reason = 'Saknad sedan i går' })
@@ -1157,7 +1211,7 @@ tests['21 golden: Bolo / list / plate check / push / alert input JSON for contra
         local hit = env.named('fredpd:boloHit')[1]
         Service.onHit(hit.args[1], { source = 'plate_check', coords = { x = 101.5, y = 201.25, z = 30.0 } })
         writeGolden('alert-input.hit', env.alerts[1])
-        writeGolden('push.created', { type = 'created', id = v.id })
+        writeGolden('push.created', createdPush.payload)
         writeGolden('plateCheck.clear', stable(Service.plateCheck(2, { plate = 'QRS45T' }).data))
         writeGolden('plateCheck.unregistered', stable(Service.plateCheck(2, { plate = 'ZZZ99Z' }).data))
         q("INSERT INTO fredpd_vehicles_idx (plate, citizenid, model) VALUES ('HEM11T', 'FPD10001', 'kuruma')")

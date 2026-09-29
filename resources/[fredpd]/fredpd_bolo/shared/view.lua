@@ -3,6 +3,8 @@
 -- ox_lib renders context titles and descriptions as markdown (react-markdown), so every value that comes from data
 -- (plate, owner, model, reason, subject, officer names) is escaped before it is put into a locale template; the
 -- templates themselves are trusted text. A hit is the first row: red warning icon and a full red bar.
+-- The level (Sekretessnivå) row is shown only with the issuer, i.e. for a full view: a kontaktnotis (and a masked
+-- view) has no issuedBy, and a kontaktnotis viewer must not learn whether the BOLO is Begränsad or Hemlig.
 
 local M = {}
 
@@ -47,8 +49,9 @@ function M.menu(res, L, formatDate)
     local options = {}
     local bolo = res.bolo
     if type(bolo) == 'table' then
-        local metadata = { { label = L('bolo.field.level'), value = levelLabel(bolo.level, L) } }
+        local metadata = {}
         if type(bolo.issuedBy) == 'table' then
+            metadata[#metadata + 1] = { label = L('bolo.field.level'), value = levelLabel(bolo.level, L) }
             local by = bolo.issuedBy.callsign and L('bolo.notice.owner',
                 { callsign = bolo.issuedBy.callsign, name = bolo.issuedBy.displayName })
                 or bolo.issuedBy.displayName
@@ -65,7 +68,7 @@ function M.menu(res, L, formatDate)
             iconColor = M.HIT_COLOR,
             progress = 100,
             colorScheme = 'red',
-            metadata = metadata,
+            metadata = #metadata > 0 and metadata or nil, -- an empty list would still open an empty hover card
             readOnly = true,
         }
     else

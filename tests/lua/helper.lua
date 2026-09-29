@@ -35,7 +35,10 @@ end
 
 --- Read and decode a JSON file relative to the repo root.
 function M.readJson(path)
-    local f = assert(io.open(path, 'r'), 'cannot open ' .. path)
+    local f = io.open(path, 'r')
+    -- locales/pending/*.json are merged into sv/en and then deleted; a missing pending file means "no pending keys".
+    if not f and path:match('^locales/pending/') then return {} end
+    assert(f, 'cannot open ' .. path)
     local s = f:read('a')
     f:close()
     return json.decode(s)

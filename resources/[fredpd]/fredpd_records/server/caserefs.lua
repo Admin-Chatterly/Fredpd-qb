@@ -7,6 +7,8 @@
 --   notice -> { visibility, contact = { displayName, unit } }: no id, number, title or level (kontaktnotis);
 --             contact = the case owner's fredpd_officers display name and unit (case unit when the owner has none)
 --   none   -> omitted entirely
+-- Order: the full/masked refs keep the caller's order (open first, newest first); the notices follow as one block
+-- sorted by their contact only, so a kontaktnotis's position never tells whether that case is open or how recent it is.
 -- Lua cannot carry null: a nullable field that is nil is absent on every Lua -> JS hop (as in fredpd_dispatch).
 
 local C = require 'server.common'
@@ -135,15 +137,36 @@ function M.toRef(c, vis, tier, officers)
     return nil
 end
 
+--- Sort key of a notice ref: its contact only (unit, then display name), never anything about the case itself.
+local function noticeKey(ref)
+    local contact = ref.contact or {}
+    return (contact.unit or '') .. '\0' .. (contact.displayName or '')
+end
+
+--- Refs in wire order: full/masked in the given order, then the notices sorted by contact (stable on equal keys,
+--- which are identical refs anyway).
+function M.order(refs)
+    local visible, notices = {}, {}
+    for _, ref in ipairs(refs) do
+        if ref.visibility == 'notice' then notices[#notices + 1] = ref else visible[#visible + 1] = ref end
+    end
+    local keys = {}
+    for i, ref in ipairs(notices) do keys[ref] = noticeKey(ref) .. '\0' .. ('%06d'):format(i) end
+    table.sort(notices, function(a, b) return keys[a] < keys[b] end)
+    for _, ref in ipairs(notices) do visible[#visible + 1] = ref end
+    return visible
+end
+
 --- Visibility for `cases` (assignees must be attached) and the CaseRefs of the first `refCount` of them (default
---- all). Returns refs (list, 'none' omitted, input order kept) and vis (list aligned with `cases`). Extra cases
---- after refCount are only evaluated (e.g. the cases of charge records, whose number is shown only when visible).
+--- all). Returns refs (list in M.order, 'none' omitted), vis (list aligned with `cases`) and the viewer's tier (read
+--- only when some case is masked, else 0). Extra cases after refCount are only evaluated (e.g. the cases of charge
+--- records, which are shown only when their case is visible).
 function M.evaluate(src, cases, refCount)
     refCount = refCount or #cases
     local vis = M.visibility(src, cases)
     local owners, needTier = {}, false
-    for i = 1, refCount do
-        if vis[i] == 'notice' and cases[i].owner then owners[#owners + 1] = cases[i].owner end
+    for i = 1, #cases do
+        if i <= refCount and vis[i] == 'notice' and cases[i].owner then owners[#owners + 1] = cases[i].owner end
         if vis[i] == 'masked' then needTier = true end
     end
     local officers = M.officers(owners)
@@ -153,7 +176,13 @@ function M.evaluate(src, cases, refCount)
         local ref = M.toRef(cases[i], vis[i], tier, officers)
         if ref then refs[#refs + 1] = ref end
     end
-    return refs, vis
+    return M.order(refs), vis, tier
+end
+
+--- Whether content tied to a case (e.g. a charge record) may be shown: the case is full, or masked at a level the
+--- viewer's tier covers (the same rule that shows a masked case's title). notice/none hide it (§C3 hard cap).
+function M.contentVisible(c, vis, tier)
+    return vis == 'full' or (vis == 'masked' and c.level <= tier)
 end
 
 --- Cases by id (M.CASE_COLS rows), with assignees attached. Unknown ids are skipped.

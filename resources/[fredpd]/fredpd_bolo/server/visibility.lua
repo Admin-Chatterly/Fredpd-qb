@@ -6,10 +6,12 @@
 --   full    everything.
 --   masked  everything except who issued / resolved it and the resolve note (the "source" fields). The default
 --           rules never give masked for a BOLO; a configured rule may.
---   notice  kontaktnotis: subject (kind, citizenid/plate, subject label), level, createdAt, active, and a reason that
---           reads "Det finns uppgifter som rör {subject}. Kontakta {owner}." (visibility.notice.text); issuedBy,
---           expiresAt and the resolve fields are left out. BoloSchema has no visibility field, so the NUI cannot tell
---           a notice from a full BOLO except by its content (docs/modules/bolo.md, open question 1).
+--   notice  kontaktnotis: subject (kind, citizenid/plate, subject label) and a reason that reads "Det finns
+--           uppgifter som rör {subject}. Kontakta {owner}." (visibility.notice.text); issuedBy, expiresAt and the
+--           resolve fields are left out. BoloSchema requires id, level, createdAt and active, so those stay too; the
+--           level of a kontaktnotis is more than the task allows (CaseRefSchema's notice has no id or level) and is
+--           not shown by this module's own UI (shared/view.lua). BoloSchema has no visibility field, so the NUI
+--           cannot tell a notice from a full BOLO except by its content (docs/modules/bolo.md, open questions 1-2).
 --   none    hidden (list/getBolosFor drop it; resolve answers not_found).
 --
 -- Default rules (db/seed/visibility_rules_default.sql 50-55): records.admin, level 0, the issuer (assigned =
@@ -112,11 +114,19 @@ function M.shape(entry, result, live)
     return nil
 end
 
---- Text for a BOLO hit that every on-duty officer sees (alert description): the reason for level 0, the kontaktnotis
---- for Begränsad/Hemlig (the alert is not filtered per viewer).
+--- canView viewer for broadcast text: src 0 is no player, so fredpd_core builds the least-privileged viewer (no
+--- citizenid, tier 0, no units, no grants).
+M.BASELINE_VIEWER = 0
+
+--- Text for a BOLO hit that every on-duty officer sees (alert description; the alert is not filtered per viewer),
+--- from canView for the least-privileged viewer: the reason for full/masked (with the default rules: level 0), the
+--- kontaktnotis for notice (Begränsad/Hemlig), nil for none (or no answer): then no alert may be raised at all.
+--- @return string|nil
 function M.publicReason(entry)
-    if (entry.level or 0) == 0 then return entry.reason end
-    return M.noticeText(entry)
+    local result = M.resultFor(M.BASELINE_VIEWER, entry, true)
+    if result == 'full' or result == 'masked' then return entry.reason end
+    if result == 'notice' then return M.noticeText(entry) end
+    return nil
 end
 
 ---------------------------------------------------------------------------------------------------------------

@@ -7,8 +7,10 @@
 --           viewer, so no Begränsad/Hemlig text is broadcast), and the server event
 --           fredpd:boloChanged(bolo, change) with the full wire Bolo for other resources.
 --   hit     alert (larm) through exports.fredpd_dispatch:createAlert, at most once per plate (vehicle BOLO) or
---           citizenid (person BOLO) per HIT_COOLDOWN_MS; for level > 0 the alert carries the kontaktnotis, not the
---           reason (alerts reach every on-duty officer).
+--           citizenid (person BOLO) per HIT_COOLDOWN_MS. Alerts reach every on-duty officer, so the text is what the
+--           least-privileged viewer may see (Visibility.publicReason: the kontaktnotis for Begränsad/Hemlig) and a
+--           BOLO hidden from that viewer raises none. The cooldown is taken before the call (no second alert while
+--           it is in flight) and given back when createAlert fails, so the next hit retries.
 
 local M = {}
 
@@ -16,6 +18,9 @@ M.LOG_INTERVAL_MS = 60000
 M.HIT_COOLDOWN_MS = 60000 -- IMPLEMENTATION.md §5.4 "cooldown 60 s per plate"
 M.HIT_MEMORY = 256 -- cooldown keys kept before old ones are pruned (no timer)
 M.HIT_PRIORITY = 2 -- alert priority: normal
+M.HIT_CODE_MAX = 16 -- AlertCreateInputSchema.code (dispatch.ts)
+M.HIT_CODE_FALLBACK = 'BOLO' -- a radio-style code like fredpd_dispatch's '10-11', used only if the locale value
+-- (bolo.hit.alertCode, "Efterlyst") is missing (pending locale not merged) or does not fit
 
 --- Locale function; server/main.lua sets it to fredpd_core's L.
 M.L = function(key) return key end
@@ -104,15 +109,21 @@ local function prune(t)
     end
 end
 
---- true (and the cooldown started) when a hit on this key may raise an alert now.
+--- The start time (and the cooldown started) when a hit on this key may raise an alert now, else nil.
+--- @return integer|nil
 function M.takeCooldown(key)
     local t = now()
     local last = hitAt[key]
-    if last and t - last < M.HIT_COOLDOWN_MS then return false end
+    if last and t - last < M.HIT_COOLDOWN_MS then return nil end
     prune(t)
     if not last then hitCount = hitCount + 1 end
     hitAt[key] = t
-    return true
+    return t
+end
+
+--- Give a cooldown back (the alert it was taken for failed), unless a later hit has taken it since.
+function M.releaseCooldown(key, t)
+    if hitAt[key] == t then hitAt[key] = nil end
 end
 
 function M.resetCooldowns()
@@ -140,7 +151,19 @@ function M.street(s)
     return s
 end
 
---- AlertCreateInput (dispatch.ts) for a hit on `entry` (publicReason = M.publicReason-like text).
+--- Alert code: the locale's (bolo.hit.alertCode), or HIT_CODE_FALLBACK when that is missing or too long for
+--- fredpd_dispatch (which would refuse the whole alert).
+function M.alertCode()
+    local key = 'bolo.hit.alertCode'
+    local code = M.L(key)
+    local n = type(code) == 'string' and utf8.len(code) or nil
+    if code == key or not n or n < 1 or n > M.HIT_CODE_MAX or code:find('^%s') or code:find('%s$') then
+        return M.HIT_CODE_FALLBACK
+    end
+    return code
+end
+
+--- AlertCreateInput (dispatch.ts) for a hit on `entry` (publicReason = Visibility.publicReason text).
 function M.alertInput(entry, ctx, publicReason)
     local L = M.L
     local title, first
@@ -157,7 +180,7 @@ function M.alertInput(entry, ctx, publicReason)
         description = description:sub(1, utf8.offset(description, 1001) - 1)
     end
     return {
-        code = L('bolo.hit.alertCode'),
+        code = M.alertCode(),
         title = title,
         description = description,
         coords = M.coords(ctx.coords),
@@ -168,18 +191,26 @@ function M.alertInput(entry, ctx, publicReason)
     }
 end
 
---- Raise the alert for a hit unless the key is cooling down or fredpd_dispatch is not running. Never waits: the
---- alert is created in a thread of its own. @return boolean started
+--- Raise the alert for a hit unless publicReason is nil (the BOLO is hidden from the least-privileged viewer), the
+--- key is cooling down or fredpd_dispatch is not running. Never waits: the alert is created in a thread of its own;
+--- a failed createAlert gives the cooldown back. @return boolean started
 function M.hitAlert(entry, ctx, publicReason)
+    if type(publicReason) ~= 'string' then
+        M.logThrottled('hidden', 'info', 'BOLO hit #%d not alerted: canView hides it from other officers', entry.id)
+        return false
+    end
     if GetResourceState('fredpd_dispatch') ~= 'started' then
         M.logThrottled('dispatch', 'warn', 'BOLO hit #%d not alerted: fredpd_dispatch is not running', entry.id)
         return false
     end
-    if not M.takeCooldown(M.hitKey(entry)) then return false end
+    local key = M.hitKey(entry)
+    local startedAt = M.takeCooldown(key)
+    if not startedAt then return false end
     local input = M.alertInput(entry, ctx, publicReason)
     CreateThread(function()
         local ok, alert, err = pcall(function() return exports.fredpd_dispatch:createAlert(input) end)
         if not ok or not alert then
+            M.releaseCooldown(key, startedAt)
             M.logThrottled('alert', 'error', 'createAlert for BOLO #%d failed: %s', entry.id,
                 tostring(ok and err or alert))
         end

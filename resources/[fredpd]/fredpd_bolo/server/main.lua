@@ -14,7 +14,7 @@ Store.L, Visibility.L, Fanout.L, Service.L = L, L, L, L
 ---------------------------------------------------------------------------------------------------------------
 -- Exports. Tablet actions (§C12 convention { ok, data | error }): listBolos, createBolo, resolveBolo, plateCheck.
 -- Lookups (§4.3): checkPlate(plate) -> Bolo|nil, checkPerson(citizenid) -> Bolo|nil, getBolosFor(src, kind, id)
--- -> Bolo[]. Impound (§5.4 item 4): resolveOnImpound(plate, src) -> boolean.
+-- -> Bolo[], hasVisibleBolo(src, kind, id) -> boolean. Impound (§5.4 item 4): resolveOnImpound(plate, src) -> boolean.
 
 exports('listBolos', Service.listBolos)
 exports('createBolo', Service.createBolo)
@@ -23,6 +23,7 @@ exports('plateCheck', Service.plateCheck)
 exports('checkPlate', Service.checkPlate)
 exports('checkPerson', Service.checkPerson)
 exports('getBolosFor', Service.getBolosFor)
+exports('hasVisibleBolo', Service.hasVisibleBolo)
 exports('resolveOnImpound', Service.resolveOnImpound)
 
 ---------------------------------------------------------------------------------------------------------------

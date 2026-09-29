@@ -9,8 +9,14 @@
 -- The dispatcher has already checked grant, duty and its rate limit; grant, duty and input are checked again here
 -- (any resource can call an export).
 -- Server lookups (no player, no canView; never wait): checkPlate(plate) -> Bolo|nil, checkPerson(citizenid) ->
--- Bolo|nil. For records: getBolosFor(src, kind, id) -> Bolo[] (canView-filtered). Impound: resolveOnImpound(plate,
--- src) -> boolean. ox_target: targetCheck(source, netId) behind lib.callback 'fredpd:bolo:plateCheck'.
+-- Bolo|nil. For records: getBolosFor(src, kind, id) -> Bolo[] (canView-filtered), hasVisibleBolo(src, kind, id) ->
+-- boolean (memory, canView on the cached entry). Impound: resolveOnImpound(plate, src) -> boolean. ox_target:
+-- targetCheck(source, netId) behind lib.callback 'fredpd:bolo:plateCheck'.
+--
+-- Hits and canView 'none' (docs/modules/bolo.md "Hidden BOLOs"): the checking officer's result is shaped by their own
+-- canView ('none' -> PlateCheckResult.bolo = nil); the check row, the bolo.check audit and fredpd:boloHit (server-side)
+-- still record the hit. The broadcast alert carries only what the least-privileged viewer may see
+-- (Visibility.publicReason) and is not raised at all when that is 'none'.
 --
 -- Error codes are MDT_ERROR_CODES; `reason` refines them: 'off_duty', 'level' (level above the actor's tier),
 -- 'duplicate' (an active BOLO for that subject exists), 'too_far', 'no_plate'.
@@ -69,7 +75,11 @@ end
 local expiring = {} -- [id] = true while the expiry UPDATE is in flight
 
 --- Deactivate an expired BOLO (never waits). The audit row, push and event follow only when this call changed the
---- row (a concurrent resolve or another expiry wins silently).
+--- row (a concurrent resolve or another expiry wins silently). The UPDATE also requires expires_at <= UTC_TIMESTAMP()
+--- (Store.EXPIRE_SQL): when the FXServer clock runs ahead of the database it changes nothing, and nothing is rebuilt
+--- either. The cache has already dropped the entry (no hits, by this host's clock); a rebuild would load the row
+--- again, find it expired again and repeat the refused UPDATE until the database clock caught up. The row is
+--- deactivated (and bolo.expire written) by the next rebuild, list or getBolosFor that meets it after that.
 function M.expire(entry)
     if expiring[entry.id] then return end
     expiring[entry.id] = true
@@ -134,10 +144,39 @@ function M.checkPlate(plate)
     return entry and Visibility.wire(entry, true) or nil
 end
 
---- export checkPerson(citizenid) -> Bolo|nil.
+--- export checkPerson(citizenid) -> Bolo|nil. Case-insensitive, like the database collation.
 function M.checkPerson(citizenid)
     local entry = Cache.getByCitizen(Input.citizenId(citizenid))
     return entry and Visibility.wire(entry, true) or nil
+end
+
+--- export hasVisibleBolo(src, kind, id) -> boolean: an active BOLO on the person ('person', citizenid) or vehicle
+--- ('vehicle', plate, any spelling) that viewer src may know about (canView full, masked or notice, evaluated on the
+--- cached entry, so the BOLO's unit and issuer count). For fredpd_records' search flags instead of rebuilding the
+--- VisRecord from checkPlate/checkPerson. Memory only, never waits; needs mdt_page:search or mdt_page:bolos.
+function M.hasVisibleBolo(src, kind, id)
+    local okRun, visible = pcall(function()
+        src = math.tointeger(tonumber(src))
+        if not src or src < 1 then return false end
+        local entry
+        if kind == 'person' then
+            entry = Cache.getByCitizen(Input.citizenId(id))
+        elseif kind == 'vehicle' then
+            entry = Cache.getByPlate(Input.normalizePlate(id))
+        end
+        if not entry then return false end
+        local core = exports.fredpd_core
+        if core:hasGrant(src, 'mdt_page', 'search') ~= true and core:hasGrant(src, 'mdt_page', 'bolos') ~= true then
+            return false
+        end
+        local result = Visibility.resultFor(src, entry, true)
+        return result == 'full' or result == 'masked' or result == 'notice'
+    end)
+    if not okRun then
+        Fanout.logThrottled('visible', 'error', 'hasVisibleBolo failed: %s', tostring(visible))
+        return false
+    end
+    return visible == true
 end
 
 ---------------------------------------------------------------------------------------------------------------
@@ -221,6 +260,9 @@ function M.createBolo(src, input)
         return fail('unavailable')
     end
     if not found then return fail('not_found') end
+    -- The register matches case-insensitively (utf8mb4_swedish_ci); store the register's spelling so the
+    -- in-memory map, the NOT EXISTS guard and checkPerson all see the same key.
+    if q.kind == 'person' then q.citizenid = found.citizenid end
 
     if not ensureCache() then return fail('unavailable') end
     local key = q.kind == 'person' and ('person:' .. q.citizenid) or ('vehicle:' .. q.plate)
@@ -461,7 +503,8 @@ end
 -- Hits (server event fredpd:boloHit from this resource, the qbx_police radar bridge, later the garage bridge)
 
 --- fredpd:boloHit(bolo, ctx) handler body: the BOLO must be one of ours and still live (looked up by id; the payload
---- is not trusted). Radar hits also get a fredpd_plate_checks row (no officer). Then the alert, per-plate cooldown.
+--- is not trusted). Radar hits also get a fredpd_plate_checks row (no officer). Then the alert, per-plate cooldown,
+--- with the text the least-privileged on-duty officer may see; none at all when canView hides the BOLO from them.
 function M.onHit(bolo, ctx)
     if type(bolo) ~= 'table' then return end
     local entry = Cache.getById(Input.int(bolo.id))

@@ -156,6 +156,18 @@ tests['view.menu: a hit is the first, red row; owner, model; clear and unregiste
     t.eq(hit.options[2].title, 'Ägare: Erik Lindqvist')
     t.eq(hit.options[3].title, 'Modell: sultan')
 
+    -- a kontaktnotis (no issuedBy): the notice text, but not whether it is Begränsad or Hemlig
+    local notice = View.menu({
+        plate = 'HEM11T', bolo = { id = 4, kind = 'vehicle', plate = 'HEM11T', subject = 'HEM11T · kuruma',
+            reason = 'Det finns uppgifter som rör HEM11T · kuruma. Kontakta Eva L. (LED-01).', level = 2,
+            active = true, createdAt = '2026-09-29T10:20:00Z' },
+        checkedAt = '2026-09-29T10:25:00Z',
+    }, L, function() return '2026-09-29 14:00' end)
+    t.eq(notice.options[1].title, 'Träff på efterlysning')
+    t.eq(notice.options[1].colorScheme, 'red')
+    t.eq(notice.options[1].metadata, nil, 'no level row')
+    t.ok(notice.options[1].description:find('Kontakta Eva L', 1, true), notice.options[1].description)
+
     local clear = View.menu({ plate = 'KLM34E', owner = { citizenid = 'X', name = 'Sara *Öberg*' },
         checkedAt = '2026-09-29T10:05:00Z' }, L)
     t.eq(#clear.options, 2)

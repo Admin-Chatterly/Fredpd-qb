@@ -319,7 +319,7 @@ tests['08 plates: exact hit with owner and BOLO flag; a miss refreshes from play
         t.eq(gta.data.detected, 'plate')
         t.eq(gta.data.hits[1].plate, '12GTA345')
         t.eq(search(mods, 1, { query = '12gta345' }).data.detected, 'name', 'auto: not a Swedish plate')
-        H.writeGolden('search.plate', r.data)
+        H.golden(t, 'search.plate', r.data)
     end)
 end
 
@@ -355,8 +355,8 @@ tests['09 case numbers: full / masked / notice / none shaped by canView'] = func
         t.eq(search(mods, 1, { query = 'K-99-26' }).data.total, 0)
         t.eq(search(mods, 1, { query = 'k-1-26', type = 'case' }).data.hits[1].case.visibility, 'notice')
         t.eq(env.named('search')[1].meta.hits, { 'notice' }, 'the audit does not name the hidden case either')
-        H.writeGolden('search.case-notice', notice.data)
-        H.writeGolden('search.case-full', full.data)
+        H.golden(t, 'search.case-notice', notice.data)
+        H.golden(t, 'search.case-full', full.data)
     end)
 end
 
@@ -396,7 +396,7 @@ tests['10 BOLO flags: person hits, level above the viewer, fredpd_bolo stopped o
         search(mods, 1, { query = 'Anna Berg' })
         t.eq(env.logged('warn', 'fredpd_bolo'), 1, 'warned once')
         env.boloThrows = false
-        H.writeGolden('search.name', again)
+        H.golden(t, 'search.name', again)
     end)
 end
 
@@ -409,14 +409,14 @@ tests['11 explicit types and golden empty result'] = function(t)
         local byPnr = search(mods, 1, { query = people[1].personnummer, type = 'person' }).data
         t.eq(byPnr.detected, 'personId')
         t.eq(byPnr.total, 1)
-        H.writeGolden('search.person-id', byPnr)
+        H.golden(t, 'search.person-id', byPnr)
         local v = search(mods, 1, { query = 'Karin', type = 'vehicle' }).data
         t.eq(v, { detected = 'plate', normalized = 'KARIN', hits = {}, total = 0, page = 1 })
         local c = search(mods, 1, { query = 'Karin', type = 'case' }).data
         t.eq(c, { detected = 'caseNumber', normalized = 'KARIN', hits = {}, total = 0, page = 1 })
         local empty = search(mods, 1, { query = '%_%' }).data
         t.eq(empty, { detected = 'name', normalized = '%_%', hits = {}, total = 0, page = 1 })
-        H.writeGolden('search.empty', empty)
+        H.golden(t, 'search.empty', empty)
     end)
 end
 

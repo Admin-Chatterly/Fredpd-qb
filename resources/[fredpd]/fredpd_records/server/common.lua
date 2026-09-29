@@ -197,40 +197,6 @@ function M.bolo(name, ...)
     return pcall(call, M.BOLO, name, ...)
 end
 
---- Citizenid of whoever issued a BOLO, from whichever field fredpd_bolo's lookup value carries.
-local function issuer(bolo)
-    local by = bolo.issuedBy
-    if type(by) == 'table' then return M.str(by.citizenid) end
-    return M.str(by) or M.str(bolo.issuedByCitizenid) or M.str(bolo.issued_by)
-end
-
---- true when `bolo` (what fredpd_bolo's checkPlate/checkPerson returned: a bolo table or nil) is an active BOLO the
---- viewer may know about. A level-0 BOLO is public to officers; for a higher level the flag is shown only when
---- canView is not 'none' (so the boolean cannot leak a Hemlig BOLO past the visibility rules).
-function M.boloVisible(src, bolo)
-    if bolo == true then return true end
-    if type(bolo) ~= 'table' or bolo.active == false or bolo.active == 0 then return false end
-    local level = M.int(bolo.level) or 0
-    if level <= 0 then return true end
-    local ok, res = M.core('canView', src, {
-        type = 'bolo', id = bolo.id or 0, level = M.level(level), status = 'open',
-        unit = M.str(bolo.unit), ownerCitizenid = issuer(bolo),
-    })
-    return ok and (res == 'full' or res == 'masked' or res == 'notice')
-end
-
---- BOLO flag for a search hit / vehicle row: exports.fredpd_bolo:checkPlate(plate) or checkPerson(citizenid).
---- false when fredpd_bolo is stopped or the call fails. `running` = M.boloRunning(), checked once by the caller.
-function M.boloFlag(src, kind, id, running)
-    if not running then return false end
-    local ok, bolo = pcall(call, M.BOLO, kind == 'vehicle' and 'checkPlate' or 'checkPerson', id)
-    if not ok then
-        M.warnOnce('bolo:check', ('exports.fredpd_bolo check failed: %s'):format(tostring(bolo)))
-        return false
-    end
-    return M.boloVisible(src, bolo)
-end
-
 --- exports.fredpd_bolo:getBolosFor(src, kind, id): the canView-filtered Bolo list for a person/vehicle page.
 --- Accepts a plain array or a { ok, data } result; [] when fredpd_bolo is stopped or anything fails.
 function M.bolosFor(src, kind, id)
@@ -248,6 +214,34 @@ function M.bolosFor(src, kind, id)
         if type(b) == 'table' then list[#list + 1] = b end
     end
     return list
+end
+
+--- true when `bolo` (what fredpd_bolo's checkPlate/checkPerson returned: the live BOLO or nil) is one the viewer may
+--- know about. The wire Bolo carries neither the BOLO's unit nor its issuer as fredpd_bolo's own VisRecord uses them,
+--- so visibility is not rebuilt here: the flag is set only when that BOLO is also in getBolosFor(src, kind, id), which
+--- fredpd_bolo filters with canView (any shape: full, masked or kontaktnotis). The flag and the page's BOLO list thus
+--- always agree, under any rule set. Only hits that have a live BOLO pay for that call.
+function M.boloVisible(src, kind, id, bolo)
+    if type(bolo) ~= 'table' or bolo.active == false or bolo.active == 0 then return false end
+    local boloId = M.int(bolo.id)
+    if not boloId then return false end
+    for _, b in ipairs(M.bolosFor(src, kind, id)) do
+        if M.int(b.id) == boloId and b.active ~= false and b.active ~= 0 then return true end
+    end
+    return false
+end
+
+--- BOLO flag for a search hit / vehicle row: exports.fredpd_bolo:checkPlate(plate) or checkPerson(citizenid)
+--- (memory only), then M.boloVisible. false when fredpd_bolo is stopped or a call fails. `running` =
+--- M.boloRunning(), checked once by the caller.
+function M.boloFlag(src, kind, id, running)
+    if not running then return false end
+    local ok, bolo = pcall(call, M.BOLO, kind == 'vehicle' and 'checkPlate' or 'checkPerson', id)
+    if not ok then
+        M.warnOnce('bolo:check', ('exports.fredpd_bolo check failed: %s'):format(tostring(bolo)))
+        return false
+    end
+    return M.boloVisible(src, kind, id, bolo)
 end
 
 --- Audit a lookup (§4.5; basis for "obehörig sökning"). Fire-and-forget: a failed audit call is logged, never

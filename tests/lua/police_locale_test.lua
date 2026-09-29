@@ -131,9 +131,10 @@ tests['player-facing English outside the locale files goes through locale() (men
     end)
 end
 
-tests['every fredpd_audit action written by the patches has a label in locales/pending/police.json'] = function(t)
+tests['every fredpd_audit action written by the patches has a label in locales/sv.json + en.json (or pending)'] = function(t)
     H.withTree(function(tr)
         local pending = helper.readJson('locales/pending/police.json')
+        local sv, en = helper.readJson('locales/sv.json'), helper.readJson('locales/en.json')
         local actions = {}
         for _, path in ipairs({ 'fredpd/server.lua', 'server/main.lua' }) do
             for action in tr.files[path]:gmatch("audit%([^,]+, '([%w_%.]+)'") do actions[action] = true end
@@ -143,7 +144,8 @@ tests['every fredpd_audit action written by the patches has a label in locales/p
         table.sort(names)
         t.eq(names, { 'police.armory', 'police.fine', 'police.impound', 'police.jail' })
         for _, action in ipairs(names) do
-            local label = pending['audit.action.' .. action]
+            local key = 'audit.action.' .. action
+            local label = pending[key] or (sv[key] and en[key] and { sv = sv[key], en = en[key] })
             t.ok(label and label.sv ~= '' and label.en ~= '', 'label for ' .. action)
         end
     end)

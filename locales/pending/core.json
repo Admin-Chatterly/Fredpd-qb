@@ -1,4 +1,0 @@
-{
-  "$comment": "fredpd_core (docs/modules/core.md). Merge with scripts/merge-pending-locales.mjs.",
-  "officer.unnamed": { "sv": "Polis utan namn (…{id})", "en": "Unnamed officer (…{id})" }
-}

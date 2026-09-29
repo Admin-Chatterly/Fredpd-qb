@@ -42,9 +42,10 @@ M.SELECT = 'SELECT b.id, b.kind, b.citizenid, b.plate, b.reason, b.level, b.unit
 M.RESOLVE_SQL = 'UPDATE fredpd_bolos b SET b.active = 0, b.resolved_by = %s, b.resolved_at = UTC_TIMESTAMP(), '
     .. 'b.resolve_note = %s, b.updated_at = UTC_TIMESTAMP() WHERE b.id = ? AND ' .. M.LIVE_SQL
 
--- Lazy expiry (no timers): the caller decided from expires_at and the server clock that the BOLO has run out.
+-- Lazy expiry (no timers): the caller decided from expires_at and the FXServer clock that the BOLO has run out; the
+-- row is only deactivated when the database clock agrees (a host clock running ahead must not end a BOLO early).
 M.EXPIRE_SQL = 'UPDATE fredpd_bolos SET active = 0, updated_at = UTC_TIMESTAMP() '
-    .. 'WHERE id = ? AND active = 1 AND expires_at IS NOT NULL'
+    .. 'WHERE id = ? AND active = 1 AND expires_at IS NOT NULL AND expires_at <= UTC_TIMESTAMP()'
 
 M.VEHICLE_SQL = 'SELECT v.plate, v.citizenid, v.model, p.firstname, p.lastname FROM fredpd_vehicles_idx v '
     .. 'LEFT JOIN fredpd_persons p ON p.citizenid = v.citizenid WHERE v.plate = ?'
@@ -269,7 +270,8 @@ function M.resolve(id, citizenid, note)
     return (num(MySQL.update.await(M.RESOLVE_SQL:format(byMark, noteMark), params)) or 0) > 0
 end
 
---- Deactivate an expired BOLO without waiting; cb(affectedRows) runs when the update is done.
+--- Deactivate an expired BOLO without waiting; cb(affectedRows) runs when the update is done (0: resolved or expired
+--- elsewhere, or not yet expired by the database clock).
 function M.expire(id, cb)
     MySQL.update(M.EXPIRE_SQL, { id }, function(affected)
         if cb then cb(num(affected) or 0) end

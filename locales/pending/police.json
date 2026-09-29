@@ -1,7 +1,0 @@
-{
-  "$comment": "qbx_police integration (patches/qbx_policejob.*.patch, docs/modules/police.md): labels for the fredpd_audit actions the patched qbx_police writes through exports.fredpd_core:audit. qbx_police's own player-facing text lives in its locales/*.json (patched). Merge with scripts/merge-pending-locales.mjs.",
-  "audit.action.police.armory": { "sv": "Utrustning utkvitterad ur vapenförrådet", "en": "Equipment signed out of the armoury" },
-  "audit.action.police.fine": { "sv": "Böter utfärdade med qbx_police", "en": "Fine issued through qbx_police" },
-  "audit.action.police.impound": { "sv": "Fordon bärgat eller taget i beslag", "en": "Vehicle impounded or seized" },
-  "audit.action.police.jail": { "sv": "Person skickad till fängelse med qbx_police", "en": "Person sent to prison through qbx_police" }
-}

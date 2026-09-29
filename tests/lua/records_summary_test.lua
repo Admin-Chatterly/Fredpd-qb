@@ -1,8 +1,9 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- fredpd_records person page, vehicle page and "my cases" (tasks 2.4/2.5/2.7 server side) against a real MariaDB:
 -- PersonSummary / VehicleSummary / CaseRef shapes for full, masked (with and without title), notice (contact from
--- fredpd_officers) and none (omitted); charge records naming only visible cases; BOLO lists and flags; housing
--- address; plate-check history (newest 20, missing table); audit once per opened page; failure paths; golden JSON.
+-- fredpd_officers, after the visible refs) and none (omitted); charge records only for cases whose content the viewer
+-- may see; BOLO lists and flags; housing address; plate-check history (newest 20, hits on hidden BOLOs, missing
+-- table); audit once per lookup, not_found included; failure paths; golden JSON.
 -- Harness: tests/lua/records_env_test.lua. Run: lua5.4 tests/lua/run.lua records_
 local H = require('records_env_test')
 
@@ -10,7 +11,10 @@ local tests = {}
 
 --- The person-page world. Case ids 1..9 in insertion order; viewer 1 (IGV, REC10001) sees:
 ---   7 masked without title (override), 6 none (override), 5 notice (no owner: unit only), 4 full (owner),
----   1 notice (Olle, utredning), 3 notice (closed level 1 > tier 0), 2 masked with title (closed level 0).
+---   1 notice (Olle, utredning), 3 notice (closed level 1 > tier 0), 2 masked with title (closed level 0),
+---   8 full (owner, record only), 9 notice (closed level 2 > tier 0, record only).
+--- Records 1..8: 1 case 4, 2 case 1 (empty snapshot title), 3 no case, 4 revoked, 5 case 8, 6 case 9, 7 RP002,
+--- 8 case 7 (masked at level 1).
 local function seedWorld(env)
     H.persons({
         { 'RP001', 'Anna', 'Andersson', '1990-05-17', '19900517-1234', 1, '070-123 45 67' },
@@ -45,6 +49,7 @@ local function seedWorld(env)
         { 'RP001', 8, 'BRB-005', 'Misshandel', 'bot', 2000, 0, 'issued', 'REC10001', '2026-08-01 12:00:00' },
         { 'RP001', 9, 'BRB-005', 'Misshandel', 'bot', 2500, 0, 'issued', 'REC10003', '2026-07-01 12:00:00' },
         { 'RP002', nil, 'BRB-005', 'Misshandel', 'bot', 1, 0, 'issued', 'REC10001', '2026-07-01 12:00:00' },
+        { 'RP001', 7, 'BRB-005', 'Misshandel', 'bot', 500, 0, 'issued', 'REC10002', '2026-06-01 12:00:00' },
     })
     env.bolos.lists['person:RP001'] = { H.bolo(3, 'person') }
     env.bolos.lists['vehicle:ABC123'] = { H.bolo(7, 'vehicle') }
@@ -58,7 +63,7 @@ local function vehicle(mods, src, input) return mods['server.summary'].vehicle(s
 ---------------------------------------------------------------------------------------------------------------
 -- Person
 
-tests['01 person: validation, unauthorized, not_found (not audited)'] = function(t)
+tests['01 person: validation, unauthorized, not_found (audited as a lookup)'] = function(t)
     H.with(t, function(_, env, mods)
         seedWorld(env)
         for i, input in ipairs({ 'RP001', {}, { citizenid = 5 }, { citizenid = 'RP 001' }, { citizenid = ('x'):rep(51) },
@@ -68,8 +73,10 @@ tests['01 person: validation, unauthorized, not_found (not audited)'] = function
         t.eq(person(mods, 1, nil), { ok = false, error = 'validation' })
         t.eq(person(mods, 4, { citizenid = 'RP001' }), { ok = false, error = 'unauthorized' }, 'no search grant')
         t.eq(person(mods, 0, { citizenid = 'RP001' }), { ok = false, error = 'unauthorized' })
+        t.eq(#env.audits, 0, 'rejected calls are not lookups')
         t.eq(person(mods, 1, { citizenid = 'NOPE01' }), { ok = false, error = 'not_found' })
-        t.eq(#env.audits, 0)
+        t.eq(env.audits, { { src = 1, action = 'lookup.person', targetType = 'person', targetId = 'NOPE01',
+            meta = { source = 'summary', found = false } } }, 'probing for a citizenid leaves a trace')
     end)
 end
 
@@ -87,27 +94,25 @@ tests['02 person: full summary with every CaseRef variant, records and audit'] =
         t.eq(d.address, 'Grove Street 12; Vinewood Hills 3')
         t.eq(d.cases, {
             { visibility = 'masked', id = 7, caseNumber = 'K-7-26', status = 'open', level = 1, role = 'other' },
-            { visibility = 'notice', contact = { unit = 'ledning' } },
             { visibility = 'full', id = 4, caseNumber = 'K-4-26', title = 'Misshandel på Grove Street', status = 'open',
                 level = 0, role = 'suspect' },
-            { visibility = 'notice', contact = { displayName = 'Olle Utredare', unit = 'utredning' } },
-            { visibility = 'notice', contact = { displayName = 'Olle Utredare', unit = 'utredning' } },
             { visibility = 'masked', id = 2, caseNumber = 'K-2-26', title = 'Stöld av moped', status = 'closed',
                 level = 0, role = 'witness' },
-        }, 'open first (newest first), none omitted, masked title only when level <= tier')
+            { visibility = 'notice', contact = { unit = 'ledning' } },
+            { visibility = 'notice', contact = { displayName = 'Olle Utredare', unit = 'utredning' } },
+            { visibility = 'notice', contact = { displayName = 'Olle Utredare', unit = 'utredning' } },
+        }, 'visible refs open first (newest first), then the notices by contact only; none omitted; masked title '
+            .. 'only when level <= tier')
         for _, ref in ipairs(d.cases) do H.checkRef(t, ref) end
         t.eq(d.records, {
             { id = 1, chargeCode = 'BRB-005', title = 'Misshandel', fine = 3000, jailMinutes = 0,
                 createdAt = '2026-09-04T12:00:00Z', caseNumber = 'K-4-26' },
-            { id = 2, chargeCode = 'BRB-004', title = 'Ringa misshandel', fine = 1500, jailMinutes = 0,
-                createdAt = '2026-09-03T12:00:00Z' },
             { id = 3, chargeCode = 'BRB-001', title = 'Mord', fine = 0, jailMinutes = 60,
                 createdAt = '2026-09-02T12:00:00Z' },
             { id = 5, chargeCode = 'BRB-005', title = 'Misshandel', fine = 2000, jailMinutes = 0,
                 createdAt = '2026-08-01T12:00:00Z', caseNumber = 'K-8-26' },
-            { id = 6, chargeCode = 'BRB-005', title = 'Misshandel', fine = 2500, jailMinutes = 0,
-                createdAt = '2026-07-01T12:00:00Z' },
-        }, 'revoked excluded; empty snapshot title falls back to the catalogue; case number only when visible')
+        }, 'revoked excluded; records of notice cases (1, level-2 case 9) and of a case masked above the tier (7) are '
+            .. 'left out entirely; a record without a case is shown')
         -- UTC although every session runs at +02:00 (§C7)
         t.eq(MySQL.scalar.await("SELECT DATE_FORMAT(created_at, '%H') FROM fredpd_records WHERE id = 1"), 12)
         t.eq(env.calls.canViewMany, 1, 'one batch for subject cases and record cases')
@@ -117,8 +122,9 @@ tests['02 person: full summary with every CaseRef variant, records and audit'] =
         t.eq(audits[1].src, 1)
         t.eq(audits[1].targetType, 'person')
         t.eq(audits[1].targetId, 'RP001')
+        t.eq(audits[1].meta, { source = 'summary', found = true })
         t.eq(#env.audits, 1, 'nothing else audited')
-        H.writeGolden('person.summary', d)
+        H.golden(t, 'person.summary', d)
     end)
 end
 
@@ -132,19 +138,39 @@ tests['03 person: minimal person, gender mapping, other viewers'] = function(t)
         t.eq(d.cases, {})
         t.eq(#d.records, 1)
         t.eq(d.address, nil)
-        H.writeGolden('person.minimal', d)
+        H.golden(t, 'person.minimal', d)
         local S = mods['server.summary']
         t.eq({ S.gender(0), S.gender(1), S.gender(nil), S.gender(7), S.gender('1') }, { 'male', 'female', 'unknown',
             'unknown', 'female' })
-        -- case 7 is forced to 'masked' for every viewer: tier 1 (Utredning) >= level 1, so its title is shown
-        local owner = person(mods, 2, { citizenid = 'RP001' }).data.cases
-        t.eq(owner[1], { visibility = 'masked', id = 7, caseNumber = 'K-7-26', title = 'Bedrägeri', status = 'open',
-            level = 1, role = 'other' })
-        t.eq(owner[2], { visibility = 'notice', contact = { unit = 'ledning' } }, 'case 6 is none for everyone')
-        t.eq(owner[3], { visibility = 'notice', contact = { displayName = 'Anna Patrull', unit = 'igv' } },
-            'open IGV case of another unit')
-        t.eq(owner[4], { visibility = 'full', id = 1, caseNumber = 'K-1-26', title = 'Rån mot värdetransport',
-            status = 'open', level = 0, role = 'suspect' }, 'owner')
+        -- viewer 2 (Utredning, tier 1, owner of cases 1-3 and 6-7). Case 7 is forced to 'masked' for every viewer:
+        -- tier 1 >= level 1, so its title is shown. Case 6 is none for everyone.
+        local owner = person(mods, 2, { citizenid = 'RP001' }).data
+        t.eq(owner.cases, {
+            { visibility = 'masked', id = 7, caseNumber = 'K-7-26', title = 'Bedrägeri', status = 'open', level = 1,
+                role = 'other' },
+            { visibility = 'full', id = 1, caseNumber = 'K-1-26', title = 'Rån mot värdetransport', status = 'open',
+                level = 0, role = 'suspect' },
+            { visibility = 'full', id = 3, caseNumber = 'K-3-26', title = 'Grovt narkotikabrott', status = 'closed',
+                level = 1, role = 'victim' },
+            { visibility = 'full', id = 2, caseNumber = 'K-2-26', title = 'Stöld av moped', status = 'closed',
+                level = 0, role = 'witness' },
+            { visibility = 'notice', contact = { displayName = 'Anna Patrull', unit = 'igv' } },
+            { visibility = 'notice', contact = { unit = 'ledning' } },
+        }, 'visible first; notices by contact (igv before ledning), not by status or date')
+        for _, ref in ipairs(owner.cases) do H.checkRef(t, ref) end
+        local function recordIds(list)
+            local out = {}
+            for i, r in ipairs(list) do out[i] = { r.id, r.caseNumber } end
+            return out
+        end
+        t.eq(recordIds(owner.records), { { 2, 'K-1-26' }, { 3 }, { 5, 'K-8-26' }, { 8, 'K-7-26' } },
+            'own case 1 full, case 8 masked at level 0, case 7 masked at level 1 = tier; IGV case 4 (notice) and '
+            .. 'level-2 case 9 (notice) hidden')
+        t.eq(owner.records[1].title, 'Ringa misshandel', 'empty snapshot title falls back to the catalogue')
+        -- records.admin sees every case in full (case 7 stays masked by its override, level 1 <= tier 2)
+        local admin = person(mods, 3, { citizenid = 'RP001' }).data
+        t.eq(recordIds(admin.records), { { 1, 'K-4-26' }, { 2, 'K-1-26' }, { 3 }, { 5, 'K-8-26' }, { 6, 'K-9-26' },
+            { 8, 'K-7-26' } })
     end)
 end
 
@@ -242,7 +268,7 @@ tests['06 vehicle: owner, BOLOs, cases as role vehicle, 20 newest checks with Of
         t.eq(#audits, 1)
         t.eq(audits[1].targetId, 'ABC123')
         t.eq(audits[1].meta, { source = 'summary', registered = true })
-        H.writeGolden('vehicle.summary', d)
+        H.golden(t, 'vehicle.summary', d)
     end)
 end
 
@@ -258,7 +284,7 @@ tests['07 vehicle: unregistered with a BOLO, unknown plate, validation, refresh'
         t.eq(u.data.checks, {})
         t.eq(env.calls.refreshPlate, 1, 'the miss asked fredpd_core to refresh')
         t.eq(env.named('lookup.vehicle')[1].meta.registered, false)
-        H.writeGolden('vehicle.unregistered', u.data)
+        H.golden(t, 'vehicle.unregistered', u.data)
         t.eq(vehicle(mods, 1, { plate = 'NOPE99' }), { ok = false, error = 'not_found' })
         t.eq(#env.named('lookup.vehicle'), 1, 'not_found is not audited')
         -- player_vehicles only (qbx stub): refreshed into the mirror and shown with its owner id
@@ -330,7 +356,7 @@ tests['09 home: owner or assignee, open first, limit, canView applied, count'] =
         t.eq(S.countMyOpenCases(2), { ok = true, data = 2 })
         t.eq(S.countMyOpenCases(5), { ok = false, error = 'unauthorized' })
         t.eq(#env.audits, 0, 'own cases are not lookups')
-        H.writeGolden('home.cases', r.data)
+        H.golden(t, 'home.cases', r.data)
     end)
 end
 

@@ -28,16 +28,25 @@ function M.isLive(entry, now)
     return entry.expiresEpoch == nil or entry.expiresEpoch > (now or M.clock())
 end
 
+--- activeByCitizen key: citizenids compare case-insensitively, like the utf8mb4_swedish_ci columns they come from
+--- (plates are normalised to upper case before they get here).
+local function citizenKey(citizenid)
+    return type(citizenid) == 'string' and citizenid:upper() or nil
+end
+M.citizenKey = citizenKey
+
 local function index(entry)
     M.byId[entry.id] = entry
     if entry.kind == 'vehicle' and entry.plate then M.byPlate[entry.plate] = entry end
-    if entry.kind == 'person' and entry.citizenid then M.byCitizen[entry.citizenid] = entry end
+    local ckey = entry.kind == 'person' and citizenKey(entry.citizenid) or nil
+    if ckey then M.byCitizen[ckey] = entry end
 end
 
 local function unindex(entry)
     if M.byId[entry.id] == entry then M.byId[entry.id] = nil end
     if entry.plate and M.byPlate[entry.plate] == entry then M.byPlate[entry.plate] = nil end
-    if entry.citizenid and M.byCitizen[entry.citizenid] == entry then M.byCitizen[entry.citizenid] = nil end
+    local ckey = citizenKey(entry.citizenid)
+    if ckey and M.byCitizen[ckey] == entry then M.byCitizen[ckey] = nil end
 end
 
 local function expired(entry)
@@ -92,7 +101,8 @@ function M.getByPlate(plate)
 end
 
 function M.getByCitizen(citizenid)
-    return citizenid and live(M.byCitizen[citizenid]) or nil
+    local ckey = citizenKey(citizenid)
+    return ckey and live(M.byCitizen[ckey]) or nil
 end
 
 function M.getById(id)
