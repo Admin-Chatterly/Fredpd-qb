@@ -316,10 +316,11 @@ restart; no code change, no DB change.
   loaded like the adapters (§9). Server exports on fredpd_core: `bridge(kind)` is internal; other resources use the
   exports below. Client side: a shared file other resources load with `'@fredpd_core/bridge/client.lua'`.
 - **framework** (server): `getPlayer(src)` → `{ citizenid, license, name, job = { name, type, grade, onduty },
-  charinfo }` or nil; `getPlayerByCitizenId(cid)` → src or nil; `getPlayers()` → srcs; normalised server events
+  charinfo }` or nil; client `getJob()` (UI hints only); `getPlayerByCitizenId(cid)` → src or nil; `getPlayers()` → srcs; normalised server events
   `fredpd:bridge:playerLoaded(src)`, `fredpd:bridge:playerUnloaded(src)`, `fredpd:bridge:jobChanged(src)`,
   `fredpd:bridge:dutyChanged(src, onduty)`. "Police" = `job.type == 'leo'` (both frameworks set it; qb-core's default
-  police job has `type = 'leo'`). Money for fines: `removeMoney(src, 'bank', amount, reason)`.
+  police job has `type = 'leo'`). Money for fines: `removeMoney(src, 'bank', amount, reason)`, refunds `addMoney(src, 'bank', amount, reason)`.
+  `bridgeInfo()` (server) / `clientBridgeInfo()` report the selected impl per kind and the `evidence` feature flag.
 - **inventory** (server): `count(src, item)`, `find(src, item, metadataFilter)` → `{ slot, metadata }[]`,
   `add(src, item, count, metadata)`, `remove(src, item, count, slot?)`, `registerUsable(item, fn(src, slot, metadata))`
   (qb: `QBCore.Functions.CreateUseableItem`; ox: the item's `server.export`, both reach the same fn); capability flag

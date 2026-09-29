@@ -81,6 +81,22 @@ local function warnUnavailable(kind, resource, st)
         kind, S.chosen[kind], resource, tostring(st))
 end
 
+--- 'auto' picked an installed-but-not-running resource (nothing of the pair ran yet) and the OTHER one runs now: the
+--- selection stays for this session (implementations bind upstream events at load), so say exactly what to change.
+local function warnAutoMispick(kind, resource, st, other)
+    warnOnce('resource:' .. kind .. ':' .. resource, '%s bridge: "auto" picked %s before any %s resource ran, but %s is '
+        .. 'running and %s is %s; set %s = "%s" in config/integrations.json or ensure it before fredpd_core, then '
+        .. 'restart fredpd_core', kind, resource, kind, other, resource, tostring(st), kind, other)
+end
+
+--- An implementation of kind other than the chosen one that is started now, or nil.
+local function otherStarted(kind)
+    for _, name in ipairs(Select.IMPLS[kind] or {}) do
+        if name ~= S.chosen[kind] and stateOf(name) == 'started' then return name end
+    end
+    return nil
+end
+
 ---------------------------------------------------------------------------------------------------------------
 -- Loading
 
@@ -109,10 +125,7 @@ function M.load(cfg, opts)
     end
     M.replicate()
     log.info('%s', M.report())
-    if not M.hasFeature('evidence') and stateOf('evidences') ~= 'missing' then
-        warnOnce('feature:evidence', 'evidences needs ox_inventory + ox_target (bridge: %s + %s): fredpd_forensics stays '
-            .. 'idle and the police job keeps its own evidence', S.chosen.inventory, S.chosen.target)
-    end
+    M.checkEvidence()
     return S.chosen
 end
 
@@ -128,9 +141,40 @@ function M.checkResource(kind)
     elseif not running(st) then
         defer(M.DEFERRED_CHECK_MS, function()
             local later = stateOf(resource)
-            if not running(later) then warnUnavailable(kind, resource, later) end
+            if running(later) then return end
+            local other = S.notes[kind] == 'not_started' and otherStarted(kind) or nil
+            if other then
+                warnAutoMispick(kind, resource, later, other)
+            else
+                warnUnavailable(kind, resource, later)
+            end
         end)
     end
+end
+
+local function oxEvidencePair()
+    return S.chosen.inventory == 'ox_inventory' and S.chosen.target == 'ox_target'
+end
+
+--- Start-up evidence check (one warning at most). The inventory/target choice rules evidence out -> warn at once (only
+--- when evidences is installed at all). The ox pair is chosen but evidences is not running yet (ensured after
+--- fredpd_core) -> look again once after M.DEFERRED_CHECK_MS and warn only if it is still down.
+function M.checkEvidence()
+    local st = stateOf('evidences')
+    if st == 'missing' then return end
+    if not oxEvidencePair() then
+        warnOnce('feature:evidence', 'evidences needs ox_inventory + ox_target (bridge: %s + %s): fredpd_forensics stays '
+            .. 'idle and the police job keeps its own evidence', S.chosen.inventory, S.chosen.target)
+        return
+    end
+    if st == 'started' then return end
+    defer(M.DEFERRED_CHECK_MS, function()
+        local later = stateOf('evidences')
+        if later ~= 'started' then
+            warnOnce('feature:evidence', 'evidences is %s (ox_inventory + ox_target are selected): fredpd_forensics '
+                .. 'stays idle until evidences starts', tostring(later))
+        end
+    end)
 end
 
 --- Tell clients which target/doorlock implementation to use (read by bridge/client.lua with GetConvar).
@@ -155,7 +199,17 @@ function M.report()
     return ('bridge: framework=%s, inventory=%s (hooks: %s), target=%s, doorlock=%s%s; evidence: %s'):format(
         tostring(S.chosen.framework), tostring(S.chosen.inventory), inv and inv.hooks and 'yes' or 'no',
         tostring(S.chosen.target), tostring(S.chosen.doorlock), patched,
-        M.hasFeature('evidence') and 'on' or 'off (needs ox_inventory + ox_target + evidences)')
+        M.evidenceText())
+end
+
+--- Evidence part of the report: on | pending (ox pair chosen, evidences installed but not started yet) | off.
+function M.evidenceText()
+    if M.hasFeature('evidence') then return 'on' end
+    local st = stateOf('evidences')
+    if oxEvidencePair() and st ~= 'missing' then
+        return ('pending (evidences is %s; on once it starts)'):format(tostring(st))
+    end
+    return 'off (needs ox_inventory + ox_target + evidences)'
 end
 
 --- Degradation switches (§C17). 'evidence' = inventory ox_inventory + target ox_target + evidences started;

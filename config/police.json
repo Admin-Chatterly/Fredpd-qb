@@ -56,8 +56,11 @@
     "$comment": "The same mapping for the patched qb-policejob (QBCore; patches/qb-policejob.*.patch, docs/modules/police-qb.md), read by it the same way. It uses the shared 'actions' and 'radar' above; 'actions' here adds or overrides qb-policejob-only actions. Armory items are qb-core shared/items.lua names (weapon:weapon_pistol, armory:pistol_ammo). garage.vehicles {} = every model in qb-policejob config.lua AuthorizedVehicles. qbShops: qb-inventory shop type -> armory id (ShopOpened/ItemBought hooks); empty = no hook. maxFine: highest /fine and bill amount in kr.",
     "actions": {
       "evidence": "duty",
+      "evidencelocker": "duty",
       "search": "duty",
-      "seizelicense": "duty"
+      "seizelicense": "duty",
+      "stash": "duty",
+      "trash": "duty"
     },
     "garage": {
       "vehicles": {},

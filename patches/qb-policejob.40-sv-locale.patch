@@ -26,7 +26,7 @@ index 577b044..eab1162 100644
  end
  
 diff --git a/client/job.lua b/client/job.lua
-index 89f5f04..5fe0c33 100644
+index 0621a6f..1602a77 100644
 --- a/client/job.lua
 +++ b/client/job.lua
 @@ -79,7 +79,8 @@ end

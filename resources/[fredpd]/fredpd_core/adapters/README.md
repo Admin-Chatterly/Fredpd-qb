@@ -39,8 +39,9 @@ Each adapter also has `kind`, `name`, `resource`, `stub`, `state()` (GetResource
 | housing | `ox_doorlock-only` | `housing/ox_doorlock_only.lua` | ox_doorlock | stub, task 6.2 |
 | garage | `none` | `garage/none.lua` | – | done |
 | garage | `qbx_garages` (default) | `garage/qbx_garages.lua` | qbx_garages | stub, task 3.4 |
+| garage | `qb-garages` (QBCore) | `garage/qb_garages.lua` | qb-garages + `patches/qb-garages.10-fredpd-events.patch` | done (docs/modules/adapters-qb.md) |
 | prison | `none` (default until task 4.1) | `prison/none.lua` | – | done |
-| prison | `xt-prison` (planned default) | – | xt-prison | task 4.1 (docs/deps-verification.md Decision 2) |
+| prison | `xt-prison` (default per Decision 2) | `prison/xt_prison.lua` | xt-prison (qb-core or qbx_core bridge) | done (docs/modules/adapters-qb.md) |
 | prison | `qbx_prison` (**opt-in, insecure unpatched**) | `prison/qbx_prison.lua` | qbx_prison | stub, task 4.1 |
 | prison | `qbx_police-jail` (metadata only, no confinement) | `prison/qbx_police_jail.lua` | qbx_policejob | stub, task 4.1 |
 

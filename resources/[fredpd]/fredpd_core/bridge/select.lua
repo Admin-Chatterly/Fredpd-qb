@@ -61,6 +61,8 @@ function M.resolve(kind, configured, stateOf)
     for _, name in ipairs(list) do
         if stateOf(name) == 'starting' then return name, note end
     end
+    -- Nothing runs yet: the first installed one (ox first). Decided once at fredpd_core start, so 'auto' needs the
+    -- upstream resources ensured before fredpd_core; server/bridge.lua warns once if the other one runs later.
     for _, name in ipairs(list) do
         if stateOf(name) ~= 'missing' then return name, note or 'not_started' end
     end

@@ -11,7 +11,11 @@ bridge, which picks one implementation per kind from `config/integrations.json`:
 | target | `qb-target` \| `ox_target` | ox_target, qb-target | qb-target |
 | doorlock | `qb-doorlock` \| `ox_doorlock` | ox_doorlock, qb-doorlock | qb-doorlock |
 
-An unknown value warns once and falls back to `auto`. Switching = change the value and restart fredpd_core (and the
+An unknown value warns once and falls back to `auto`. **`auto` is decided once, when fredpd_core starts** (the
+implementations bind upstream events at load): when neither resource of a pair is started or starting yet, it takes
+the first *installed* one (ox first). So with `auto`, ensure the upstream resources **before** fredpd_core; if auto
+picked a resource that never came up while the other one runs, the 15 s re-check logs one warning naming the value to
+set. The shipped `config/integrations.json` uses explicit values, which avoids this. Switching = change the value and restart fredpd_core (and the
 resources that include the client file). Line numbers below are **upstream at the pin** (deps.lock.json).
 
 ## Files
@@ -29,7 +33,7 @@ resources that include the client file). Line numbers below are **upstream at th
 | `fredpd_core/client/bridge.lua` | client exports `clientBridgeInfo`, `listDoors(cb)` |
 | `patches/qb-doorlock.10-fredpd-bridge.patch` | qb-doorlock server exports `getDoor`, `setDoorState` + server event `qb-doorlock:server:doorChanged` |
 | `patches/qb-core.10-fredpd-items.patch` | `pd_tablet`, `pd_ram` in qb-core `shared/items.lua` |
-| `tests/lua/bridge_*_test.lua` | 40 tests in 6 files (harness `bridge_harness_test.lua`, which also offers `useQbx()` for other server tests) |
+| `tests/lua/bridge_*_test.lua` | 42 tests in 6 files (harness `bridge_harness_test.lua`, which also offers `useQbx()` for other server tests) |
 
 fxmanifest: hard `dependencies` are only `ox_lib` and `oxmysql`; the framework/inventory/target/doorlock resources
 are checked with `GetResourceState`. The bridge files the client needs are in `files` (read with `LoadResourceFile`
@@ -90,7 +94,11 @@ Jobs of online players are primed at start (`primeOnline`), so a fredpd_core res
   - qb-target (registration.lua): `{ options, distance = max option distance }`; options are keyed **by label**
     (SetOptions :5-14), removal by label; `action(entity)` → `onSelect` with `GetEntityCoords(entity)`, distance nil
     (client.lua:505-506); `canInteract(entity, distance, data)` → coords nil (client.lua:48-60); `addEntity` converts
-    network ids to entities; box zone → `AddBoxZone(name, center, length = size.y, width = size.x, { heading, minZ,
+    network ids to entities **once, at the call**: an id whose entity is not streamed in on this client then is skipped
+    and never gets the options later, and `remove` misses entities no longer local (ox_target keeps network ids and
+    has neither limit). Callers on qb-target add entity options when the entity is known to exist locally (e.g. right
+    after creating/receiving it) and prefer `addModel`/`addGlobalVehicle` for long-lived targets. No event-free way
+    exists to re-add on stream-in without polling (§0 forbids it); box zone → `AddBoxZone(name, center, length = size.y, width = size.x, { heading, minZ,
     maxZ, debugPoly })` (:29-38).
 - `FredBridge.doorlock.listDoors()` (ox: `lib.callback.await 'ox_doorlock:getDoors'` — call from a thread; qb:
   `exports['qb-doorlock']:GetDoorList()` client.lua:930-932, filled after `QBCore:Client:OnPlayerLoaded`),
@@ -106,7 +114,10 @@ One info line, e.g. `bridge: framework=qb-core, inventory=qb-inventory (hooks: n
 doorlock=qb-doorlock (needs its FredPD patch); evidence: off (needs ox_inventory + ox_target + evidences)`.
 A configured resource that is `missing` → one warning at once; installed but not started → one re-check after 15 s,
 one warning if still down. `evidences` installed but the ox pair not selected → one warning ("fredpd_forensics stays
-idle and the police job keeps its own evidence"). qb-doorlock without the patch → one warning, `getDoor` nil,
+idle and the police job keeps its own evidence"). The ox pair selected but `evidences` installed and not started yet
+(ensured after fredpd_core) → the report says `evidence: pending (evidences is stopped; on once it starts)` and one
+re-check after 15 s warns only if it is still down (`hasFeature('evidence')` is live, so it turns true once evidences
+starts). qb-doorlock without the patch → one warning, `getDoor` nil,
 `setLocked` false (breach disabled).
 
 ## Integration requests (call sites to move to the bridge)
@@ -134,8 +145,11 @@ instead of `QBCore:Server:*`, and drops `qbx_core`/`ox_*` from its fxmanifest `d
 
 ## Open questions (contract, §C17)
 
-1. `addMoney` is not in §C17; added because fredpd_records refunds a fine (`charges.lua:314`). Please add it to the
-   contract.
+1. Exports beyond the §C17 list, to be added to docs/contracts.md §C17 by its owner (this module may not edit it):
+   server `addMoney(src, account, amount, reason)` (fredpd_records refunds a fine whose DB write failed,
+   `charges.lua:314`) and `bridgeInfo()`; client `FredBridge.framework.getJob()`, `FredBridge.doorlock.onDoorChanged`,
+   and the fredpd_core client export `clientBridgeInfo()`. Until then they are FredPD-internal additions with the
+   signatures documented above.
 2. qb-inventory at the pin has `AddHook`/`AddListener` (server/functions.lua:905-971, events such as `ItemMoved`);
    §C17 defines `hooks` as ox `registerHook('swapItems')` only, so `hooks = false` for qb. A qb chain-of-custody
    hook is possible later.
@@ -144,3 +158,7 @@ instead of `QBCore:Server:*`, and drops `qbx_core`/`ox_*` from its fxmanifest `d
 4. ox item definitions: `pd_tablet` in `patches/ox_inventory.10-fredpd-items.patch` uses `client.export =
    'fredpd_mdt.open'` (a client export). With the bridge a server-side use handler needs `server.export =
    'fredpd_core.useItem'`; the fredpd_mdt owner decides which path the tablet takes on both inventories.
+5. Test files outside this module: `bolo_server_test.lua`, `dispatch_server_test.lua`, `intel_server_test.lua`,
+   `forensics_server_test.lua` each got one line, `require('bridge_harness_test').useQbx()`, because the real
+   fredpd_core audit they load now resolves the actor through the bridge. No shared helper loads fredpd_core (each test
+   loads it itself), so there is nothing to move it into; the module owners should acknowledge the line.

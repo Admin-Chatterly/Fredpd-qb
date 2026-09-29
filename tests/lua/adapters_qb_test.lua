@@ -319,7 +319,7 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- Prison adapter
 
-tests['xt-prison: not jailed -> enterJail client callback, sent without waiting'] = function(t)
+tests['xt-prison: not jailed -> SetJailTime first, then enterJail client callback, sent without waiting'] = function(t)
     with({ states = { ['xt-prison'] = 'started' }, players = { [4] = 'C4' } }, function(w)
         local a = prison(w)
         local log = recorder()
@@ -327,12 +327,23 @@ tests['xt-prison: not jailed -> enterJail client callback, sent without waiting'
         t.eq(a.jail(4, 30, { { code = 'BrB 3:1', label = 'Stöld' } }), true)
         t.eq(#w.callbacks, 1)
         t.eq({ w.callbacks[1].event, w.callbacks[1].target, w.callbacks[1].args }, { 'xt-prison:client:enterJail', 4, { 30 } })
-        t.eq(#w.setJailCalls, 0, 'xt-prison sets the time itself when the client enters')
+        t.eq(w.setJailCalls, { { 4, 30 } }, 'server-side time is set before the client is asked to enter')
         w.callbacks[1].cb(true)
         t.eq(#log.warns, 0)
         w.callbacks[1].cb(false)
         t.eq(#log.warns, 1, 'an unconfirmed entry is logged')
         t.eq(a.jail('4', 5.0, nil), true, 'numeric strings / integral floats are accepted')
+    end)
+end
+
+tests['xt-prison: not jailed and SetJailTime refused -> false, no enterJail sent'] = function(t)
+    with({ states = { ['xt-prison'] = 'started' }, players = { [4] = 'C4' } }, function(w)
+        local a = prison(w)
+        a.init(recorder())
+        w.setJail = function() return false end
+        t.eq(a.jail(4, 30, {}), false)
+        t.eq(w.setJailCalls, { { 4, 30 } })
+        t.eq(#w.callbacks, 0, 'the client is not confined when xt-prison did not take the time')
     end)
 end
 

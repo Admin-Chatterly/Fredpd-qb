@@ -7,8 +7,12 @@
 --
 -- jail(src, minutes, charges), server side only. FredPD's record (fredpd_records) is the authority; xt-prison only
 -- confines, and it trusts the client with the countdown (§2a).
---   minutes > 0, not jailed yet  -> ox_lib client callback 'xt-prison:client:enterJail'(minutes) (client/cl_main.lua:5-7;
---                                   the same call xt-prison's own /jail makes, server/sv_commands.lua:96)
+--   minutes > 0, not jailed yet  -> exports['xt-prison']:SetJailTime(src, minutes) FIRST (server-side state, injail
+--                                   metadata and DB-on-drop no longer depend on the client answering), then the ox_lib
+--                                   client callback 'xt-prison:client:enterJail'(minutes) (client/cl_main.lua:5-7; the
+--                                   call xt-prison's own /jail makes, server/sv_commands.lua:96). enterPrison's
+--                                   setJailStatus (server/sv_main.lua:150-158) then sees the same time and only
+--                                   confines; a client that drops the callback is re-jailed on relog (initJailTime).
 --   minutes > 0, already jailed  -> exports['xt-prison']:SetJailTime(src, minutes) (new time, like its /jail on a
 --                                   jailed player, sv_commands.lua:80-85) + a notice to the prisoner
 --   minutes == 0 (release)       -> SetJailTime(src, 0), then 'xt-prison:client:exitJail'(true) (the roster's
@@ -105,6 +109,7 @@ function M.jail(src, minutes, _charges)
         notify(src, 'prison.notify.timeChanged', { count = minutes })
         return true
     end
+    if exports[M.RESOURCE]:SetJailTime(src, minutes) ~= true then return false end
     return sendClient(M.ENTER, src, minutes, 'jail')
 end
 

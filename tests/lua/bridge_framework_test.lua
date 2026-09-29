@@ -305,4 +305,36 @@ tests['auto selection in the server bridge: ox/Qbox preferred when both run, qb 
     end)
 end
 
+tests['auto with nothing running yet: a later-started other implementation gives one precise warning'] = function(t)
+    local env = H.with({ cfg = { inventory = 'auto' }, states = { ox_inventory = 'stopped', ['qb-inventory'] = 'stopped' } },
+        function(env)
+            t.eq(env.Bridge.chosen('inventory'), 'ox_inventory', 'installed ox wins while nothing runs')
+            env.states['qb-inventory'] = 'started'
+            for _, d in ipairs(env.deferred) do d.cb() end
+            t.eq(H.count(env.logs.warn, '"auto" picked ox_inventory before any inventory resource ran, but qb-inventory '
+                .. 'is running'), 1, table.concat(env.logs.warn, '\n'))
+            t.eq(env.Bridge.count(1, 'pd_tablet'), 0, 'calls stay no-ops')
+            t.eq(H.count(env.logs.warn, 'ox_inventory'), 1, 'still one warning')
+        end)
+    t.ok(env)
+end
+
+tests['evidence: ox pair chosen but evidences not started yet -> pending, one deferred check'] = function(t)
+    local states = { ox_inventory = 'started', ox_target = 'started', evidences = 'stopped' }
+    H.with({ cfg = { inventory = 'ox_inventory', target = 'ox_target' }, states = states }, function(env)
+        t.eq(H.count(env.logs.warn, 'evidences'), 0, 'no warning at start')
+        t.ok(env.logs.info[1]:find('evidence: pending (evidences is stopped; on once it starts)', 1, true), env.logs.info[1])
+        env.states.evidences = 'started'
+        for _, d in ipairs(env.deferred) do d.cb() end
+        t.eq(H.count(env.logs.warn, 'evidences'), 0, 'started in time')
+        t.eq(env.Bridge.hasFeature('evidence'), true)
+    end)
+    H.with({ cfg = { inventory = 'ox_inventory', target = 'ox_target' },
+        states = { ox_inventory = 'started', ox_target = 'started', evidences = 'stopped' } }, function(env)
+        for _, d in ipairs(env.deferred) do d.cb() end
+        t.eq(H.count(env.logs.warn, 'evidences is stopped (ox_inventory + ox_target are selected)'), 1)
+        t.eq(H.count(env.logs.warn, 'evidences needs'), 0, 'not the wrong-stack warning')
+    end)
+end
+
 return tests

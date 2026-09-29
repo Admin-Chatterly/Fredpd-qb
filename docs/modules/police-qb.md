@@ -77,19 +77,31 @@ restarts.
 | `license` | `perm:police.license` | `/grantlicense`, `/revokelicense` (upstream: grade ≥ LicenseRank) |
 | `fine`, `bill` | `perm:charges.fine` | `/fine`, net `BillPlayer` |
 | `flagplate`, `unflagplate` | `perm:bolo.create`, `perm:bolo.resolve` | `/flagplate`, `/unflagplate` |
-| `cuff`, `object`, `spikestrip`, `camera`, `seizecash`, `tracker`, `anklet`, `plateinfo`, `paytow`, `paylawyer`, `evidence`*, `search`*, `seizelicense`* | `duty` | the matching commands / net events (* qb-only, `qbPolicejob.actions`) |
+| `cuff`, `object`, `spikestrip`, `camera`, `seizecash`, `tracker`, `anklet`, `plateinfo`, `paytow`, `paylawyer`, `evidence`*, `search`*, `seizelicense`*, `stash`*, `trash`*, `evidencelocker`* | `duty` | the matching commands / net events (* qb-only, `qbPolicejob.actions`) |
 
 Hardening in **both modes**: bill/`/fine` whole amount 1..`maxFine` (100 000 kr), jail whole months ≥ 1,
 `/unjail` refuses `-1`/unknown ids, objects only `Config.Objects` types and ≤ `Config.MaxSpikes` sanitised spikes,
 impound price whole ≥ 0, `TakeOutImpound` only a known lot and only a `state = 2` row, `pairs` in `UpdateBlips`.
 Rate limits (`FredPD.rateLimit`, after the grant check, cleared on `playerDropped`): bill, jail, `/fine`, `/paytow`,
-`/paylawyer`, spawn 1/2 s; impound, take-out, seizecash, tracker, armory take, radar 1/s; objects, armory open
+`/paylawyer`, spawn 1/2 s; impound, take-out, seizecash, tracker, armory take, radar, stash, trash, evidence
+locker 1/s; objects, armory open
 1/500 ms. `/fine`, `/paytow`, `/paylawyer` answer `fredpd.try_again`.
+
+**Stash, trash, evidence lockers** (upstream server/main.lua:116-146, `job.type == 'leo'` only, no duty; the
+evidence event opened **any client-named inventory**, e.g. another officer's `policestash_<citizenid>`): gated by
+`stash`/`trash`/`evidencelocker` via `FredPD.allowed` (upstream leo check when fredpd_core is stopped), 1/s. The
+patched client (client/job.lua:460) sends only the evidence room index and drawer number; the server
+(`FredPD.evidenceStashName`) accepts a whole index in `Config.Locations['evidence']`, drawer 1..100 000, officer
+≤ 5 m from that room, and builds the name with `Lang:t('info.current_evidence')` exactly as upstream did, so existing
+drawers keep their contents. A string identifier is refused in both modes.
 
 **Jail + xt-prison**: the patched client sends `police:server:fredpdJailPlayer` (patched client/interactions.lua:157);
 the server serves it and, only while xt-prison is **not** started, the old `police:server:JailPlayer`. So with
 xt-prison a jail is grant-checked and enters the prison once (qb `SendToJail` → `prison:client:Enter` → xt-prison
-compat). A modified client can still fire the old name at xt-prison's own handler (xt-prison's job check only) —
+compat). With xt-prison started the server first sets the sentence itself with `exports['xt-prison']:SetJailTime(target,
+minutes)` (xt-prison bridge/server/qb.lua:30-46); `prison:client:Enter` → `enterPrison` (client/modules/prison.lua:140-141)
+then calls `xt-prison:server:setJailStatus` (server/sv_main.lua:150-163), which finds the same time and only confines.
+qb-policejob has no ox_lib, so it cannot `lib.callback.await('xt-prison:client:enterJail')` itself. A modified client can still fire the old name at xt-prison's own handler (xt-prison's job check only) —
 request 2.
 
 **Garage/helicopter/impound spawn**: new callbacks `police:server:fredpdGarageVehicles` (FredPD: candidates =
@@ -108,6 +120,10 @@ functions.lua:357), `CanAddItem` (:384), `AddItem(src, item, count, false, info,
 (:711), ItemBox, audit `police.armory`. Items are signed out, not bought. **qb-inventory shops** (e.g. a qb-shops
 police shop) listed in `qbShops` get `ShopOpened` (on duty + `armory:<id>`) and `ItemBought` (+ item grant) hooks;
 no opinion while fredpd_core is stopped; re-registered when qb-inventory restarts. The shop still lists every item.
+
+**Degradation notes (§C17)**: one console line at load when fredpd_core is not started ("qb-policejob uses its own
+job checks until it starts"); the client logs once when qb-target or PolyZone is missing and armory zones cannot be
+added.
 
 ## Patch 20 — replacements
 
@@ -152,7 +168,7 @@ description; shared/items.lua:353-354): `pd_tablet` "Surfplatta" (unique, useabl
 
 ## Tests
 
-`lua5.4 tests/lua/run.lua qbpolice` → **59 passed** (harness 7, grants 16, armory 12, evidence 6, bolo 12, locale 6).
+`lua5.4 tests/lua/run.lua qbpolice` → **66 passed** (harness 7, grants 16, armory 12, evidence 6, bolo 12, locale 6, lockers 7).
 The harness `git archive`s the pins of qb-policejob and qb-core, applies the patches, and runs the patched files
 with FiveM/qb-core (real `shared/locale.lua`)/qb-inventory/oxmysql/fredpd_core/fredpd_bolo mocked. Without the
 upstream checkouts all qbpolice tests skip with one notice; `FREDPD_REQUIRE_UPSTREAM=1` makes that a failure.
@@ -166,7 +182,8 @@ luac5.4 rejects `client/evidence.lua`, `client/interactions.lua`, `client/object
 3. qb-inventory `AddHook` with a function from another resource (function reference) and `false` refusing.
 4. `onClientResourceStart` for fredpd_core/qb-target re-adding armory zones; qb-target `AddCircleZone` options
    with `jobType`/`canInteract`.
-5. xt-prison entering via `prison:client:Enter` from qb's `SendToJail` (logs xt-prison's "deprecated" error once).
+5. xt-prison entering via `prison:client:Enter` from qb's `SendToJail` (logs xt-prison's "deprecated" error once),
+   after the server-side `SetJailTime`; the sentence surviving a relog (test-phase step).
 6. The spawned vehicle's plate set server-side (`SetVehicleNumberPlateText`) before the client sets it again.
 
 ## Integration requests

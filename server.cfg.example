@@ -1,16 +1,21 @@
 # SPDX-License-Identifier: GPL-3.0-only
 # FredPD - example server.cfg fragment. Copy the parts you need into your own server.cfg (which is git-ignored and
-# must stay out of the repository: it holds secrets). Keep your existing Qbox/txAdmin settings; this file only shows
-# what FredPD needs and the order it needs it in.
+# must stay out of the repository: it holds secrets). Keep your existing QBCore/txAdmin settings; this file only shows
+# what FredPD needs and the order it needs it in. Default stack: qb-core + qb-inventory/qb-target/qb-doorlock; the ox
+# stack (needed for evidence) is shown commented out (docs/SETUP.md, docs/contracts.md C17).
 
 ## ---------------------------------------------------------------------------------------------------------------
 ## Database (oxmysql). utf8mb4 so Swedish names survive. FredPD stores UTC regardless of the MariaDB time zone
 ## (docs/contracts.md C7); no zone change needed.
-set mysql_connection_string "mysql://fivem:CHANGE_ME@127.0.0.1:3306/qbox?charset=utf8mb4"
+set mysql_connection_string "mysql://fivem:CHANGE_ME@127.0.0.1:3306/qbcore?charset=utf8mb4"
 
 ## ---------------------------------------------------------------------------------------------------------------
-## Language: ox_lib's locale() and FredPD's L() read locales/sv.json (en.json is the fallback).
+## Language: ox_lib's locale() and FredPD's L() read locales/sv.json (en.json is the fallback); qb resources
+## (qb-policejob's patched locales/sv.lua, qb-core) read qb_locale.
 setr ox:locale sv
+setr qb_locale sv
+# qb-policejob patch: keep the old police_stormram trunk item off (fredpd_breach's pd_ram replaces it).
+setr fredpd_police_legacy false
 
 ## ---------------------------------------------------------------------------------------------------------------
 ## FredPD <-> fredpd_service bridge (docs/contracts.md C5/C6).
@@ -39,26 +44,35 @@ add_ace group.admin command allow
 
 ## ---------------------------------------------------------------------------------------------------------------
 ## Resource order. Dependencies first; FredPD after the upstream police resources it integrates with.
+## config/integrations.json must name the same stack: framework/inventory/target/doorlock = qb-core, qb-inventory,
+## qb-target, qb-doorlock (or ox_inventory, ox_target, ox_doorlock for the ox stack).
 ensure oxmysql
 ensure ox_lib
-ensure qbx_core
-ensure ox_inventory
-ensure ox_target
-ensure ox_doorlock
+ensure qb-core
+ensure PolyZone
+ensure qb-target
+ensure qb-inventory
+ensure qb-doorlock
+# ox stack instead (enables fredpd_forensics + evidences, xt-prison item confiscation and prison break):
+# ensure ox_inventory
+# ensure ox_target
+# ensure ox_doorlock
 
-# Upstream (fetched by scripts/fetch-deps.sh into resources/[upstream], patched by scripts/apply-patches.sh)
-ensure qbx_policejob
-ensure evidences
+# Upstream (fetched by scripts/fetch-deps.sh into resources/[upstream], patched by scripts/apply-patches.sh). Patched
+# copies: qb-core, qb-policejob, qb-doorlock, qb-garages, ps-dispatch.
+ensure qb-policejob
 ensure ps-dispatch
+# ox stack only (evidences needs ox_inventory + ox_target):
+# ensure evidences
 
 # Integrations configured in config/integrations.json (housing/garage/prison adapters). Start them before
-# fredpd_core so its start-up check sees them running; adjust to the scripts you actually use.
-ensure ps-housing
-ensure qbx_garages
-# Prison: xt-prison (all Qbox recipes install it; FredPD's adapter comes with task 4.1, until then
-# config/integrations.json has "prison": "none"). NEVER run qbx_prison: its gate event lets any client unlock any
-# ox_doorlock door (station doors, fredpd_breach targets) and clear its own sentence (docs/deps-verification.md 2a).
-# ensure xt-prison
+# fredpd_core so its start-up check sees them running; adjust to the scripts you actually use ("none" otherwise).
+ensure qb-garages
+# ensure ps-housing
+# Prison: xt-prison (release zip; set its PoliceJobs to the police job only) with "prison": "xt-prison". NEVER run
+# qbx_prison: its gate event lets any client unlock any ox_doorlock door and clear its own sentence
+# (docs/deps-verification.md 2a).
+ensure xt-prison
 
 # FredPD: fredpd_core first (permissions, migrations, bridge), then the modules that use it.
 ensure fredpd_core
@@ -66,7 +80,8 @@ ensure fredpd_mdt
 ensure fredpd_records
 ensure fredpd_bolo
 ensure fredpd_dispatch
-ensure fredpd_forensics
+# ox stack only (fredpd_forensics currently requires ox_inventory + ox_target; evidence is off on the qb stack):
+# ensure fredpd_forensics
 ensure fredpd_intel
 ensure fredpd_breach
 

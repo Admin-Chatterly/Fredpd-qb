@@ -74,6 +74,8 @@ function M.client(ctx)
     end
 
     --- Network ids -> entity handles (qb-target takes entities). Ids whose entity does not exist here are skipped.
+    --- Resolved once per call: an entity streamed in later never gets the options, and remove() misses entities no
+    --- longer local (ox_target keeps netIds). Documented limitation, docs/modules/bridge.md (no polling, §0).
     local function entitiesOf(netIds)
         local out = {}
         for _, netId in ipairs(type(netIds) == 'table' and netIds or { netIds }) do

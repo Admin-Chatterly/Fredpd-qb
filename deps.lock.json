@@ -172,8 +172,8 @@
       "commit": "4a8e911d7543f762691e27b4b0a7afd877890aee",
       "date": "2026-08-24T17:23:50-05:00",
       "license": "GPL-3.0-only",
-      "mode": "REUSE",
-      "notes": "Bridge target for doorlock=qb-doorlock; used unmodified."
+      "mode": "PATCH",
+      "notes": "Bridge target for doorlock=qb-doorlock; patches/qb-doorlock.10-fredpd-bridge.patch adds a server-side state-change event for the bridge (fredpd:bridge:doorChanged)."
     },
     "qb-garages": {
       "repo": "https://github.com/qbcore-framework/qb-garages",
