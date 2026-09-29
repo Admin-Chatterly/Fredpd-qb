@@ -42,6 +42,14 @@ change.
 | qb-doorlock | https://github.com/qbcore-framework/qb-doorlock | qb | **patched copy** (door export + event) |
 | qb-garages | https://github.com/qbcore-framework/qb-garages | optional | **patched copy** (park/take-out events for BOLO) |
 | PolyZone | https://github.com/mkafrin/PolyZone | qb | used by qb-target and qb-garages |
+| qb-weapons | https://github.com/qbcore-framework/qb-weapons | qb | hard dependency of qb-inventory |
+| qb-vehiclekeys | https://github.com/qbcore-framework/qb-vehiclekeys | both | used by qb-core |
+| qb-banking | https://github.com/qbcore-framework/qb-banking | both | used by qb-core and for fines |
+| progressbar | https://github.com/qbcore-framework/progressbar | both | used by qb-core |
+| qb-menu | https://github.com/qbcore-framework/qb-menu | both | used by qb-policejob |
+| qb-input | https://github.com/qbcore-framework/qb-input | both | used by qb-policejob and qb-doorlock |
+| qb-minigames | https://github.com/qbcore-framework/qb-minigames | qb | used by qb-doorlock |
+| LegacyFuel (or any fuel script with GetFuel/SetFuel) | https://github.com/InZidiuZ/LegacyFuel | both | set as Config.FuelResource in qb-policejob/qb-garages |
 | ps-dispatch | https://github.com/Project-Sloth/ps-dispatch | both | **patched copy** |
 | xt-prison | https://github.com/xT-Development/xt-prison/releases | optional | release zip v1.4.9, unmodified |
 | ps-housing | https://github.com/Project-Sloth/ps-housing | optional | unmodified |
