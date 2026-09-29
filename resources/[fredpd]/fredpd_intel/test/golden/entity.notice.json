@@ -1,0 +1,20 @@
+{
+  "entity": {
+    "id": 1,
+    "label": "Sven Svensson",
+    "ref": "SUS00001",
+    "type": "person"
+  },
+  "hiddenLinks": 2,
+  "links": [],
+  "notices": [
+    {
+      "contact": {
+        "displayName": "Sara S.",
+        "unit": "span"
+      },
+      "visibility": "notice"
+    }
+  ],
+  "reports": []
+}

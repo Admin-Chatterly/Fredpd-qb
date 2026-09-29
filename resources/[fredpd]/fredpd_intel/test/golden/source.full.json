@@ -1,0 +1,20 @@
+{
+  "codename": "Falken",
+  "handler": {
+    "callsign": "SPA-02",
+    "citizenid": "HAN00002",
+    "displayName": "Hans H.",
+    "unit": "span"
+  },
+  "id": 1,
+  "level": 2,
+  "notes": "Hamnen",
+  "realIdentity": {
+    "citizenid": "INF00001",
+    "name": "Ingvar Informant"
+  },
+  "reliability": "B",
+  "status": "open",
+  "unit": "span",
+  "visibility": "full"
+}

@@ -1,0 +1,4 @@
+{
+  "$comment": "housing adapter ox_doorlock-only (docs/modules/breach.md): property id -> ox_doorlock doors (id number or door name) and an optional label. A numeric property id that is not listed is used as an ox_doorlock door id.",
+  "properties": {}
+}

@@ -135,7 +135,7 @@ function M.recordIdentity(id, itemName, ident)
     local params = {}
     local sql = 'UPDATE fredpd_evidence SET item_name = COALESCE(item_name, ' .. val(itemName, params)
         .. '), ident = COALESCE(ident, ' .. val(ident, params)
-        .. ') WHERE id = ? AND (item_name IS NULL OR ident IS NULL)'
+        .. '), updated_at = UTC_TIMESTAMP() WHERE id = ? AND (item_name IS NULL OR ident IS NULL)'
     params[#params + 1] = id
     return (tonumber(MySQL.update.await(sql, params)) or 0) > 0
 end

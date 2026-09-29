@@ -1,0 +1,75 @@
+{
+  "entity": {
+    "id": 1,
+    "label": "Sven Svensson",
+    "ref": "SUS00001",
+    "type": "person"
+  },
+  "hiddenLinks": 0,
+  "links": [
+    {
+      "confidence": 90,
+      "createdAt": "2026-09-29T10:01:00Z",
+      "createdBy": {
+        "callsign": "UTR-04",
+        "citizenid": "UTR00004",
+        "displayName": "Ulla U.",
+        "unit": "utredning"
+      },
+      "from": {
+        "id": 1,
+        "label": "Sven Svensson",
+        "ref": "SUS00001",
+        "type": "person"
+      },
+      "id": 2,
+      "level": 1,
+      "to": {
+        "id": 3,
+        "label": "ABC123 (sultan)",
+        "ref": "ABC123",
+        "type": "vehicle"
+      },
+      "type": "owns"
+    },
+    {
+      "confidence": 80,
+      "createdAt": "2026-09-29T10:02:00Z",
+      "createdBy": {
+        "callsign": "SPA-01",
+        "citizenid": "SPA00001",
+        "displayName": "Sara S.",
+        "unit": "span"
+      },
+      "from": {
+        "id": 1,
+        "label": "Sven Svensson",
+        "ref": "SUS00001",
+        "type": "person"
+      },
+      "id": 1,
+      "level": 2,
+      "reportId": 1,
+      "to": {
+        "id": 2,
+        "label": "Grove Street",
+        "type": "location"
+      },
+      "type": "seen_at"
+    }
+  ],
+  "notices": [],
+  "reports": [
+    {
+      "author": {
+        "callsign": "SPA-01",
+        "citizenid": "SPA00001",
+        "displayName": "Sara S.",
+        "unit": "span"
+      },
+      "createdAt": "2026-09-29T10:03:00Z",
+      "id": 1,
+      "level": 2
+    }
+  ]
+}

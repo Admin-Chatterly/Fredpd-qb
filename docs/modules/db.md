@@ -225,9 +225,10 @@ bands (ordningsbot up to 30 km/h over, bot above). `law_ref` values are best eff
   and seed data in both databases, and the same `<file>: line N: …` error from both for a malformed file. The last
   test on `fredpd_test_db*` leaves both holding only an empty `fredpd_migrations`. The **time zone regression**
   then takes the server-side lock `fredpd_test_global_tz` (waits up to 90 s, so concurrent runs on one shared
-  MariaDB take turns and each saves the real original zone), sets the server's `GLOBAL time_zone` to `+02:00`
-  (restored and read back in `finally` before the lock is released; falls back to `+02:00` sessions with a warning if
-  the user lacks the privilege), runs both runners on `fredpd_test_utc_node` / `fredpd_test_utc_lua` and checks that
+  MariaDB take turns and each saves the real original zone); only with `FREDPD_TEST_GLOBAL_TZ=1` (meant for CI) it
+  sets the server's `GLOBAL time_zone` to `+02:00` (restored and read back in `finally` before the lock is released;
+  falls back to `+02:00` sessions with a warning if the user lacks the privilege), otherwise it uses `+02:00`
+  sessions only, so a shared dev MariaDB is never switched; it runs both runners on `fredpd_test_utc_node` / `fredpd_test_utc_lua` and checks that
   `applied_at`, `created_at` (migrations, charges, rules, fresh audit/tablet/role rows), `issued_at` and `updated_at`
   defaults are within a minute of `UTC_TIMESTAMP()` and two hours off the session clock, then drops both (still under
   the lock; a failing run leaves them for inspection).
@@ -247,7 +248,9 @@ bands (ordningsbot up to 30 km/h over, bot above). `law_ref` values are best eff
   `pnpm add -Dw mysql2`, which this module may not run).
 - IMPLEMENTATION.md §6 still says `created_at DATETIME DEFAULT CURRENT_TIMESTAMP`; docs/contracts.md §C7 (UTC
   defaults) supersedes it. Not edited here (not owned).
-- The time zone regression briefly changes the test server's `GLOBAL time_zone`. FredPD code does not care, but
+- CI should set `FREDPD_TEST_GLOBAL_TZ: '1'` in `.github/workflows/ci.yml` (not owned here) so the global-zone path
+  is exercised there.
+- With `FREDPD_TEST_GLOBAL_TZ=1` the time zone regression briefly changes the test server's `GLOBAL time_zone`. FredPD code does not care, but
   a non-FredPD process on the same test server that opens a session in that window gets `+02:00`. Concurrent FredPD
   runs serialise on `fredpd_test_global_tz`; only a test process killed between the switch and the restore (the lock
   is freed, the zone is not) leaves the server at `+02:00`; set it back by hand (`SET GLOBAL time_zone = 'SYSTEM'`

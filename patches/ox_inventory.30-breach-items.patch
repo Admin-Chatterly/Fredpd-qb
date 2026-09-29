@@ -1,0 +1,20 @@
+diff --git a/data/items.lua b/data/items.lua
+index 2e7bfb4..1066c5d 100644
+--- a/data/items.lua
++++ b/data/items.lua
+@@ -388,4 +388,15 @@ return {
+ 			export = 'fredpd_mdt.open',
+ 		},
+ 	},
++
++	-- FredPD: battering ram (patches/ox_inventory.30-breach-items.patch, docs/modules/breach.md). Not used from the
++	-- inventory: carrying it enables the ox_target option "Forcera dörr" on locked ox_doorlock doors, and the
++	-- fredpd_breach server checks it again (with grant tool:ram and duty) before a door is forced. Not consumed.
++	['pd_ram'] = {
++		label = 'Dörrkross',
++		description = 'Tung dörrkross för att forcera låsta dörrar. Kräver behörighet och tjänst.',
++		weight = 9000,
++		stack = false,
++		close = true,
++	},
+ }

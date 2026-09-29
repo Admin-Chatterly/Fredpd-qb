@@ -1,0 +1,37 @@
+{
+  "items": [
+    {
+      "description": "Hemlig spaning",
+      "id": 1,
+      "lead": {
+        "callsign": "SPA-01",
+        "citizenid": "SPA00001",
+        "displayName": "Sara S.",
+        "unit": "span"
+      },
+      "level": 2,
+      "members": [
+        {
+          "callsign": "UTR-04",
+          "citizenid": "UTR00004",
+          "displayName": "Ulla U.",
+          "role": "utredare",
+          "unit": "utredning"
+        }
+      ],
+      "reports": [
+        {
+          "createdAt": "2026-09-29T10:01:00Z",
+          "id": 1,
+          "level": 2
+        }
+      ],
+      "status": "open",
+      "title": "Operation Nattugla",
+      "unit": "span",
+      "visibility": "full"
+    }
+  ],
+  "page": 1,
+  "total": 1
+}

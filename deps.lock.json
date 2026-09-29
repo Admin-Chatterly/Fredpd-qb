@@ -49,7 +49,7 @@
       "mode": "REUSE",
       "tag": "v1.22.1",
       "release": "https://github.com/overextended/ox_doorlock/releases/download/v1.22.1/ox_doorlock.zip",
-      "notes": "README: 'The UI needs to be built - use the latest release'. createDoor/removeDoor exports exist only after the tag (HEAD 4e56b7e); getDoor, getAllDoors, getDoorFromName, setDoorState, registerHook are in v1.22.1."
+      "notes": "README: 'The UI needs to be built - use the latest release'. createDoor/removeDoor exports were added after the tag (4e56b7e; HEAD ba092ff); getDoor, getAllDoors, getDoorFromName, setDoorState, registerHook are in v1.22.1."
     },
     "qbx_core": {
       "repo": "https://github.com/Qbox-project/qbx_core",

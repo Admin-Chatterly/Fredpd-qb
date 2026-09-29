@@ -4,8 +4,9 @@
 // db/migrations identically. DB tests use fredpd_test_db (Node) and fredpd_test_db_lua (Lua) on the server from
 // FREDPD_TEST_DB_URL and are skipped with a warning when it is unreachable; Lua parity tests need lua5.4. The time
 // zone regression test (docs/contracts.md §C7: UTC whatever the server zone) uses fredpd_test_utc_node and
-// fredpd_test_utc_lua and briefly sets the server's GLOBAL time_zone to '+02:00' (restored afterwards, under the
-// server-side lock fredpd_test_global_tz so concurrent runs on one MariaDB take turns).
+// fredpd_test_utc_lua with +02:00 sessions; only with FREDPD_TEST_GLOBAL_TZ=1 (set in CI) does it also briefly set the
+// server's GLOBAL time_zone to '+02:00' (restored afterwards, under the server-side lock fredpd_test_global_tz so
+// concurrent runs on one MariaDB take turns), so a developer's shared MariaDB is never switched by default.
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -632,8 +633,9 @@ describe.skipIf(!admin)('migrations against MariaDB', () => {
 
   // Regression for docs/contracts.md §C7: a Windows MariaDB defaults to SYSTEM = Europe/Stockholm. Both runners
   // must migrate there, and every default must still be UTC. The GLOBAL zone is what oxmysql and every new
-  // session inherit, so it is switched for the duration of this test (restored in finally; if this user may not
-  // set it, only the sessions are switched and a warning says so). Several checkouts may test against one shared
+  // session inherit; with FREDPD_TEST_GLOBAL_TZ=1 (CI) it is switched for the duration of this test (restored in
+  // finally; if this user may not set it, only the sessions are switched and a warning says so). Without the flag
+  // only the sessions are switched, so a shared dev MariaDB (e.g. one a running qbx server uses) is left alone. Several checkouts may test against one shared
   // MariaDB at once, so the whole test (save, switch, the fredpd_test_utc_* databases, restore) runs under the
   // server-side lock GLOBAL_TZ_LOCK: a second run waits and then saves the real original instead of the first run's
   // '+02:00', and can neither restore '+02:00' last nor drop the first run's databases. The server releases the lock
@@ -645,12 +647,12 @@ describe.skipIf(!admin)('migrations against MariaDB', () => {
     if (Number(lock?.ok) !== 1) throw new Error(`${GLOBAL_TZ_LOCK} is still held by another test run after 90 s`);
     let original = '';
     let restored: unknown = null;
-    let global = true;
+    let global = process.env.FREDPD_TEST_GLOBAL_TZ === '1';
     const checked: Row[] = [];
     try {
       const [[before]] = (await admin.query('SELECT @@global.time_zone AS tz')) as [Row[], unknown];
       original = String(before?.tz);
-      try {
+      if (global) try {
         await admin.query("SET GLOBAL time_zone = '+02:00'");
       } catch (err) {
         global = false;

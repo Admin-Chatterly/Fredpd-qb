@@ -130,4 +130,46 @@ tests['fredpd:rulesChanged reloads for the server and ignores players'] = functi
     t.eq(#warns, 1)
 end
 
+tests['loadRules discards a load that a newer load overtook'] = function(t)
+    local function rulesRow(id)
+        return { id = id, record_type = 'case', level = 0, record_status = nil, viewer_condition = 'any',
+            condition_value = nil, result = 'full', priority = 0, enabled = 1 }
+    end
+    local savedMySQL, savedInfo = rawget(_G, 'MySQL'), Core.info
+    local savedRules = ServerCanView.getRules()
+    -- Each query yields its coroutine, so the test decides the order in which the loads finish.
+    rawset(_G, 'MySQL', { query = { await = function() return coroutine.yield() end } })
+    local infos = {}
+    Core.info = function(fmt, ...) infos[#infos + 1] = fmt:format(...) end
+    local ok, err = pcall(function()
+        local first = coroutine.create(ServerCanView.loadRules)
+        local second = coroutine.create(ServerCanView.loadRules)
+        coroutine.resume(first)
+        coroutine.resume(second)
+        -- The newer load finishes first...
+        local okB, resB = coroutine.resume(second, { rulesRow(2), rulesRow(3) })
+        t.eq(okB, true)
+        t.eq(resB, true)
+        t.eq(#ServerCanView.getRules(), 2)
+        t.eq(ServerCanView.getRules()[1].id, 2)
+        -- ...then the older one: its rows are discarded, the newer list stays.
+        local okA, resA = coroutine.resume(first, { rulesRow(1) })
+        t.eq(okA, true)
+        t.eq(resA, true)
+        t.eq(#ServerCanView.getRules(), 2)
+        t.eq(ServerCanView.getRules()[1].id, 2)
+        t.eq(infos[#infos], 'discarded an overtaken visibility rules load')
+        -- A later load still applies normally.
+        local third = coroutine.create(ServerCanView.loadRules)
+        coroutine.resume(third)
+        coroutine.resume(third, { rulesRow(4) })
+        t.eq(#ServerCanView.getRules(), 1)
+        t.eq(ServerCanView.getRules()[1].id, 4)
+    end)
+    rawset(_G, 'MySQL', savedMySQL)
+    Core.info = savedInfo
+    ServerCanView.setRules(savedRules)
+    if not ok then error(err, 0) end
+end
+
 return tests

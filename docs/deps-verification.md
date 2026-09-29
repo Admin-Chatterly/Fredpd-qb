@@ -5,6 +5,9 @@ UI and REST API were not reachable from the agent sandbox (HTTP 403); release as
 (302 = the asset exists, 404 for a made-up tag as control). Pins are in `deps.lock.json`; `node scripts/fetch-deps.mjs`
 checks every non-REFERENCE pin out into `resources/[upstream]/<name>/`, which is what the `file:line` references below point to
 (`ox_doorlock/server/main.lua:275` = `resources/[upstream]/ox_doorlock/server/main.lua` at the pinned commit).
+fetch-deps skips REFERENCE pins but does **not** delete a directory that an earlier run already fetched: after a pin
+becomes REFERENCE (qbx_prison, xt-prison, bub-mdt), remove `resources/[upstream]/<name>/` by hand so it cannot be
+`ensure`d by accident.
 Repos that are not fetched are cited as `owner/repo@sha path:line`. Anything marked **UNVERIFIED** was not observable
 without a running FXServer or access to Rami's server.
 
@@ -122,7 +125,8 @@ commits behind. Which recipe Rami used is an open question; re-verify §5/§6 ag
 
 Both trust the client for the sentence. Neither is a server-authoritative jail.
 
-- **qbx_prison** (`Qbox-project/qbx_prison@977634b`, not fetched; lock mode REFERENCE): exports `JailPlayer(src,
+- **qbx_prison** (`Qbox-project/qbx_prison@977634b`, not fetched; lock mode REFERENCE; delete any stale
+  `resources/[upstream]/qbx_prison/` left by an earlier fetch): exports `JailPlayer(src,
   minutes)` / `ReleasePlayer(src)` (`server/main.lua:23-44`). Last functional commit 2024-06-23. It has three verified
   holes, which are reasons **not to run it**:
   1. **Any client can unlock any ox_doorlock door**. `RegisterNetEvent('qbx_prison:server:onGateHackDone',
@@ -474,7 +478,7 @@ Neither repo is fetched; refs are `Project-Sloth/ps-housing@eaba693` and `Qbox-p
 | IMPLEMENTATION.md §3 ps-dispatch row | "turn off NUI via config flag": none exists | patch (Decisions) |
 | IMPLEMENTATION.md §4.2 "player_vehicles insert/delete hooks" | create/owner-change hooks exist (pre-write, can cancel); no delete hook/event | keep refresh-on-miss for deletes |
 | `server.cfg.example` (not mine) | missing `ensure PolyZone` (ps-dispatch) or its patch, `ensure qbx_vehicles` (before qbx_garages), `ensure screenshot-basic`/screencapture, `fivem-freecam` for ps-housing; `qbx_policejob` vs recipe folder `qbx_police` | owner of server.cfg.example to update after Rami confirms his folders |
-| `server.cfg.example:57` `ensure qbx_prison` | qbx_prison lets any client unlock any ox_doorlock door and clear its own sentence (§2a); all three recipes ship xt-prison | owner: `ensure xt-prison` (recipe folder `[standalone]/xt-prison`), never qbx_prison |
+| `server.cfg.example:57` `ensure qbx_prison` (now resolved: 57-61 comment it out and warn) | qbx_prison lets any client unlock any ox_doorlock door and clear its own sentence (§2a); all three recipes ship xt-prison | owner: `ensure xt-prison` (recipe folder `[standalone]/xt-prison`), never qbx_prison |
 | `server.cfg.example:48-50` evidences "fetched into resources/[upstream]" | the git checkout has no `html/dui/laptop/dist` (`evidences/fxmanifest.lua:40`), so the laptop UI cannot load from it; the same holds for ox_lib/ox_inventory/ox_doorlock (`web/build`) and oxmysql (no `fxmanifest.lua` in git at all) | owner: run evidences (and ox_*) from the pinned **release zip** (`release` in deps.lock.json); `[upstream]` is for patching/review only |
 | `config/integrations.json:5` `"prison": "qbx_prison"` | default points at the resource Decision 2 rejects | owner: default `"xt-prison"` (adapter to add in task 4.1), `"none"` when absent |
 | `fredpd_core/adapters/prison/qbx_police_jail.lua` | qbx_police has **no jail**: without a prison resource `JailPlayer` only sets `injail`/`criminalrecord` metadata and fires a client event nobody implements (§2); the net event also needs the officer within 2.5 m | drop the adapter (use `none`), or rescope it to "metadata only, no confinement" and say so |

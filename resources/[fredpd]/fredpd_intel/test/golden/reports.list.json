@@ -1,0 +1,52 @@
+{
+  "items": [
+    {
+      "author": {
+        "callsign": "SPA-01",
+        "citizenid": "SPA00001",
+        "displayName": "Sara S.",
+        "unit": "span"
+      },
+      "body": "Sven ses vid Grove Street varje kväll.",
+      "createdAt": "2026-09-29T10:01:00Z",
+      "id": 1,
+      "level": 2,
+      "links": [
+        {
+          "confidence": 80,
+          "createdAt": "2026-09-29T10:02:00Z",
+          "createdBy": {
+            "callsign": "SPA-01",
+            "citizenid": "SPA00001",
+            "displayName": "Sara S.",
+            "unit": "span"
+          },
+          "from": {
+            "id": 1,
+            "label": "Sven Svensson",
+            "ref": "SUS00001",
+            "type": "person"
+          },
+          "id": 1,
+          "level": 2,
+          "reportId": 1,
+          "to": {
+            "id": 2,
+            "label": "Grove Street",
+            "type": "location"
+          },
+          "type": "seen_at"
+        }
+      ],
+      "mission": {
+        "id": 1,
+        "title": "Operation Nattugla"
+      },
+      "reliability": "B",
+      "status": "open",
+      "visibility": "full"
+    }
+  ],
+  "page": 1,
+  "total": 1
+}

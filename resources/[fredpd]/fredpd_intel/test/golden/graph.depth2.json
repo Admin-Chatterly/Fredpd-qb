@@ -1,0 +1,54 @@
+{
+  "edges": [
+    {
+      "confidence": 90,
+      "from": 1,
+      "id": 2,
+      "to": 3,
+      "type": "owns"
+    },
+    {
+      "confidence": 80,
+      "from": 1,
+      "id": 1,
+      "to": 2,
+      "type": "seen_at"
+    },
+    {
+      "confidence": 50,
+      "from": 3,
+      "id": 3,
+      "to": 4,
+      "type": "member_of"
+    }
+  ],
+  "nodes": [
+    {
+      "id": 1,
+      "label": "Sven Svensson",
+      "ref": "SUS00001",
+      "root": true,
+      "type": "person"
+    },
+    {
+      "id": 3,
+      "label": "ABC123 (sultan)",
+      "ref": "ABC123",
+      "root": false,
+      "type": "vehicle"
+    },
+    {
+      "id": 2,
+      "label": "Grove Street",
+      "root": false,
+      "type": "location"
+    },
+    {
+      "id": 4,
+      "label": "Ballas",
+      "root": false,
+      "type": "group"
+    }
+  ],
+  "truncated": false
+}

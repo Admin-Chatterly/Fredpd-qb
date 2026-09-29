@@ -47,11 +47,13 @@ In the SQL steps, "SQL" means HeidiSQL (installed with MariaDB) or `mariadb -u r
 1. Use a database that has never run FredPD (the Qbox tables may be in it). Start the server in txAdmin. If FredPD
    already ran on this database, skip to point 3.
 2. The Live Console shows, in this order:
-   - `[fredpd_core:db] applied 001_core.sql` … `applied 009_service.sql` (9 lines);
+   - one `[fredpd_core:db] applied NNN_*.sql` line per file in `db/migrations`, in file-name order (today
+     `001_core.sql` … `011_evidence.sql`, 11 lines; later phases add more);
    - `seeded seed/charges_sv.sql`, `seeded seed/visibility_rules_default.sql`;
    - `loaded 37 visibility rules`, then `fredpd_core ready`.
-3. SQL: `SELECT id, applied_at FROM fredpd_migrations ORDER BY id;` returns 11 rows. `applied_at` is UTC, so it is
-   1–2 h behind Swedish time.
+3. SQL: `SELECT COUNT(*) FROM fredpd_migrations WHERE id NOT LIKE 'seed/%';` equals the number of `.sql` files in
+   `db/migrations` (11 today), and `SELECT id, applied_at FROM fredpd_migrations WHERE id LIKE 'seed/%';` returns
+   the 2 seed rows. `applied_at` is UTC, so it is 1–2 h behind Swedish time.
 4. Restart the server. This time the console shows `[fredpd_core:db] up to date` and no `applied` lines.
 
 ### 2. The service and FXServer see each other ☐

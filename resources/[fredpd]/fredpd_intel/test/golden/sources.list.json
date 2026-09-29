@@ -1,0 +1,22 @@
+{
+  "items": [
+    {
+      "codename": "Falken",
+      "handler": {
+        "callsign": "SPA-02",
+        "citizenid": "HAN00002",
+        "displayName": "Hans H.",
+        "unit": "span"
+      },
+      "id": 1,
+      "level": 2,
+      "notes": "Hamnen",
+      "reliability": "B",
+      "status": "open",
+      "unit": "span",
+      "visibility": "full"
+    }
+  ],
+  "page": 1,
+  "total": 1
+}
