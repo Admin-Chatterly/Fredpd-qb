@@ -1,0 +1,57 @@
+diff --git a/client/dui/laptops/target.lua b/client/dui/laptops/target.lua
+index ec11873..1cc9bab 100644
+--- a/client/dui/laptops/target.lua
++++ b/client/dui/laptops/target.lua
+@@ -6,6 +6,26 @@ local focus <const> = require "client.dui.focus"
+ 
+ local lastTargetCoords = nil
+ 
++-- FredPD patch: lets another resource open the laptop UI on a laptop entity (fredpd_forensics: "Analysera" in the
++-- station lab). Same logout rule as the "interact" option below when the player switches to another laptop.
++exports("openLaptop", function(entity)
++    if type(entity) ~= "number" or not DoesEntityExist(entity) or GetEntityModel(entity) ~= `p_laptop_02_s` then
++        return false
++    end
++
++    local coords <const> = GetEntityCoords(entity)
++    if coords ~= lastTargetCoords then
++        dui:sendMessage({
++            action = "switchScreen",
++            screen = "screensaver"
++        })
++        lastTargetCoords = coords
++    end
++
++    focus.start(entity)
++    return true
++end)
++
+ exports.ox_target:addModel(`p_laptop_02_s`, {
+     -- Everyone can interact with any laptop entity
+     {
+diff --git a/server/dui/callbacks.lua b/server/dui/callbacks.lua
+index 758c83f..55c31ab 100644
+--- a/server/dui/callbacks.lua
++++ b/server/dui/callbacks.lua
+@@ -199,7 +199,9 @@ lib.callback.register("evidences:setAnalysed", function(source, arguments)
+             item.metadata.information = item.metadata.information or {}
+             item.metadata.information[arguments.type] = item.metadata[arguments.type].owner -- for biometric evidences (dna, fingerprint)
+ 
+-            local information <const> = arguments.information
++            -- FredPD patch: the biometric analysis (EvidenceAnalysis.tsx) sends no `information`, and pairs(nil)
++            -- raised here, so evidences:evidenceItemAnalysed never fired for fingerprints and DNA.
++            local information <const> = type(arguments.information) == "table" and arguments.information or {}
+             for key, value in pairs(information) do
+                 item.metadata.information[key] = value
+             end
+@@ -208,7 +210,8 @@ lib.callback.register("evidences:setAnalysed", function(source, arguments)
+ 
+             exports.ox_inventory:SetMetadata(arguments.inventory, arguments.slot, item.metadata)
+ 
+-            TriggerEvent("evidences:evidenceItemAnalysed", source, item)
++            -- FredPD patch: also pass the inventory holding the item (the player's server id or a container id).
++            TriggerEvent("evidences:evidenceItemAnalysed", source, item, arguments.inventory)
+         end
+     end
+ end)
+\ No newline at end of file

@@ -35,6 +35,7 @@ jobs:
       # DB-backed tests create their own fredpd_test_* databases; the CI user needs global privileges for that.
       FREDPD_TEST_DB_URL: mysql://fredpd:fredpd@127.0.0.1:3306/fredpd_test
       PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+      FREDPD_REQUIRE_UPSTREAM: '1'
     steps:
       - uses: actions/checkout@v4
 
@@ -53,6 +54,14 @@ jobs:
           cache: pnpm
 
       - run: pnpm install --frozen-lockfile
+      # Upstream resources at the pinned commits: the patch tests load patched qbx_police/ps-dispatch/evidences
+      # files and must fail (not skip) when they are missing.
+      - name: Fetch pinned upstream resources and check patches apply
+        run: |
+          node scripts/fetch-deps.mjs
+          node scripts/apply-patches.mjs
+          # Tests apply the patches themselves to temporary copies; give them pristine checkouts back.
+          node scripts/fetch-deps.mjs --force
       - run: pnpm gen:locale-keys --check
       - run: pnpm lint
       - run: pnpm test

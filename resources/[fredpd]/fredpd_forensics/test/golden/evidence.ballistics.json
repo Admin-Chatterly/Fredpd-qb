@@ -1,0 +1,48 @@
+{
+  "chain": [
+    {
+      "action": "collect",
+      "actor": {
+        "callsign": "IGV-03",
+        "citizenid": "FOR10003",
+        "displayName": "Ida I.",
+        "unit": "igv"
+      },
+      "at": "2026-09-29T10:01:00Z",
+      "location": "Vespucci Blvd"
+    },
+    {
+      "action": "analyse",
+      "actor": {
+        "callsign": "IGV-03",
+        "citizenid": "FOR10003",
+        "displayName": "Ida I.",
+        "unit": "igv"
+      },
+      "at": "2026-09-29T10:02:00Z"
+    }
+  ],
+  "collectedAt": "2026-09-29T10:03:00Z",
+  "collectedBy": {
+    "callsign": "IGV-03",
+    "citizenid": "FOR10003",
+    "displayName": "Ida I.",
+    "unit": "igv"
+  },
+  "id": 3,
+  "level": 0,
+  "result": {
+    "analysedAt": "2026-09-29T10:04:00Z",
+    "collectionTime": "29.09.2026 12:02",
+    "crimeScene": "Vespucci Blvd",
+    "kind": "bullet",
+    "match": {
+      "citizenid": "SUS00001",
+      "name": "Sven Svensson"
+    },
+    "note": "på marken",
+    "serial": "SER123456",
+    "weaponType": "Pistol"
+  },
+  "type": "projectile"
+}

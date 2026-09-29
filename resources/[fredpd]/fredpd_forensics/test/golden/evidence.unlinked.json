@@ -1,0 +1,47 @@
+{
+  "chain": [
+    {
+      "action": "collect",
+      "actor": {
+        "callsign": "TEK-01",
+        "citizenid": "FOR10001",
+        "displayName": "Tove T.",
+        "unit": "tekniker"
+      },
+      "at": "2026-09-29T10:01:00Z",
+      "location": "Vespucci Blvd"
+    },
+    {
+      "action": "analyse",
+      "actor": {
+        "callsign": "TEK-01",
+        "citizenid": "FOR10001",
+        "displayName": "Tove T.",
+        "unit": "tekniker"
+      },
+      "at": "2026-09-29T10:02:00Z",
+      "location": "mrpd_lab"
+    }
+  ],
+  "collectedAt": "2026-09-29T10:03:00Z",
+  "collectedBy": {
+    "callsign": "TEK-01",
+    "citizenid": "FOR10001",
+    "displayName": "Tove T.",
+    "unit": "tekniker"
+  },
+  "id": 2,
+  "level": 0,
+  "result": {
+    "analysedAt": "2026-09-29T10:04:00Z",
+    "collectionTime": "29.09.2026 12:02",
+    "crimeScene": "Vespucci Blvd",
+    "fingerprint": "A1B2C3D4E5F60718",
+    "match": {
+      "citizenid": "SUS00001",
+      "name": "Sven Svensson"
+    },
+    "note": "på marken"
+  },
+  "type": "fingerprint"
+}

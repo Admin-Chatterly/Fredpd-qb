@@ -1,0 +1,7 @@
+// Type-checks the fredpd_forensics tests: pnpm exec tsc -p "resources/[fredpd]/fredpd_forensics/test/tsconfig.json".
+// resources/ is not a workspace package, so `pnpm -r typecheck` (in `pnpm lint`) does not visit it.
+{
+  "extends": "../../../../tsconfig.base.json",
+  "compilerOptions": { "types": ["node"], "noEmit": true },
+  "include": ["*.ts"]
+}

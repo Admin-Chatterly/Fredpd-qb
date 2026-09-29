@@ -1,0 +1,55 @@
+{
+  "$comment": "FredPD mapping for the patched qbx_police (resource qbx_policejob; patches/qbx_policejob.*.patch, docs/modules/police.md). scripts/build.mjs copies it to fredpd_core/config/, where the patched qbx_police reads it with LoadResourceFile while fredpd_core is started; without it the built-in defaults (identical to this file) apply. Grants are 'type:key' (docs/contracts.md C2); 'duty' = on duty only, no grant. Keys are lower case: weapon keys are the ox_inventory item name (weapon:weapon_pistol), vehicle keys the model (vehicle:police3), armory access 'armory:<armory id>', other armory items 'armory:<item name>'.",
+  "actions": {
+    "anklet": "duty",
+    "bill": "perm:charges.fine",
+    "camera": "duty",
+    "cuff": "duty",
+    "fine": "perm:charges.fine",
+    "flagplate": "perm:bolo.create",
+    "impound": "perm:police.impound",
+    "jail": "perm:police.jail",
+    "license": "perm:police.license",
+    "object": "duty",
+    "paylawyer": "duty",
+    "paytow": "duty",
+    "plateinfo": "duty",
+    "seizecash": "duty",
+    "spikestrip": "duty",
+    "tracker": "duty",
+    "unflagplate": "perm:bolo.resolve"
+  },
+  "garage": {
+    "$comment": "vehicles: { model: label } offered at the qbx_police garage, each gated by vehicle:<model>; {} = every model in qbx_police config/client.lua authorizedVehicles (all grades) + whitelistedVehicles. maxDistance: metres between the officer and the spawn point.",
+    "vehicles": {},
+    "helicopter": "polmav",
+    "maxDistance": 15
+  },
+  "armories": {
+    "$comment": "<armory id>: { label, coords [x, y, z], radius, items }; access needs armory:<armory id>. items: count = handed out per take; max = no take while the officer already carries that many (ox_inventory GetItemCount), omit for no limit.",
+    "mrpd": {
+      "label": "Mission Row",
+      "coords": [462.23, -981.12, 30.68],
+      "radius": 1.5,
+      "items": [
+        { "name": "WEAPON_PISTOL", "count": 1, "max": 1, "metadata": { "serial": "POL" } },
+        { "name": "WEAPON_STUNGUN", "count": 1, "max": 1, "metadata": { "serial": "POL" } },
+        { "name": "WEAPON_NIGHTSTICK", "count": 1, "max": 1 },
+        { "name": "WEAPON_FLASHLIGHT", "count": 1, "max": 1 },
+        { "name": "WEAPON_CARBINERIFLE", "count": 1, "max": 1, "metadata": { "serial": "POL" } },
+        { "name": "ammo-9", "count": 50, "max": 150 },
+        { "name": "ammo-rifle", "count": 60, "max": 180 },
+        { "name": "handcuffs", "count": 1, "max": 2 }
+      ]
+    }
+  },
+  "oxShops": {
+    "$comment": "ox_inventory shop type -> FredPD armory id: opening needs armory:<id>, every purchase is re-checked against the item grants (ox_inventory buyItem/openShop hooks).",
+    "PoliceArmoury": "mrpd"
+  },
+  "radar": {
+    "$comment": "qbx_police ANPR cameras (config/client.lua radars, off by default): a pass is accepted only from the driver of a vehicle with that plate within maxDistance metres of the camera; one fredpd:boloHit per plate and camera per cooldownSeconds.",
+    "cooldownSeconds": 60,
+    "maxDistance": 50
+  }
+}

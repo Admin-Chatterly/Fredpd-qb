@@ -1,0 +1,127 @@
+diff --git a/client/evidence.lua b/client/evidence.lua
+index 6842422..1d24df9 100644
+--- a/client/evidence.lua
++++ b/client/evidence.lua
+@@ -1,3 +1,7 @@
++-- FredPD (patches/qbx_policejob.20-fredpd-replacements.patch): the built-in evidence (casings, blood, fingerprints,
++-- status and its per-frame loops) is replaced by noobsystems/evidences; `setr fredpd_police_legacy true` restores it
++if GetConvar('fredpd_police_legacy', 'false') ~= 'true' then return end
++
+ local currentStatusList = {}
+ local casings = {}
+ local currentCasing = nil
+diff --git a/config/client.lua b/config/client.lua
+index e18afaa..6126819 100644
+--- a/config/client.lua
++++ b/config/client.lua
+@@ -141,7 +141,10 @@ return {
+     carItems = {
+         {name = 'heavyarmor', amount = 2, info = {}, type = 'item', slot = 1},
+         {name = 'empty_evidence_bag', amount = 10, info = {}, type = 'item', slot = 2},
+-        {name = 'police_stormram', amount = 1, info = {}, type = 'item', slot = 3},
++        -- FredPD (patches/qbx_policejob.20-fredpd-replacements.patch): the stormram is replaced by fredpd_breach
++        -- (item pd_ram); `setr fredpd_police_legacy true` puts it back
++        GetConvar('fredpd_police_legacy', 'false') == 'true'
++            and {name = 'police_stormram', amount = 1, info = {}, type = 'item', slot = 3} or nil,
+     },
+ 
+     vehicleSettings = {
+diff --git a/server/commands.lua b/server/commands.lua
+index bf8a27a..58a4615 100644
+--- a/server/commands.lua
++++ b/server/commands.lua
+@@ -139,11 +139,16 @@ lib.addCommand('callsign', {
+     player.Functions.SetMetaData('callsign', args.callsign)
+ end)
+ 
++-- FredPD (patches/qbx_policejob.20-fredpd-replacements.patch): the evidence commands belong to the built-in
++-- evidence, replaced by noobsystems/evidences; `setr fredpd_police_legacy true` brings them back
++local legacyEvidence = GetConvar('fredpd_police_legacy', 'false') == 'true'
++if legacyEvidence then
+ lib.addCommand('clearcasings', {help = locale('commands.clear_casign')}, function(source)
+     local player = exports.qbx_core:GetPlayer(source)
+     if not checkLeoAndOnDuty(player) then return end
+     TriggerClientEvent('evidence:client:ClearCasingsInArea', source)
+ end)
++end -- FredPD: legacy evidence
+ 
+ if not IsUsingXTPrison then
+     lib.addCommand('jail', {help = locale('commands.jail_player')}, function(source)
+@@ -170,11 +175,13 @@ if not IsUsingXTPrison then
+     end)
+ end
+ 
++if legacyEvidence then -- FredPD: legacy evidence only
+ lib.addCommand('clearblood', {help = locale('commands.clearblood')}, function(source)
+     local player = exports.qbx_core:GetPlayer(source)
+     if not checkLeoAndOnDuty(player) then return end
+     TriggerClientEvent('evidence:client:ClearBlooddropsInArea', source)
+ end)
++end -- FredPD: legacy evidence
+ 
+ lib.addCommand('seizecash', {help = locale('commands.seizecash')}, function(source)
+     local player = exports.qbx_core:GetPlayer(source)
+@@ -367,6 +374,7 @@ lib.addCommand('ankletlocation', {
+     TriggerClientEvent('police:client:SendTrackerLocation', target.PlayerData.source, source)
+ end)
+ 
++if legacyEvidence then -- FredPD: legacy evidence only (evidences takes DNA itself)
+ lib.addCommand('takedna', {
+     help = locale('commands.takedna'),
+     params = {{
+@@ -391,6 +399,7 @@ lib.addCommand('takedna', {
+     }
+     if not player.Functions.AddItem('filled_evidence_bag', 1, false, info) then return end
+ end)
++end -- FredPD: legacy evidence
+ 
+ lib.addCommand('911p', {
+     help = locale('commands.police_report'),
+diff --git a/server/main.lua b/server/main.lua
+index 0ae1497..102dbd6 100644
+--- a/server/main.lua
++++ b/server/main.lua
+@@ -96,7 +96,7 @@ end)
+ 
+ lib.callback.register('police:GetPlayerStatus', function(_, targetSrc)
+     local player = exports.qbx_core:GetPlayer(targetSrc)
+-    if not player or not next(playerStatus[targetSrc]) then return {} end
++    if not player or not next(playerStatus[targetSrc] or {}) then return {} end -- FredPD: nil without a status
+     local status = playerStatus[targetSrc]
+ 
+     local statList = {}
+@@ -466,6 +466,10 @@ RegisterNetEvent('police:server:Impound', function(plate, fullImpound, price, bo
+     DeleteEntity(vehicle)
+ end)
+ 
++-- FredPD (patches/qbx_policejob.20-fredpd-replacements.patch): the built-in evidence (evidence:server:*) is
++-- replaced by noobsystems/evidences; `setr fredpd_police_legacy true` brings it back
++local legacyEvidence = GetConvar('fredpd_police_legacy', 'false') == 'true'
++if legacyEvidence then
+ RegisterNetEvent('evidence:server:UpdateStatus', function(data)
+     playerStatus[source] = data
+ end)
+@@ -544,6 +548,7 @@ RegisterNetEvent('evidence:server:CreateCasing', function(weapon, serial, coords
+     end
+     TriggerClientEvent('evidence:client:AddCasing', -1, casingId, weapon, coords, serieNumber)
+ end)
++end -- FredPD: legacy evidence
+ 
+ RegisterNetEvent('police:server:UpdateCurrentCops', function()
+     local amount = 0
+@@ -559,6 +564,7 @@ RegisterNetEvent('police:server:UpdateCurrentCops', function()
+     updatingCops = false
+ end)
+ 
++if legacyEvidence then -- FredPD: legacy evidence only (see legacyEvidence above)
+ RegisterNetEvent('evidence:server:ClearCasings', function(casingList)
+     if casingList and next(casingList) then
+         for _, v in pairs(casingList) do
+@@ -589,6 +595,7 @@ RegisterNetEvent('evidence:server:AddCasingToInventory', function(casingId, casi
+         casings[casingId] = nil
+     end
+ end)
++end -- FredPD: legacy evidence
+ 
+ RegisterNetEvent('police:server:showFingerprint', function(playerId)
+     TriggerClientEvent('police:client:showFingerprint', playerId, source)

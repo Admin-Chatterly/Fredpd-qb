@@ -1,0 +1,162 @@
+diff --git a/data/items.lua b/data/items.lua
+index 1464100..4d67ecd 100644
+--- a/data/items.lua
++++ b/data/items.lua
+@@ -138,6 +138,157 @@ return {
+ 		weight = 160,
+ 	},
+ 
++	-- FredPD: items for noobsystems/evidences v1.3.1 (from its .github/setup/en_items.lua, Swedish labels;
++	-- patches/ox_inventory.20-evidence-items.patch). Do not rename the item keys: evidences checks them at start.
++	['evidence_laptop'] = {
++		label = 'Bevislaptop',
++		description = 'Laptop med DNA- och fingeravtrycksregistret',
++		weight = 1500,
++		stack = true,
++		close = true,
++		client = {
++			export = 'evidences.evidence_laptop'
++		}
++	},
++
++	['evidence_box'] = {
++		label = 'Bevislåda',
++		description = 'Låda för att förvara bevis',
++		weight = 250,
++		stack = false,
++		close = false,
++		buttons = {{
++			label = 'Märk',
++			action = function(slot)
++				exports.evidences:evidence_box(slot)
++			end
++		}}
++	},
++
++	['forensic_kit'] = {
++		label = 'Brottsplatsväska',
++		description = 'Behövs för att säkra bevis. Räcker till tio användningar.',
++		weight = 2500,
++		close = false,
++		stack = false,
++		decay = true
++	},
++
++	['hydrogen_peroxide'] = {
++		label = 'Väteperoxid',
++		weight = 500,
++		stack = true,
++		client = {
++			export = 'evidences.hydrogen_peroxide'
++		}
++	},
++
++	['fingerprint_scanner'] = {
++		label = 'Fingeravtrycksläsare',
++		description = 'Läser fingeravtrycket på personen framför dig. Finns avtrycket i registret visas personens identitet.',
++		weight = 500,
++		stack = false,
++		close = true,
++		consume = 0,
++		client = {
++			export = 'evidences.fingerprint_scanner',
++		}
++	},
++
++	['collected_blood'] = {
++		label = 'Säkrat blodspår',
++		weight = 200,
++		stack = false,
++		buttons = {{
++			label = 'Kopiera DNA',
++			action = function(slot)
++				exports.evidences:copyEvidenceOwner(slot, "dna")
++			end
++		}}
++	},
++
++	['collected_saliva'] = {
++		label = 'Säkrad saliv',
++		weight = 200,
++		stack = false,
++		buttons = {{
++			label = 'Kopiera DNA',
++			action = function(slot)
++				exports.evidences:copyEvidenceOwner(slot, "dna")
++			end
++		}}
++	},
++
++	['collected_fingerprint'] = {
++		label = 'Säkrat fingeravtryck',
++		weight = 5,
++		stack = false,
++		buttons = {{
++			label = 'Kopiera fingeravtryck',
++			action = function(slot)
++				exports.evidences:copyEvidenceOwner(slot, "fingerprint")
++			end
++		}}
++	},
++
++	['collected_magazine'] = {
++		label = 'Säkrat magasin',
++		weight = 200,
++		stack = false
++	},
++
++	['collected_casing'] = {
++		label = 'Säkrad hylsa',
++		weight = 10,
++		stack = false,
++		buttons = {{
++			label = 'Kopiera serienummer',
++			action = function(slot)
++				exports.evidences:copySerialNumber(slot)
++			end
++		}}
++	},
++
++	['collected_bullet'] = {
++		label = 'Säkrad kula',
++		weight = 10,
++		stack = false,
++		buttons = {{
++			label = 'Kopiera serienummer',
++			action = function(slot)
++				exports.evidences:copySerialNumber(slot)
++			end
++		}}
++	},
++
++	['collected_gunshot_residue'] = {
++		label = 'Säkrade krutstänk',
++		weight = 5,
++		stack = false
++	},
++
++	['steel_file'] = {
++		label = 'Stålfil',
++		weight = 150,
++		stack = false,
++		decay = true,
++		consume = 0.1,
++		client = {
++			export = 'evidences.steel_file'
++		}
++	},
++
++	['spy_microphone'] = {
++		label = 'Buggmikrofon',
++		description = 'Mikrofon för att avlyssna personer i närheten',
++		weight = 1500,
++		stack = true,
++		close = true,
++		client = {
++			export = 'evidences.spy_microphone'
++		}
++	},
++
+ 	['phone'] = {
+ 		label = 'Phone',
+ 		weight = 190,

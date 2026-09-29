@@ -1,0 +1,467 @@
+diff --git a/locales/sv.json b/locales/sv.json
+new file mode 100644
+index 0000000..55b5ae8
+--- /dev/null
++++ b/locales/sv.json
+@@ -0,0 +1,460 @@
++{
++    "commands": {
++        "invalid_radius": {
++            "title": "Bevis",
++            "description": "Bevisen kunde inte tas bort: radien är ogiltig. (Ange ett heltal mellan 1 och 500)"
++        },
++        "no_evidences": {
++            "title": "Bevis",
++            "description": "Bevisen kunde inte tas bort: det finns inga bevis inom radien."
++        },
++        "evidences_deleted": {
++            "title": "Bevis",
++            "description": "Alla bevis inom %s har tagits bort. (Antal: %s)"
++        }
++    },
++    "evidences": {
++        "evidence_box_label_dialog": {
++            "title": "Märk låda",
++            "name_textfield_title": "Namn",
++            "name_textfield_details": "Namnet som visas i förrådet",
++            "description_textfield_title": "Beskrivning",
++            "description_textfield_details": "Kort beskrivning som visas under föremålet i förrådet"
++        },
++        "fingerprint": {
++            "collecting_label": "Säkra fingeravtryck",
++            "destroying_label": "Ta bort fingeravtryck"
++        },
++        "blood": {
++            "collecting_label": "Säkra blodspår",
++            "destroying_label": "Ta bort blodspår"
++        },
++        "saliva": {
++            "collecting_label": "Säkra saliv",
++            "destroying_label": "Ta bort saliv"
++        },
++        "magazine": {
++            "collecting_label": "Säkra magasin",
++            "destroying_label": "Ta bort magasin"
++        },
++        "casing": {
++            "collecting_label": "Säkra hylsa",
++            "destroying_label": "Ta bort hylsa"
++        },
++        "bullet": {
++            "collecting_label": "Säkra kula",
++            "destroying_label": "Ta bort kula"
++        },
++        "gunshot_residue": {
++            "collecting_label": "Säkra krutstänk",
++            "destroying_label": "Ta bort krutstänk"
++        },
++        "information": {
++            "in_vehicle": "på %s (registreringsnummer: %s)",
++            "at_vehicle": "på fordon (registreringsnummer: %s)",
++            "at_coords": "på marken",
++            "at_player": "från en person",
++            "metadata": {
++                "crime_scene": "Brottsplats",
++                "collection_time": "Säkrat",
++                "additionalData": "Information",
++                "weapon_type": "Vapentyp",
++                "serial": "Serienummer"
++            },
++            "seats": {
++                "-1": "förarsätet",
++                "0": "främre passagerarsätet",
++                "1": "baksätet bakom föraren",
++                "2": "baksätet bakom passageraren"
++            },
++            "doors": {
++                "0": "förardörren",
++                "1": "främre passagerardörren",
++                "2": "bakdörren på förarsidan",
++                "3": "bakdörren på passagerarsidan"
++            }
++        },
++        "notifications": {
++            "common": {
++                "placeholders": {
++                    "at_coords": "på marken",
++                    "at_player": "på den här personen",
++                    "at_vehicle_door": "på den här fordonsdörren",
++                    "at_vehicle_seat": "på ditt säte",
++                    "at_entity": "på det här föremålet",
++                    "at_weapon": "på vapnet"
++                },
++                "errors": {
++                    "collect": {
++                        "title": "Bevis",
++                        "description": "Något gick fel när beviset skulle säkras"
++                    },
++                    "destroy": {
++                        "title": "Bevis",
++                        "description": "Något gick fel när beviset skulle tas bort"
++                    }
++                }
++            },
++            "collect": {
++                "title": "Bevis",
++                "description": "Bevis %s har säkrats"
++            },
++            "destroy": {
++                "title": "Bevis",
++                "description": "Bevis %s har tagits bort"
++            },
++            "biometrics_pasted": {
++                "title": "Bevis",
++                "description": "Biometriska uppgifter har kopierats till urklipp"
++            },
++            "serial_pasted": {
++                "title": "Bevis",
++                "description": "Serienumret har kopierats till urklipp"
++            },
++            "missing_serial": {
++                "title": "Bevis",
++                "description": "Beviset har inget serienummer"
++            },
++            "not_analysed": {
++                "title": "Bevis",
++                "description": "Beviset har inte analyserats ännu"
++            }
++        }
++    },
++    "fingerprint_scanner": {
++        "target": "Lägg fingret på läsaren",
++        "input_help": "Tryck %s för att avbryta",
++        "scan_match": {
++            "title": "Fingeravtryck läst",
++            "description": "Träff i registret: %s (%s • %s)"
++        },
++        "scan_no_match": {
++            "title": "Fingeravtryck läst",
++            "description": "Ingen träff i registret"
++        },
++        "scan_gloves": {
++            "title": "Läsningen misslyckades",
++            "description": "Du har handskar på dig"
++        },
++        "scan_error": {
++            "title": "Läsningen misslyckades",
++            "description": "Fingeravtrycket kunde inte läsas"
++        }
++    },
++    "steel_file": {
++        "serial_removed": {
++            "title": "Serienummer bortfilat",
++            "description": "Serienumret har filats bort från vapnet"
++        }
++    },
++    "biometrics_taking": {
++        "description": "Polisen %s vill ta ditt %s. Samtycker du?",
++        "deny": "Neka",
++        "accept": "Godkänn",
++        "target": {
++            "take_fingerprint": "Ta fingeravtryck",
++            "take_dna": "Ta DNA-prov",
++            "force_take_fingerprint": "Ta fingeravtryck med tvång",
++            "force_take_dna": "Ta DNA-prov med tvång"
++        },
++        "notifications": {
++            "request_sent": {
++                "title": "Bevis",
++                "description": "Förfrågan har skickats"
++            },
++            "error": {
++                "title": "Bevis",
++                "description": "Det lyckades inte"
++            },
++            "no_consent": {
++                "title": "Bevis",
++                "description": "Personen nekade"
++            },
++            "consent": {
++                "title": "Bevis",
++                "description": "Personen har samtyckt"
++            },
++            "no_permission": {
++                "title": "Bevis",
++                "description": "Du har inte behörighet"
++            }
++        }
++    },
++    "laptop": {
++        "notifications": {
++            "error_laptop_creation": {
++                "title": "Bevis",
++                "description": "Laptopen kunde inte placeras"
++            },
++            "error_laptop_pickup": {
++                "title": "Bevis",
++                "description": "Laptopen kunde inte plockas upp"
++            },
++            "input_help": "Tryck %s för att placera laptopen.%sTryck %s för att avbryta",
++            "no_permission": {
++                "title": "Bevis",
++                "description": "Du har inte behörighet"
++            }
++        },
++        "target": {
++            "interact": "Använd laptop",
++            "pickup": "Plocka upp"
++        },
++        "login_screen": {
++            "title": "Annan användare",
++            "username_placeholder": "Användarnamn",
++            "password_placeholder": "Lösenord",
++            "welcome": "Välkommen",
++            "missing_permission": "Fel användarnamn eller lösenord"
++        },
++        "desktop_screen": {
++            "common": {
++                "date_locales": "sv-SE",
++                "evidence_placeholder": "Bevis",
++                "crime_scene_placeholder": "Brottsplats",
++                "collection_time_placeholder": "Säkrat",
++                "additional_data_placeholder": "Övrig information",
++                "name_placeholder": "Namn",
++                "firstname_placeholder": "Förnamn",
++                "lastname_placeholder": "Efternamn",
++                "fullname_placeholder": "Förnamn Efternamn",
++                "birthdate_placeholder": "Födelsedatum",
++                "gender_placeholder": "Kön",
++                "from": "från",
++                "by": "av",
++                "fingerprint": "fingeravtryck",
++                "dna": "DNA",
++                "statuses": {
++                    "search": "Sök …",
++                    "loading": "Laddar …",
++                    "error": "Fel",
++                    "no_data": "Inga uppgifter",
++                    "delete": "Ta bort",
++                    "save": "Spara",
++                    "cancel": "Avbryt",
++                    "unknown": "okänd",
++                    "analysed": "analyserat",
++                    "no_selection": "Inget att välja …",
++                    "select_evidence": "Välj ett bevis.",
++                    "select_citizen": "Välj en person.",
++                    "select_firearm": "Välj ett vapen.",
++                    "fill_all_fields": "Fyll i alla fält!"
++                },
++                "dropdowns": {
++                    "select_citizen": "Välj person",
++                    "select_firearm": "Välj vapen"
++                }
++            },
++            "citizens_app": {
++                "name": "Personregister",
++                "create_citizen": "Lägg till person",
++                "personal_data": "Personuppgifter",
++                "biometric_data": "Biometriska uppgifter",
++                "notes": {
++                    "header": "Anteckningar",
++                    "create": "Ny anteckning",
++                    "edit": "Redigera anteckning",
++                    "title": "Rubrik",
++                    "text": "Text"
++                },
++                "registered_firearms": "Registrerade vapen",
++                "statuses": {
++                    "no_citizens_found": "Inga personer hittades",
++                    "no_notes_found": "Inga anteckningar hittades",
++                    "no_registered_firearms": "Inga registrerade vapen",
++                    "select_evidence": "Välj bevis"
++                },
++                "status_messages": {
++                    "citizen_creation_success": "Personen har lagts till!",
++                    "citizen_creation_error": "Personen kunde inte läggas till!",
++                    "citizen_update_success": "Personen har uppdaterats!",
++                    "citizen_update_error": "Personen kunde inte sparas!",
++                    "citizen_deletion_success": "Personen har tagits bort!",
++                    "citizen_deletion_error": "Personen kunde inte tas bort!",
++                    "note_save_success": "Anteckningen har sparats!",
++                    "note_save_error": "Anteckningen kunde inte sparas!",
++                    "note_deletion_success": "Anteckningen har tagits bort!",
++                    "note_deletion_error": "Anteckningen kunde inte tas bort!",
++                    "biometric_data_link_success": "%s har kopplats till den valda personen!",
++                    "biometric_data_unlink_success": "%s har kopplats bort från den valda personen!",
++                    "biometric_data_link_error": "%s kunde inte kopplas till personen!"
++                },
++                "gender": {
++                    "header": "Välj kön",
++                    "male": "Man",
++                    "female": "Kvinna",
++                    "non_binary": "Icke-binär"
++                }
++            },
++            "fingerprint_app": {
++                "name": "Fingeravtrycksanalys",
++                "no_items_with_fingerprints": "Du har inga föremål med fingeravtryck på dig."
++            },
++            "dna_app": {
++                "name": "DNA-analys",
++                "no_items_with_dna": "Du har inga föremål med DNA på dig."
++            },
++            "evidence_analysis": {
++                "start_analyzation": "Starta analys",
++                "matching_biometric_data": "Jämför %s med registret …",
++                "database_match": {
++                    "header": "Träff i registret!",
++                    "description": "Spåret (%s) på beviset tillhör följande person:",
++                    "open_citizens_app": "Öppna i personregistret"
++                },
++                "no_database_match": {
++                    "header": "Ingen träff i registret!",
++                    "description": "Spåret (%s) på beviset tillhör en okänd person. Om du vet vem det är kan du koppla spåret (%s) från beviset till personen i personregistret."
++                }
++            },
++            "firearms_registry_app": {
++                "name": "Vapenregister",
++                "firearm_information": "Information",
++                "firearm_type": "Typ",
++                "firearm_serial": "Serienummer",
++                "firearm_owner": "Ägare",
++                "registered_by": "Registrerat av",
++                "registered_at": "Registrerat",
++                "firearm_registration": "Registrering",
++                "firearm_status": "Status",
++                "registration_reason": "Skäl för registrering",
++                "no_firearms_found": "Inga vapen hittades",
++                "registration_popup": {
++                    "header": "Registrera vapen",
++                    "citizen": "Person",
++                    "firearm": "Vapen",
++                    "reason": "Skäl för registrering",
++                    "status": "Vapnets status"
++                },
++                "status": {
++                    "header": "Välj status",
++                    "unknown": "Okänd",
++                    "registered": "Registrerat",
++                    "lost": "Förlorat",
++                    "stolen": "Stulet",
++                    "confiscated": "Beslagtaget",
++                    "destroyed": "Förstört",
++                    "suspended": "Spärrat"
++                },
++                "status_messages": {
++                    "firearm_registration_success": "Vapnet har registrerats!",
++                    "firearm_registration_error": "Vapnet kunde inte registreras!",
++                    "firearm_already_registered": "Vapnet är redan registrerat!",
++                    "firearm_update_success": "Vapnet har uppdaterats!",
++                    "firearm_update_error": "Vapnet kunde inte sparas!",
++                    "firearm_deletion_success": "Vapnet har tagits bort!",
++                    "firearm_deletion_error": "Vapnet kunde inte tas bort!"
++                }
++            },
++            "ballistics_app": {
++                "name": "Ballistisk analys",
++                "no_ballistics_evidence_items": "Du har inga ballistiska bevis på dig.",
++                "start_analyzation": "Starta analys",
++                "matching_serial": "Analyserar ballistiskt bevis …",
++                "registry_match": {
++                    "header": "Träff i vapenregistret!",
++                    "description": "Det ballistiska beviset kommer från följande vapen:",
++                    "open_firearms_registry": "Öppna i vapenregistret"
++                },
++                "no_registry_match": {
++                    "header": "Ingen träff i vapenregistret!",
++                    "casing_description": "Hylsan har inget serienummer som matchar ett vapen i vapenregistret. Hylsor kan ändå identifieras genom de unika mikroskopiska verktygsspår som ojämnheter i vapnet lämnar. Välj ett vapen som du har på dig för att se om hylsan kommer från just det vapnet (eller åtminstone från ett vapen av samma typ).",
++                    "bullet_description": "Avfyrade kulor kan identifieras genom de unika mikroskopiska spår som ojämnheter i vapnets pipa lämnar. Välj ett vapen som du har på dig för att se om kulan kommer från just det vapnet (eller åtminstone från ett vapen av samma typ).",
++                    "inventory_match": {
++                        "microstamp": "Det ballistiska beviset kommer från just det valda vapnet: serienumret är mikrostämplat på beviset.",
++                        "imperfections": "Det ballistiska beviset kommer från just det valda vapnet: de har samma unika ojämnheter.",
++                        "type": "Det ballistiska beviset kommer från ett vapen av samma typ som det valda vapnet.",
++                        "none": "Det ballistiska beviset matchar inte det valda vapnet."
++                    }
++                },
++                "show_type": {
++                    "header": "Analysen är klar",
++                    "magazine_description": "Ett magasin kan knytas till en vapentyp men inte till ett enskilt vapen. Det här magasinet hör till ett vapen av den här typen:",
++                    "gunshot_residue_description": "Krutstänk visar vilken typ av vapen som avfyrats, och av koncentrationen går det att räkna ut när skottet avlossades. Analysen av de valda krutstänken gav följande:",
++                    "fired_at": "Avfyrat"
++                }
++            },
++            "wiretap_app": {
++                "name": "Avlyssning",
++                "warning_popup": {
++                    "title": "Viktigt",
++                    "warning": "Telefonsamtal och radiotrafik får bara avlyssnas med tillstånd från domstol. Vid fara i dröjsmål får åklagare besluta om avlyssning i väntan på rättens prövning.",
++                    "accept_button": "Jag förstår"
++                },
++                "phone_calls": {
++                    "header": "Telefonsamtal",
++                    "no_calls_running": "Inga pågående samtal",
++                    "lacking_permissions": "Du har inte behörighet att avlyssna telefonsamtal",
++                    "notifications": {
++                        "popup_header": "Aviseringar om samtal",
++                        "status_subscribed": "Du får en avisering när %s påbörjar ett samtal. Här kan du sluta få aviseringar eller byta person:",
++                        "status_unsubscribed": "Ange personens %s för att få en avisering när personen påbörjar ett samtal:",
++                        "placeholder_full_name": "fullständiga namn",
++                        "placeholder_phone_number": "telefonnummer",
++                        "subscribe_button": "Prenumerera",
++                        "unsubscribe_button": "Avsluta prenumeration",
++                        "status_messages": {
++                            "subscribed": "Du får nu aviseringar",
++                            "unsubscribed": "Du får inte längre aviseringar"
++                        },
++                        "notification": {
++                            "title": "Avlyssning av samtal",
++                            "description": "%s deltar nu i ett samtal som kan avlyssnas"
++                        }
++                    }
++                },
++                "spy_microphones": {
++                    "header": "Buggmikrofoner",
++                    "no_spy_microphones_placed": "Inga buggmikrofoner utplacerade",
++                    "lacking_permissions": "Du har inte behörighet att lyssna på buggmikrofoner"
++                },
++                "radio": {
++                    "header": "Radio",
++                    "lacking_permissions": "Du har inte behörighet att avlyssna radiokanaler"
++                },
++                "latest_actions": {
++                    "header": "Senaste åtgärder",
++                    "no_actions_available": "Inga protokollförda åtgärder",
++                    "end_reached": "Slut på listan",
++                    "action_duration": "%s från %s till %s",
++                    "actions": {
++                        "ObservableCall": "%s avlyssnade ett samtal mellan %s",
++                        "ObservableRadioFreq": "%s avlyssnade radiokanalen %s MHz",
++                        "ObservableSpyMicrophone": "%s lyssnade på buggmikrofonen %s"
++                    }
++                },
++                "running_observation_popup": {
++                    "ObservableCall": "Pågående avlyssning av samtal #%s",
++                    "ObservableRadioFreq": "Pågående avlyssning av radiokanal %s MHz",
++                    "ObservableSpyMicrophone": "Lyssnar på buggmikrofonen %s",
++                    "status_messages": {
++                        "protocol_save_success": "Avlyssningsprotokollet har sparats!",
++                        "protocol_save_error": "Avlyssningsprotokollet kunde inte sparas!"
++                    }
++                },
++                "protocol_popup": {
++                    "header": {
++                        "ObservableCall": "Protokoll över avlyssning av samtal #%s",
++                        "ObservableRadioFreq": "Protokoll över avlyssning av radiokanal #%s",
++                        "ObservableSpyMicrophone": "Protokoll över buggmikrofon #%s"
++                    },
++                    "observation_started": "Avlyssningen startade.",
++                    "observation_ended": "Avlyssningen avslutades."
++                }
++            }
++        }
++    },
++    "spy_microphone": {
++        "input_help": "Tryck %s för att placera buggmikrofonen.%sTryck %s för att avbryta",
++        "error_spy_microphone_creation": {
++            "title": "Bevis",
++            "description": "Det finns redan en buggmikrofon med det namnet"
++        },
++        "spy_microphone_label_dialog": {
++            "title": "Namnge buggmikrofon",
++            "label_textfield_title": "Namn",
++            "label_textfield_details": "Välj ett unikt namn för buggmikrofonen i avlyssningsappen på bevislaptopen"
++        },
++        "target_collect": "Plocka upp buggmikrofon"
++    }
++}
+\ No newline at end of file
