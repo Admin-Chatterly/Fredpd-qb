@@ -348,7 +348,7 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- fredpd_identities (Discord user <-> game account), fire-and-forget from event handlers
 
---- Record which character a Discord user is playing (called when a qbx character loads).
+--- Record which character a Discord user is playing (called when a character loads).
 function M.recordCharacter(src, playerData)
     local discordId = M.getDiscordId(src)
     if not discordId or type(playerData) ~= 'table' or type(playerData.citizenid) ~= 'string' then return end

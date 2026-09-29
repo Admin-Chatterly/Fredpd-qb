@@ -1,0 +1,74 @@
+diff --git a/server.lua b/server.lua
+index 2e68f26..b607bc6 100644
+--- a/server.lua
++++ b/server.lua
+@@ -135,6 +135,25 @@ QBCore.Functions.CreateCallback('qb-doorlock:server:checkItems', function(source
+ 	cb(checkItems(Player, items, needsAll, false))
+ end)
+ 
++-- FredPD bridge (patches/qb-doorlock.10-fredpd-bridge.patch): the state change of qb-doorlock:server:updateState,
++-- moved into a function so the export below shares it, plus a server-side event for every change (the upstream code
++-- only tells clients). Event: qb-doorlock:server:doorChanged(doorID, locked, playerId).
++local function applyDoorState(doorID, locked, playerId, src, enableSounds, enableAnimation)
++	Config.DoorList[doorID].locked = locked
++	if Config.DoorStates[doorID] == nil then Config.DoorStates[doorID] = locked elseif Config.DoorStates[doorID] ~= locked then Config.DoorStates[doorID] = nil end
++	TriggerClientEvent('qb-doorlock:client:setState', -1, playerId, doorID, locked, src or false, enableSounds, enableAnimation)
++	TriggerEvent('qb-doorlock:server:doorChanged', doorID, locked, playerId)
++
++	if not Config.DoorList[doorID].autoLock then return end
++	SetTimeout(Config.DoorList[doorID].autoLock, function()
++		if Config.DoorList[doorID].locked then return end
++		Config.DoorList[doorID].locked = true
++		if Config.DoorStates[doorID] == nil then Config.DoorStates[doorID] = locked elseif Config.DoorStates[doorID] ~= locked then Config.DoorStates[doorID] = nil end
++		TriggerClientEvent('qb-doorlock:client:setState', -1, playerId, doorID, true, src or false, enableSounds, enableAnimation)
++		TriggerEvent('qb-doorlock:server:doorChanged', doorID, true, playerId)
++	end)
++end
++
+ -- Events
+ 
+ RegisterNetEvent('qb-doorlock:server:updateState', function(doorID, locked, src, usedLockpick, unlockAnyway, enableSounds, enableAnimation, sentSource)
+@@ -169,17 +188,7 @@ RegisterNetEvent('qb-doorlock:server:updateState', function(doorID, locked, src,
+ 		return
+ 	end
+ 
+-	Config.DoorList[doorID].locked = locked
+-	if Config.DoorStates[doorID] == nil then Config.DoorStates[doorID] = locked elseif Config.DoorStates[doorID] ~= locked then Config.DoorStates[doorID] = nil end
+-	TriggerClientEvent('qb-doorlock:client:setState', -1, playerId, doorID, locked, src or false, enableSounds, enableAnimation)
+-
+-	if not Config.DoorList[doorID].autoLock then return end
+-	SetTimeout(Config.DoorList[doorID].autoLock, function()
+-		if Config.DoorList[doorID].locked then return end
+-		Config.DoorList[doorID].locked = true
+-		if Config.DoorStates[doorID] == nil then Config.DoorStates[doorID] = locked elseif Config.DoorStates[doorID] ~= locked then Config.DoorStates[doorID] = nil end
+-		TriggerClientEvent('qb-doorlock:client:setState', -1, playerId, doorID, true, src or false, enableSounds, enableAnimation)
+-	end)
++	applyDoorState(doorID, locked, playerId, src, enableSounds, enableAnimation) -- FredPD bridge: body moved, unchanged
+ end)
+ 
+ RegisterNetEvent('qb-doorlock:server:saveNewDoor', function(data, doubleDoor)
+@@ -337,3 +346,24 @@ end, Config.CommandPermission)
+ QBCore.Commands.Add('doordebug', Lang:t('general.doordebug_command_description'), {}, false, function(source)
+ 	TriggerClientEvent('qb-doorlock:client:ToggleDoorDebug', source)
+ end, Config.CommandPermission)
++
++-- FredPD bridge exports (patches/qb-doorlock.10-fredpd-bridge.patch, docs/modules/bridge.md). Server-to-server only:
++-- no authorisation is checked here, the calling resource has done it (like ox_doorlock's setDoorState export).
++local function doorCoords(door)
++	if door.objCoords then return door.objCoords end
++	if door.doors and door.doors[1] and door.doors[1].objCoords then return door.doors[1].objCoords end
++	return door.textCoords
++end
++
++exports('getDoor', function(doorID)
++	local door = doorID ~= nil and Config.DoorList[doorID]
++	if not door then return nil end
++	return { id = doorID, name = door.doorLabel, locked = door.locked == true, coords = doorCoords(door) }
++end)
++
++exports('setDoorState', function(doorID, locked, playerId)
++	if (type(doorID) ~= 'number' and type(doorID) ~= 'string') or type(locked) ~= 'boolean' then return false end
++	if not Config.DoorList[doorID] then return false end
++	applyDoorState(doorID, locked, tonumber(playerId) or 0, false, Config.EnableSounds, false)
++	return true
++end)

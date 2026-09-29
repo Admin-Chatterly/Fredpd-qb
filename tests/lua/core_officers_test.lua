@@ -1,6 +1,6 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- fredpd_core/server/officers.lua pure parts: primary unit, lowest free callsign, row mapping, the /officer push,
--- and isOnDuty / getCitizenId over a stubbed qbx_core. Callsign allocation against MariaDB is in core_db_test.lua.
+-- and isOnDuty / getCitizenId over a stubbed framework bridge. Callsign allocation against MariaDB is in core_db_test.lua.
 -- Run: lua5.4 tests/lua/run.lua core_officers_test
 local Officers = require('server.officers')
 local Core = require('server.core')
@@ -48,7 +48,7 @@ tests['rowToOfficer maps DB columns'] = function(t)
     t.eq(Officers.rowToOfficer({}), nil)
 end
 
---- Stub qbx_core through Core.getPlayerData.
+--- Stub the framework bridge through Core.getPlayerData.
 local function withPlayers(players, fn)
     local saved = Core.getPlayerData
     Core.getPlayerData = function(src) return players[tonumber(src)] end
@@ -234,17 +234,25 @@ tests['duty and job handlers run at most once per player per interval; setOffice
     }, {
         { Core, 'async', function(label) runs[#runs + 1] = label end },
         { Core, 'warn', function() end },
+        { Core, 'getPlayerData', function(src)
+            return { citizenid = 'C' .. src, job = { type = src == 44 and 'civ' or 'leo', onduty = true } }
+        end },
     }, function()
         Officers.register()
-        for _ = 1, 5 do handlers['QBCore:Server:SetDuty'](41, true) end
-        handlers['QBCore:Server:SetDuty'](42, true)
-        handlers['QBCore:Server:SetDuty'](43, false)
-        for _ = 1, 5 do handlers['QBCore:Server:OnJobUpdate'](41, { type = 'leo' }) end
+        t.eq(handlers['QBCore:Server:SetDuty'], nil, 'no direct framework events (bridge only)')
+        t.eq(handlers['QBCore:Server:OnJobUpdate'], nil)
+        for _ = 1, 5 do handlers['fredpd:bridge:dutyChanged'](41, true) end
+        handlers['fredpd:bridge:dutyChanged'](42, true)
+        handlers['fredpd:bridge:dutyChanged'](43, false)
+        for _ = 1, 5 do handlers['fredpd:bridge:jobChanged'](41) end
+        handlers['fredpd:bridge:jobChanged'](44)
         t.eq(#runs, 3, table.concat(runs, ', '))
         now = Officers.EVENT_INTERVAL_MS
-        handlers['QBCore:Server:SetDuty'](41, true)
-        handlers['QBCore:Server:OnJobUpdate'](41, { type = 'leo' })
+        handlers['fredpd:bridge:dutyChanged'](41, true)
+        handlers['fredpd:bridge:jobChanged'](41)
         t.eq(#runs, 5)
+        handlers['fredpd:bridge:playerLoaded'](45)
+        t.eq(runs[6], 'officer on load')
         t.eq(exported.setOfficerIdentity('123', 'Anna', nil), false, 'another resource cannot rename officers')
     end)
     Core.clearRateLimits(41)

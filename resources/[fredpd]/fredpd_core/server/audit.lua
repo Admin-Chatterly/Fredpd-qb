@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Audit log (IMPLEMENTATION.md §4.5). Every FredPD write and every person/vehicle lookup ends up here through
 -- exports.fredpd_core:audit(src, action, targetType, targetId, meta). The actor is resolved on the server: citizenid
--- from qbx_core, Discord id from the player's identifiers. src 0 (or nil) is the system.
+-- from the framework bridge (qb-core or qbx_core), Discord id from the player's identifiers. src 0 (or nil) is the system.
 --
 -- Retention: rows older than 90 days move to fredpd_audit_archive with the ACE-restricted console/chat command
 -- `fredpd_audit_archive [days]`, run by hand once a month (no timer).
@@ -78,7 +78,7 @@ function M.write(entry)
     return true
 end
 
---- Actor of a player id: citizenid from qbx_core (never from the client), Discord id from the identifiers.
+--- Actor of a player id: citizenid from the framework bridge (never from the client), Discord id from the identifiers.
 function M.actorOf(src)
     src = tonumber(src) or 0
     if src <= 0 then return nil, nil end

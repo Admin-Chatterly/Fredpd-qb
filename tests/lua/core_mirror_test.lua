@@ -122,19 +122,24 @@ tests['fingerprint changes only with mirrored fields'] = function(t)
     t.ok(Mirror.fingerprint(a) ~= Mirror.fingerprint(c))
 end
 
-tests['SetPlayerData handler: fingerprint checked synchronously, a thread only for a real change'] = function(t)
+tests['player update listener (bridge): fingerprint checked synchronously, a thread only for a real change'] = function(t)
     local Core = require('server.core')
-    local handlers, started = {}, {}
+    local Bridge = require('server.bridge')
+    local handlers, started, listener = {}, {}, nil
     local saved = { add = rawget(_G, 'AddEventHandler'), exports = rawget(_G, 'exports'), mysql = rawget(_G, 'MySQL'),
-        async = Core.async }
+        async = Core.async, onUpdated = Bridge.onPlayerUpdated }
+    Bridge.onPlayerUpdated = function(fn) listener = fn end
     rawset(_G, 'AddEventHandler', function(name, fn) handlers[name] = fn end)
     rawset(_G, 'exports', function() end)
     rawset(_G, 'MySQL', setmetatable({}, { __index = function() error('no DB access in the event handler', 0) end }))
     Core.async = function(label, fn, ...) started[#started + 1] = { label = label, fn = fn, args = { ... } } end
     local ok, err = pcall(function()
         Mirror.register()
-        local fire = handlers['QBCore:Player:SetPlayerData']
-        t.ok(fire ~= nil, 'handler registered')
+        t.ok(listener ~= nil, 'listener registered with the bridge')
+        t.ok(handlers['fredpd:bridge:playerLoaded'] ~= nil and handlers['fredpd:bridge:playerUnloaded'] ~= nil,
+            'normalised load/unload events handled')
+        t.eq(handlers['QBCore:Player:SetPlayerData'], nil, 'no direct framework event')
+        local function fire(player) listener(1, player) end
         local charinfo = { firstname = 'Sam', lastname = 'Ek', birthdate = '1990-01-01', gender = 0 }
         fire({ citizenid = 'SPD1', charinfo = charinfo, money = { cash = 1 } })
         t.eq(#started, 1, 'first sight of the character is written')
@@ -153,6 +158,7 @@ tests['SetPlayerData handler: fingerprint checked synchronously, a thread only f
     rawset(_G, 'exports', saved.exports)
     rawset(_G, 'MySQL', saved.mysql)
     Core.async = saved.async
+    Bridge.onPlayerUpdated = saved.onUpdated
     if not ok then error(err, 0) end
 end
 

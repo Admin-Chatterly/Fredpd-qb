@@ -1,0 +1,429 @@
+diff --git a/client/camera.lua b/client/camera.lua
+index 3e704be..763141e 100644
+--- a/client/camera.lua
++++ b/client/camera.lua
+@@ -93,6 +93,10 @@ RegisterNetEvent('police:client:ActiveCamera', function(cameraId)
+             id = cameraId,
+             connected = Config.SecurityCameras.cameras[cameraId].isOnline,
+             time = GetCurrentTime(),
++            labels = { -- FredPD
++                camera_connected = Lang:t('hud.camera_connected'), camera_failed = Lang:t('hud.camera_failed'),
++                camera_bad_request = Lang:t('hud.camera_bad_request'), camera_error = Lang:t('hud.camera_error'),
++            },
+         })
+         local firstCamx = Config.SecurityCameras.cameras[cameraId].coords.x
+         local firstCamy = Config.SecurityCameras.cameras[cameraId].coords.y
+diff --git a/client/heli.lua b/client/heli.lua
+index 577b044..eab1162 100644
+--- a/client/heli.lua
++++ b/client/heli.lua
+@@ -121,6 +121,7 @@ local function RenderVehicleInfo(vehicle)
+ 		plate = licenseplate,
+ 		speed = speed,
+ 		street = streetLabel,
++		labels = { heli_model = Lang:t('hud.heli_model'), heli_plate = Lang:t('hud.heli_plate'), heli_speed = Lang:t('hud.heli_speed') }, -- FredPD
+ 	})
+ end
+ 
+diff --git a/client/job.lua b/client/job.lua
+index 89f5f04..5fe0c33 100644
+--- a/client/job.lua
++++ b/client/job.lua
+@@ -79,7 +79,8 @@ end
+ 
+ local function openFingerprintUI()
+     SendNUIMessage({
+-        type = 'fingerprintOpen'
++        type = 'fingerprintOpen',
++        labels = { fingerprint_id = Lang:t('hud.fingerprint_id'), fingerprint_none = Lang:t('hud.fingerprint_none') }, -- FredPD
+     })
+     inFingerprint = true
+     SetNuiFocus(true, true)
+@@ -449,7 +450,7 @@ RegisterNetEvent('police:client:EvidenceStashDrawer', function()
+     if #(pos - takeLoc) <= 1.0 then
+         local drawer = exports['qb-input']:ShowInput({
+             header = Lang:t('info.evidence_stash', { value = currentEvidence }),
+-            submitText = 'open',
++            submitText = Lang:t('info.open'),
+             inputs = {
+                 {
+                     type = 'number',
+diff --git a/html/script.js b/html/script.js
+index bcb4e27..2bcbd1c 100644
+--- a/html/script.js
++++ b/html/script.js
+@@ -1,3 +1,28 @@
++// FredPD (patches/qb-policejob.40-sv-locale.patch): display text comes from the Lua locale (hud.*) with the NUI
++// messages; these English defaults are used only when a message arrives without labels. Received text is escaped.
++const Labels = {
++    fingerprint_id: "Fingerprint ID",
++    fingerprint_none: "No result",
++    heli_model: "Model",
++    heli_plate: "Plate",
++    heli_speed: "km/h",
++    camera_connected: "Connected",
++    camera_failed: "Connection failed",
++    camera_bad_request: "Error #400: bad request",
++    camera_error: "Error",
++};
++
++function escapeHtml(value) {
++    return String(value).replace(/[&<>"']/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" })[c]);
++}
++
++function setLabels(labels) {
++    if (!labels || typeof labels !== "object") return;
++    for (const key of Object.keys(Labels)) {
++        if (typeof labels[key] === "string") Labels[key] = labels[key];
++    }
++}
++
+ const CameraApp = new Vue({
+     el: "#camcontainer",
+ 
+@@ -21,7 +46,7 @@ const CameraApp = new Vue({
+             if (connected) {
+                 $("#blockscreen").css("display", "none");
+                 this.cameraLabel = label;
+-                this.connectLabel = "CONNECTED";
++                this.connectLabel = Labels.camera_connected.toUpperCase();
+                 this.dateLabel = date;
+                 this.timeLabel = formatTime;
+ 
+@@ -29,10 +54,10 @@ const CameraApp = new Vue({
+                 $("#connectedlabel").addClass("connect");
+             } else {
+                 $("#blockscreen").css("display", "block");
+-                this.cameraLabel = "ERROR #400: BAD REQUEST";
+-                this.connectLabel = "CONNECTION FAILED";
+-                this.dateLabel = "ERROR";
+-                this.timeLabel = "ERROR";
++                this.cameraLabel = Labels.camera_bad_request.toUpperCase();
++                this.connectLabel = Labels.camera_failed.toUpperCase();
++                this.dateLabel = Labels.camera_error.toUpperCase();
++                this.timeLabel = Labels.camera_error.toUpperCase();
+ 
+                 $("#connectedlabel").removeClass("connect");
+                 $("#connectedlabel").addClass("disconnect");
+@@ -73,14 +98,14 @@ HeliCam.UpdateVehicleInfo = function (data) {
+     $(".scanBar").css("height", "100%");
+     $(".heli-model")
+         .find("p")
+-        .html("MODEL: " + data.model);
++        .html(escapeHtml(Labels.heli_model.toUpperCase() + ": " + data.model));
+     $(".heli-plate")
+         .find("p")
+-        .html("PLATE: " + data.plate);
+-    $(".heli-street").find("p").html(data.street);
++        .html(escapeHtml(Labels.heli_plate.toUpperCase() + ": " + data.plate));
++    $(".heli-street").find("p").html(escapeHtml(data.street));
+     $(".heli-speed")
+         .find("p")
+-        .html(data.speed + " KM/U");
++        .html(escapeHtml(data.speed + " " + Labels.heli_speed.toUpperCase()));
+ };
+ 
+ HeliCam.DisableVehicleInfo = function () {
+@@ -110,7 +135,7 @@ Databank.Close = function () {
+ 
+ Fingerprint.Open = function () {
+     $(".fingerprint-container").fadeIn(150);
+-    $(".fingerprint-id").html("Fingerprint ID<p>No result</p>");
++    $(".fingerprint-id").html(escapeHtml(Labels.fingerprint_id) + "<p>" + escapeHtml(Labels.fingerprint_none) + "</p>");
+ };
+ 
+ Fingerprint.Close = function () {
+@@ -119,7 +144,7 @@ Fingerprint.Close = function () {
+ };
+ 
+ Fingerprint.Update = function (data) {
+-    $(".fingerprint-id").html("Fingerprint ID<p>" + data.fingerprintId + "</p>");
++    $(".fingerprint-id").html(escapeHtml(Labels.fingerprint_id) + "<p>" + escapeHtml(data.fingerprintId) + "</p>");
+ };
+ 
+ $(document).on("click", ".take-fingerprint", function () {
+@@ -129,6 +154,7 @@ $(document).on("click", ".take-fingerprint", function () {
+ document.onreadystatechange = () => {
+     if (document.readyState === "complete") {
+         window.addEventListener("message", function (event) {
++            setLabels(event.data.labels);
+             if (event.data.type == "enablecam") {
+                 CameraApp.OpenCameras(event.data.label, event.data.connected, event.data.id, event.data.time);
+             } else if (event.data.type == "disablecam") {
+diff --git a/locales/en.lua b/locales/en.lua
+index a9fe612..b4e67b6 100644
+--- a/locales/en.lua
++++ b/locales/en.lua
+@@ -88,6 +88,7 @@ local Translations = {
+         evidence_stash_prompt = 'Evidence Stash',
+         evidence_stash = 'Evidence Stash | %{value}',
+         slot = 'Slot no. (1,2,3)',
++        open = 'Open', -- FredPD (patch 40): was hard-coded in client/job.lua
+         current_evidence = '%{value} | Drawer %{value2}',
+         on_duty = '[E] - Go on duty',
+         off_duty = '[E] - Go off duty',
+@@ -135,6 +136,18 @@ local Translations = {
+         agitated = 'Agitated - Signs of Meth Use',
+         serial_not_visible = 'Serial number not visible...',
+     },
++    -- FredPD (patch 40): NUI text that was hard-coded in html/script.js; sent with the NUI messages
++    hud = {
++        fingerprint_id = 'Fingerprint ID',
++        fingerprint_none = 'No result',
++        heli_model = 'Model',
++        heli_plate = 'Plate',
++        heli_speed = 'km/h',
++        camera_connected = 'Connected',
++        camera_failed = 'Connection failed',
++        camera_bad_request = 'Error #400: bad request',
++        camera_error = 'Error',
++    },
+     menu = {
+         garage_title = 'Police Vehicles',
+         close = '⬅ Close Menu',
+diff --git a/locales/sv.lua b/locales/sv.lua
+new file mode 100644
+index 0000000..d83e0fe
+--- /dev/null
++++ b/locales/sv.lua
+@@ -0,0 +1,240 @@
++-- SPDX-License-Identifier: GPL-3.0-only
++-- Swedish for qb-policejob, added by FredPD's patches/qb-policejob.40-sv-locale.patch (docs/modules/police-qb.md,
++-- terms from docs/glossary.md in the FredPD repository). Every key of locales/en.lua, same %{placeholders}.
++-- Selected with `setr qb_locale "sv"` (the client reads the convar too, so use setr). Amounts in kr, no "!".
++local Translations = {
++    error = {
++        license_already = 'Personen har redan licensen',
++        error_license = 'Personen har inte den licensen',
++        no_camera = 'Kameran finns inte',
++        blood_not_cleared = 'Blodet togs inte bort',
++        bullet_casing_not_removed = 'Hylsorna togs inte bort',
++        none_nearby = 'Ingen i närheten',
++        canceled = 'Avbrutet',
++        time_higher = 'Tiden måste vara större än 0',
++        amount_higher = 'Beloppet måste vara större än 0',
++        vehicle_cuff = 'Du kan inte sätta handfängsel på någon som sitter i ett fordon',
++        no_cuff = 'Du har inga handfängsel med dig',
++        no_impound = 'Det finns inga fordon i beslag',
++        no_spikestripe = 'Du kan inte lägga ut fler spikmattor',
++        error_license_type = 'Ogiltig licenstyp',
++        rank_license = 'Din tjänstegrad räcker inte för att utfärda licenser',
++        revoked_license = 'En av dina licenser har återkallats',
++        rank_revoke = 'Din tjänstegrad räcker inte för att återkalla licenser',
++        on_duty_police_only = 'Endast för polis i tjänst',
++        vehicle_not_flag = 'Fordonet är inte flaggat',
++        not_towdriver = 'Personen är inte bärgare',
++        not_lawyer = 'Personen är inte advokat',
++        no_anklet = 'Personen har ingen fotboja',
++        have_evidence_bag = 'Du behöver en tom bevispåse',
++        no_driver_license = 'Inget körkort',
++        not_cuffed_dead = 'Personen är varken handfängslad eller död',
++        fine_yourself = 'Du kan inte utfärda en ordningsbot till dig själv',
++        not_online = 'Personen är inte inloggad',
++    },
++    success = {
++        uncuffed = 'Dina handfängsel har tagits av',
++        granted_license = 'Du har fått en licens',
++        grant_license = 'Du har utfärdat en licens',
++        revoke_license = 'Du har återkallat en licens',
++        tow_paid = 'Du har fått 500 kr i ersättning',
++        blood_clear = 'Blodet har tagits bort',
++        bullet_casing_removed = 'Hylsorna har tagits bort',
++        anklet_taken_off = 'Din fotboja har tagits av',
++        took_anklet_from = 'Du tog av fotbojan från %{firstname} %{lastname}',
++        put_anklet = 'Du har fått en fotboja',
++        put_anklet_on = 'Du satte en fotboja på %{firstname} %{lastname}',
++        vehicle_flagged = 'Fordonet %{plate} är flaggat för: %{reason}',
++        impound_vehicle_removed = 'Fordonet är uthämtat ur beslag',
++        impounded = 'Fordonet har bärgats',
++    },
++    info = {
++        mr = 'Herr',
++        mrs = 'Fru',
++        impound_price = 'Avgift för att hämta ut fordonet (kan vara 0)',
++        plate_number = 'Registreringsnummer',
++        flag_reason = 'Anledning till flaggningen',
++        camera_id = 'Kamera-ID',
++        callsign_name = 'Din anropssignal',
++        poobject_object = 'Objekttyp att placera, eller ”delete” för att ta bort',
++        player_id = 'Spelar-ID',
++        citizen_id = 'Personens citizenid',
++        dna_sample = 'DNA-prov',
++        jail_time = 'Tid i fängelse',
++        jail_time_no = 'Fängelsetiden måste vara större än 0',
++        license_type = 'Licenstyp (driver = körkort, weapon = vapenlicens)',
++        ankle_location = 'Fotbojans position',
++        cuff = 'Du är handfängslad',
++        cuffed_walk = 'Du är handfängslad men kan gå',
++        vehicle_flagged = 'Fordonet %{vehicle} är flaggat för: %{reason}',
++        flagged_vehicle_radar = 'Flaggat fordon passerade en ANPR-kamera: %{plate}',
++        unflag_vehicle = 'Flaggningen av fordonet %{vehicle} är borttagen',
++        tow_driver_paid = 'Du har betalat bärgaren',
++        paid_lawyer = 'Du har betalat advokaten',
++        vehicle_taken_depot = 'Fordonet har bärgats mot en avgift på %{price} kr',
++        vehicle_seized = 'Fordonet har tagits i beslag',
++        stolen_money = 'Du har stulit %{stolen} kr',
++        cash_robbed = 'Du har blivit rånad på %{money} kr',
++        driving_license_confiscated = 'Ditt körkort har omhändertagits',
++        cash_confiscated = 'Dina kontanter har tagits i beslag',
++        being_searched = 'Du kroppsvisiteras',
++        cash_found = 'Hittade %{cash} kr på personen',
++        sent_jail_for = 'Personen skickades till fängelse i %{time} mån',
++        fine_received = 'Du har fått böter på %{fine} kr',
++        blip_text = 'Polislarm – %{value}',
++        jail_time_input = 'Fängelsetid',
++        submit = 'Skicka',
++        time_months = 'Tid i månader',
++        bill = 'Böter',
++        amount = 'Belopp',
++        police_plate = 'LSPD', -- plate prefix of garage vehicles: exactly 4 letters, not a translation
++        vehicle_info = 'Motor: %{value} % | Bränsle: %{value2} %',
++        evidence_stash_prompt = 'Bevisförråd',
++        evidence_stash = 'Bevisförråd | %{value}',
++        slot = 'Fack nr (1, 2, 3)',
++        open = 'Öppna',
++        current_evidence = '%{value} | Låda %{value2}',
++        on_duty = '[E] Gå i tjänst',
++        off_duty = '[E] Gå ur tjänst',
++        onoff_duty = '~g~I tjänst~s~ / ~r~ur tjänst~s~',
++        stash = 'Förråd %{value}',
++        delete_spike = '[~r~E~s~] Ta bort spikmattan',
++        close_camera = 'Stäng kameran',
++        bullet_casing = '[~g~G~s~] Hylsa %{value}',
++        casing = 'Hylsa',
++        blood = 'Blod',
++        blood_text = '[~g~G~s~] Blod %{value}',
++        fingerprint_text = '[G] Fingeravtryck',
++        fingerprint = 'Fingeravtryck',
++        store_heli = '[E] Ställ in helikoptern',
++        take_heli = '[E] Ta ut helikopter',
++        impound_veh = '[E] Ställ in fordonet på uppställningsplatsen',
++        store_veh = '[E] Ställ in fordonet',
++        armory = 'Vapenförråd',
++        enter_armory = '[E] Vapenförråd',
++        finger_scan = 'Fingeravtrycksläsare',
++        scan_fingerprint = '[E] Läs av fingeravtryck',
++        trash = 'Papperskorg',
++        trash_enter = '[E] Papperskorg',
++        stash_enter = '[E] Öppna skåpet',
++        target_location = 'Positionen för %{firstname} %{lastname} är markerad på kartan',
++        anklet_location = 'Fotbojans position',
++        new_call = 'Nytt larm',
++        officer_down = 'Skadad polis: %{lastname} | %{callsign}',
++        fine_issued = 'Ordningsboten har utfärdats',
++        received_fine = 'Kronofogden har drivit in dina obetalda böter',
++    },
++    evidence = {
++        red_hands = 'Röda händer',
++        wide_pupils = 'Vidgade pupiller',
++        red_eyes = 'Röda ögon',
++        weed_smell = 'Luktar cannabis',
++        gunpowder = 'Krutrester på kläderna',
++        chemicals = 'Luktar kemikalier',
++        heavy_breathing = 'Andas tungt',
++        sweat = 'Svettas kraftigt',
++        handbleed = 'Blod på händerna',
++        confused = 'Förvirrad',
++        alcohol = 'Luktar alkohol',
++        heavy_alcohol = 'Luktar starkt av alkohol',
++        agitated = 'Uppjagad – tecken på metamfetaminpåverkan',
++        serial_not_visible = 'Serienumret går inte att läsa…',
++    },
++    hud = {
++        fingerprint_id = 'Fingeravtrycks-ID',
++        fingerprint_none = 'Inget resultat',
++        heli_model = 'Modell',
++        heli_plate = 'Regnr',
++        heli_speed = 'km/h',
++        camera_connected = 'Ansluten',
++        camera_failed = 'Anslutningen misslyckades',
++        camera_bad_request = 'Fel #400: ogiltig begäran',
++        camera_error = 'Fel',
++    },
++    menu = {
++        garage_title = 'Polisfordon',
++        close = '⬅ Stäng menyn',
++        impound = 'Fordon i beslag',
++        pol_impound = 'Polisens uppställningsplats',
++        pol_garage = 'Polisgarage',
++        pol_armory = 'Polisens vapenförråd',
++    },
++    email = {
++        sender = 'Kronofogden',
++        subject = 'Indrivning av böter',
++        message = 'Hej %{value} %{value2},<br /><br />Kronofogden har drivit in böterna som du fick av polisen.<br /><strong>%{value3} kr</strong> har dragits från ditt konto.<br /><br />Med vänlig hälsning<br />Kronofogden',
++    },
++    commands = {
++        place_spike = 'Lägg ut en spikmatta (endast polis)',
++        license_grant = 'Utfärda en licens till någon',
++        license_revoke = 'Återkalla någons licens',
++        place_object = 'Placera eller ta bort ett objekt (endast polis)',
++        cuff_player = 'Sätt handfängsel på en person (endast polis)',
++        escort = 'Eskortera en person',
++        callsign = 'Ange din anropssignal',
++        clear_casign = 'Ta bort hylsor i området (endast polis)',
++        jail_player = 'Skicka en person till fängelse (endast polis)',
++        unjail_player = 'Släpp en person ur fängelset (endast polis)',
++        clearblood = 'Ta bort blod i området (endast polis)',
++        seizecash = 'Ta kontanter i beslag (endast polis)',
++        softcuff = 'Sätt handfängsel så att personen kan gå (endast polis)',
++        camera = 'Visa en övervakningskamera (endast polis)',
++        flagplate = 'Flagga ett registreringsnummer (endast polis)',
++        unflagplate = 'Ta bort flaggningen av ett registreringsnummer (endast polis)',
++        plateinfo = 'Slå på ett registreringsnummer (endast polis)',
++        depot = 'Bärga ett fordon mot avgift (endast polis)',
++        impound = 'Ta ett fordon i beslag (endast polis)',
++        paytow = 'Betala bärgaren (endast polis)',
++        paylawyer = 'Betala advokaten (endast polis och domare)',
++        anklet = 'Sätt på en fotboja (endast polis)',
++        ankletlocation = 'Visa var en persons fotboja finns',
++        removeanklet = 'Ta av en fotboja (endast polis)',
++        drivinglicense = 'Omhänderta ett körkort (endast polis)',
++        takedna = 'Ta ett DNA-prov från en person (kräver en tom bevispåse, endast polis)',
++        police_report = 'Larma polisen',
++        message_sent = 'Meddelande',
++        civilian_call = 'Samtal från allmänheten',
++        emergency_call = 'Nytt 112-samtal',
++        fine = 'Utfärda en ordningsbot till en person (endast polis)',
++    },
++    progressbar = {
++        blood_clear = 'Tar bort blod…',
++        bullet_casing = 'Tar bort hylsor…',
++        robbing = 'Rånar personen…',
++        place_object = 'Placerar objektet…',
++        remove_object = 'Tar bort objektet…',
++        impound = 'Bärgar fordonet…',
++    },
++    target = {
++        sign_in = 'Gå i eller ur tjänst',
++        open_personal_stash = 'Öppna personligt skåp',
++        open_trash = 'Öppna papperskorgen',
++        open_fingerprint = 'Öppna fingeravtrycksläsaren',
++        open_armory = 'Öppna vapenförrådet',
++        open_evidence_stash = 'Öppna bevisförrådet',
++    },
++    fredpd = {
++        no_permission = 'Du har inte behörighet att göra det här',
++        try_again = 'Vänta en stund och försök igen',
++        amount_too_high = 'Beloppet får vara högst %{max} kr',
++        garage_empty = 'Det finns inga fordon som du har behörighet att ta ut',
++        armory_title = 'Vapenförråd – %{armory}',
++        armory_count = 'Antal: %{count}',
++        armory_taken = 'Du har kvitterat ut %{count} × %{item}',
++        armory_empty = 'Det finns inget här som du har behörighet att kvittera ut',
++        armory_too_far = 'Du är för långt från vapenförrådet',
++        armory_full = 'Du kan inte bära det',
++        armory_limit = 'Du bär redan det högsta antal du får kvittera ut',
++        armory_unavailable = 'Vapenförrådet är inte tillgängligt',
++        armory_failed = 'Utrustningen kunde inte lämnas ut',
++        bolo_radar = 'Träff på efterlysning: %{plate} passerade %{street} (ANPR-kamera %{radar})',
++    },
++}
++
++if GetConvar('qb_locale', 'en') == 'sv' then
++    Lang = Locale:new({
++        phrases = Translations,
++        warnOnMissing = true,
++        fallbackLang = Lang,
++    })
++end

@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- fredpd_core server entry point. Every other server module is loaded here with ox_lib `require`, in this order:
--- config -> exports/events/commands (perms, canview, audit, mirror, officers, adapters) -> once oxmysql is ready:
+-- config -> framework bridge -> exports/events/commands (perms, canview, audit, mirror, officers, adapters) -> once
+-- oxmysql is ready:
 -- migrations (server/db.lua), then the DB-backed state (visibility rules, officers, units, online players).
 -- Exports are registered synchronously so other resources can call them as soon as fredpd_core has started; until
 -- the grants of a player are loaded every permission check fails closed.
@@ -15,6 +16,7 @@ local Audit = require 'server.audit'
 local Mirror = require 'server.mirror'
 local Officers = require 'server.officers'
 local Adapters = require 'adapters.loader'
+local Bridge = require 'server.bridge'
 
 ---------------------------------------------------------------------------------------------------------------
 -- 1. Config files (copied into config/ by scripts/build.mjs). A broken file is logged, never fatal.
@@ -44,12 +46,18 @@ end
 
 loadConfig()
 
+-- Framework/inventory/target/doorlock implementations (config/integrations.json, docs/contracts.md §C17). Loaded before
+-- anything asks for a player; logs one capability line and one warning per missing resource.
+Bridge.load(Core.config.integrations)
+
 ---------------------------------------------------------------------------------------------------------------
 -- 2. Exports, events and commands
 
 Locale.init()
 exports('L', function(key, vars) return Locale.L(key, vars) end)
 
+Bridge.register()
+Bridge.primeOnline()
 Perms.register()
 CanView.register()
 Audit.register()

@@ -3,7 +3,7 @@
 -- loaded after the migrations and again whenever a server-side `fredpd:rulesChanged` event fires (server/http.js emits
 -- it for the signed `POST /fredpd_core/rules` the service sends after a rule edit, §C6). The evaluation
 -- itself is shared/canview.lua (same fixtures as the TS port). The viewer is always built on the server: citizenid
--- from qbx_core, tier/units/grants from the grant cache. No rules loaded -> every record is 'none' (fail closed).
+-- from the framework bridge, tier/units/grants from the grant cache. No rules loaded -> every record is 'none' (fail closed).
 
 local CanView = require 'shared.canview'
 local Core = require 'server.core'

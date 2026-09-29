@@ -1,0 +1,224 @@
+diff --git a/client/anpr.lua b/client/anpr.lua
+index a9c47f8..f0d6879 100644
+--- a/client/anpr.lua
++++ b/client/anpr.lua
+@@ -19,12 +19,13 @@ local function HandleSpeedCam(speedCam, radarID)
+ 		if not is_driver then return end
+ 		if GetVehicleClass(vehicle) == 18 then return end
+ 		local plate = QBCore.Functions.GetPlate(vehicle)
+-		QBCore.Functions.TriggerCallback('police:server:IsPlateFlagged', function(isFlagged)
+-			if isFlagged then
+-				local coords = Config.Radars[radarID]
+-				TriggerServerEvent('police:server:FlaggedPlateTriggered', coords, plate)
+-			end
+-		end, plate)
++		-- FredPD (patch 30): every pass is reported with the radar's index; the server checks it and decides between
++		-- an efterlysning hit, a /flagplate alert and nothing (the driver never learns whether its plate is wanted)
++		local s1, s2 = GetStreetNameAtCoord(speedCam.x, speedCam.y, speedCam.z)
++		local street = GetStreetNameFromHashKey(s1)
++		local crossing = s2 and s2 ~= 0 and GetStreetNameFromHashKey(s2) or ''
++		if crossing ~= '' then street = street .. ' | ' .. crossing end
++		TriggerServerEvent('police:server:FlaggedPlateTriggered', radarID, plate, street)
+ 	end
+ 
+ 	if not isInMarker and HasAlreadyEnteredMarker and lastRadar == radarID then
+diff --git a/fredpd/server_bolo.lua b/fredpd/server_bolo.lua
+new file mode 100644
+index 0000000..d038e09
+--- /dev/null
++++ b/fredpd/server_bolo.lua
+@@ -0,0 +1,146 @@
++-- SPDX-License-Identifier: GPL-3.0-only
++-- FredPD efterlysning (BOLO) bridge for qb-policejob, added by FredPD's patches/qb-policejob.30-bolo-hooks.patch
++-- (docs/modules/police-qb.md in the FredPD repository). Loaded by the fxmanifest glob fredpd/server_*.lua after
++-- fredpd/server.lua (global FredPD); sets the global `FredPDBolo`.
++--
++-- ANPR: the patched client/anpr.lua reports every radar pass of a driver; a pass is accepted only from the driver's
++-- seat of a vehicle with that plate near the radar it names, and an active efterlysning
++-- (exports.fredpd_bolo:checkPlate) then fires the server event fredpd:boloHit(bolo, context) once per plate and radar
++-- per cooldown. Impound: exports.fredpd_bolo:resolveOnImpound(plate, src) through FredPD.impoundHooks.
++-- fredpd_core or fredpd_bolo may be stopped at any time: every call is pcall'd and "not running" means "no BOLO".
++-- Plain Lua 5.4 (no cfxlua syntax).
++
++local M = {}
++
++M.BOLO = 'fredpd_bolo'
++M.DISPATCH = 'fredpd_dispatch'
++M.STREET_MAX = 100
++M.HIT_MEMORY = 256
++
++--- Plate as FredPD stores it: upper case, no whitespace (fredpd/server.lua).
++M.normalizePlate = FredPD.normalizePlate
++
++--- true while both fredpd_core and fredpd_bolo run.
++function M.available()
++    return FredPD.active() and GetResourceState(M.BOLO) == 'started'
++end
++
++--- true while fredpd_dispatch runs: fredpd_bolo turns a fredpd:boloHit into a larm only through it.
++function M.dispatchRunning()
++    return GetResourceState(M.DISPATCH) == 'started'
++end
++
++--- The active efterlysning for a plate, or nil (also while fredpd_core/fredpd_bolo is not running or on error).
++function M.checkPlate(plate)
++    local normalized = M.normalizePlate(plate)
++    if not normalized or not M.available() then return nil end
++    local bolo = FredPD.callExport(M.BOLO, 'checkPlate', normalized)
++    return type(bolo) == 'table' and bolo or nil
++end
++
++--- Street label from the client: display text only, control characters removed, at most STREET_MAX characters.
++function M.cleanStreet(street)
++    if type(street) ~= 'string' or not utf8.len(street) then return nil end
++    street = street:gsub('%c', ' ')
++    if utf8.len(street) > M.STREET_MAX then street = street:sub(1, utf8.offset(street, M.STREET_MAX + 1) - 1) end
++    return street
++end
++
++local function round2(n)
++    return math.floor(n * 100 + 0.5) / 100
++end
++
++--- Validate a radar pass reported by a client (police:server:FlaggedPlateTriggered). The reporting client is the
++--- driver of the passing vehicle (client/anpr.lua), not an officer, so the pass is only accepted from the driver's
++--- seat of a vehicle whose plate matches, within radar.maxDistance of Config.Radars[radar] (1 report per second).
++--- @return table|nil pass { plate (trimmed, as on the vehicle), normalized, radar, street, coords = { x, y, z } }
++function M.radarPass(src, radar, plate, street)
++    src = tonumber(src)
++    if not src or type(plate) ~= 'string' then return nil end
++    radar = FredPD.int(radar)
++    local location = radar and type(Config.Radars) == 'table' and Config.Radars[radar] or nil
++    if not location then return nil end
++    if not FredPD.rateLimit(src, 'radar', 1000) then return nil end
++    local ped = GetPlayerPed(src)
++    if not ped or ped == 0 then return nil end
++    local vehicle = GetVehiclePedIsIn(ped, false)
++    if not vehicle or vehicle == 0 or GetPedInVehicleSeat(vehicle, -1) ~= ped then return nil end
++    local actual = GetVehicleNumberPlateText(vehicle)
++    local normalized = M.normalizePlate(actual)
++    if not normalized or normalized ~= M.normalizePlate(plate) then return nil end
++    local pos = GetEntityCoords(ped)
++    if FredPD.distance(pos, location) > FredPD.config().radar.maxDistance then return nil end
++    local x, y, z = FredPD.xyz(pos)
++    return {
++        plate = (actual:gsub('^%s+', ''):gsub('%s+$', '')),
++        normalized = normalized,
++        radar = radar,
++        street = M.cleanStreet(street),
++        coords = { x = round2(x), y = round2(y), z = round2(z) },
++    }
++end
++
++local hitAt = {}
++local hitCount = 0
++
++--- Forget hits older than the cooldown once the memory is full (no timer).
++local function prune(now, cooldownMs)
++    if hitCount < M.HIT_MEMORY then return end
++    hitCount = 0
++    for key, at in pairs(hitAt) do
++        if now - at >= cooldownMs then hitAt[key] = nil else hitCount = hitCount + 1 end
++    end
++end
++
++--- BOLO check of an accepted radar pass. Fires TriggerEvent('fredpd:boloHit', bolo, context) with context
++--- { source = 'radar', plate, coords, street, radar } once per plate and radar per radar.cooldownSeconds.
++--- @return table|nil bolo the active efterlysning (also during the cooldown)
++--- @return boolean fired true when this pass fired fredpd:boloHit (false during the cooldown)
++function M.onRadarPass(pass)
++    local bolo = M.checkPlate(pass.normalized)
++    if not bolo then return nil, false end
++    local now = GetGameTimer()
++    local cooldownMs = FredPD.config().radar.cooldownSeconds * 1000
++    local key = pass.normalized .. '#' .. tostring(pass.radar)
++    local last = hitAt[key]
++    if last and now - last < cooldownMs then return bolo, false end
++    prune(now, cooldownMs)
++    if not last then hitCount = hitCount + 1 end
++    hitAt[key] = now
++    TriggerEvent('fredpd:boloHit', bolo, {
++        source = 'radar',
++        plate = pass.normalized,
++        coords = pass.coords,
++        street = pass.street,
++        radar = pass.radar,
++    })
++    return bolo, true
++end
++
++--- Which qb-policejob alert (police:client:policeAlert to every on-duty police officer) a radar pass raises:
++---   'bolo' an active efterlysning fired fredpd:boloHit but fredpd_dispatch is not running, so fredpd_bolo cannot
++---          raise its larm; the qb alert carries the hit instead (same cooldown as the event);
++---   'flag' no efterlysning larm (none, or cooling down without fredpd_dispatch) and the plate is /flagplate-flagged
++---          (the upstream alert);
++---   nil    nothing: fredpd_bolo raises the larm (fredpd_dispatch running), or the plate is neither wanted nor flagged.
++function M.radarAlert(pass, flagged)
++    local bolo, fired = M.onRadarPass(pass)
++    if bolo and M.dispatchRunning() then return nil end
++    if bolo and fired then return 'bolo' end
++    if flagged then return 'flag' end
++    return nil
++end
++
++--- A vehicle was impounded by src (police:server:Impound success, FredPD.afterImpound): let fredpd_bolo resolve an
++--- active efterlysning on the plate (it decides, records and audits). The export's answer, nil when not available.
++function M.onImpound(plate, src)
++    local normalized = M.normalizePlate(plate)
++    if not normalized or not M.available() then return nil end
++    return FredPD.callExport(M.BOLO, 'resolveOnImpound', normalized, src)
++end
++
++FredPD.impoundHooks[#FredPD.impoundHooks + 1] = function(src, plate)
++    M.onImpound(plate, src)
++end
++
++FredPDBolo = M
+diff --git a/server/vehicle.lua b/server/vehicle.lua
+index 4e9ef05..acc6d08 100644
+--- a/server/vehicle.lua
++++ b/server/vehicle.lua
+@@ -19,8 +19,11 @@ QBCore.Functions.CreateCallback('police:GetImpoundedVehicles', function(source,
+     end)
+ end)
+ 
+-QBCore.Functions.CreateCallback('police:server:IsPlateFlagged', function(_, cb, plate)
++QBCore.Functions.CreateCallback('police:server:IsPlateFlagged', function(source, cb, plate)
+     local retval = false
++    -- FredPD: while fredpd_core runs only an on-duty officer learns whether a plate is /flagplate-flagged (a driver
++    -- could otherwise ask about its own plate); never answers from efterlysningar
++    if FredPD.check(source) == false then return cb(false) end
+     if Plates and Plates[plate] then
+         if Plates[plate].isflagged then
+             retval = true
+@@ -71,12 +74,27 @@ RegisterNetEvent('police:server:TakeOutImpound', function(plate, garage)
+     TriggerClientEvent('QBCore:Notify', src, Lang:t('success.impound_vehicle_removed'), 'success')
+ end)
+ 
+-RegisterNetEvent('police:server:FlaggedPlateTriggered', function(coords, plate)
++-- FredPD (patches/qb-policejob.30-bolo-hooks.patch): the patched client/anpr.lua reports every radar pass of a
++-- driver as (radar index, plate, street). The server checks the pass (fredpd/server_bolo.lua radarPass: driver's
++-- seat, plate on the vehicle, near that radar, 1/s), raises fredpd:boloHit for an active efterlysning and decides
++-- which alert on-duty police get (upstream trusted any coords and plate a client sent).
++RegisterNetEvent('police:server:FlaggedPlateTriggered', function(radar, plate, street)
++    local src = source
++    local pass = FredPDBolo.radarPass(src, radar, plate, street)
++    if not pass then return end
++    local flag = Plates[pass.plate:upper()] or Plates[pass.normalized]
++    local alert = FredPDBolo.radarAlert(pass, flag ~= nil and flag.isflagged == true)
++    if not alert then return end
++    local coords = Config.Radars[pass.radar]
++    local message
++    if alert == 'bolo' then
++        message = Lang:t('fredpd.bolo_radar', { plate = pass.normalized, street = pass.street or '–', radar = pass.radar })
++    else
++        message = Lang:t('info.flagged_vehicle_radar', { plate = pass.plate:upper() })
++    end
+     for _, Player in pairs(QBCore.Functions.GetQBPlayers()) do
+         if Player then
+             if (Player.PlayerData.job.name == 'police' and Player.PlayerData.job.onduty) then
+-                local veh_plate = plate:upper()
+-                local message = Lang:t('info.flagged_vehicle_radar', { plate = veh_plate })
+                 TriggerClientEvent('police:client:policeAlert', Player.PlayerData.source, coords, message)
+             end
+         end

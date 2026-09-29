@@ -1,17 +1,19 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Search mirror tables (IMPLEMENTATION.md §4.2, task 1.4): fredpd_persons and fredpd_vehicles_idx, so searches never
 -- read players.charinfo (JSON, unindexable). Filled by:
---   * qbx_core character events (names VERIFY, see docs/modules/core.md): one upsert per character when a mirrored
---     field actually changed (an in-memory fingerprint skips the frequent SetPlayerData calls for money etc.);
+--   * character events of the framework, through the bridge (server/bridge.lua; qb-core or qbx_core): one upsert per
+--     character when a mirrored field actually changed (an in-memory fingerprint skips the frequent PlayerData
+--     updates for money etc.);
 --   * M.backfill(): one pass over players / player_vehicles in batches of 500 (the only place charinfo is read in
 --     bulk), started from fredpd_devtools' /fredpd_backfill through the backfillMirror export;
 --   * M.refreshPlate(plate): a lookup miss re-reads that one plate from player_vehicles.
--- The mirrors are derived caches of qbx data, so a row change is not audited; backfill and dev seeding write one
+-- The mirrors are derived caches of framework data, so a row change is not audited; backfill and dev seeding write one
 -- audit row per run.
 
 local Core = require 'server.core'
 local Audit = require 'server.audit'
 local Perms = require 'server.perms'
+local Bridge = require 'server.bridge'
 
 local M = {}
 
@@ -222,7 +224,7 @@ function M.writeClaimed(row)
     return true
 end
 
---- Mirror one character from qbx PlayerData if a mirrored field changed (awaits). Returns true when it wrote.
+--- Mirror one character (bridge player: citizenid, charinfo, license) if a mirrored field changed (awaits). Returns true when it wrote.
 function M.syncPlayerData(pd)
     local row = M.claimRow(pd)
     if not row then return false end
@@ -315,7 +317,7 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- Wiring
 
---- Mirror a player's current character (from qbx_core) and record it in fredpd_identities. Awaits.
+--- Mirror a player's current character (from the framework bridge) and record it in fredpd_identities. Awaits.
 function M.syncSource(src)
     local pd = Core.getPlayerData(src)
     if not pd then return false end
@@ -334,27 +336,22 @@ function M.register()
     Core.internalExport('backfillMirror', M.backfill, { 'fredpd_devtools' })
     Core.internalExport('seedDevRows', M.insertDevRows, { 'fredpd_devtools' })
 
-    -- VERIFY (docs/modules/core.md): qbx_core event names. Every handler is idempotent (upsert + fingerprint), so
-    -- a name that fires twice costs nothing. Only AddEventHandler: none of these may be triggered by a client.
-    -- (QBCore:Server:OnPlayerLoaded is deliberately not handled: in the QB ecosystem the client fires it with
-    -- TriggerServerEvent, so a local handler would never run and only cause "not safe for net" console noise.
-    -- QBCore:Server:PlayerLoaded, fired by qbx_core's login on the server, covers the load.)
-    AddEventHandler('QBCore:Server:PlayerLoaded', function(player)
-        local pd = type(player) == 'table' and player.PlayerData or nil
-        local src = pd and tonumber(pd.source)
-        Core.async('mirror on load', function()
-            if src then M.syncSource(src) elseif pd then M.syncPlayerData(pd) end
-        end)
+    -- Framework events through the bridge (server/bridge.lua, docs/contracts.md §C17: qb-core or qbx_core). Every
+    -- handler is idempotent (upsert + fingerprint), so an event that fires twice costs nothing. Server-local only.
+    AddEventHandler('fredpd:bridge:playerLoaded', function(src)
+        src = tonumber(src)
+        if src and src > 0 then Core.async('mirror on load', M.syncSource, src) end
     end)
-    -- Fires on every PlayerData change (money, hunger, metadata): the fingerprint check runs right here, and a
-    -- thread is only started when a mirrored field really changed.
-    AddEventHandler('QBCore:Player:SetPlayerData', function(pd)
-        local row = M.claimRow(pd)
+    -- Every PlayerData change (qbx: each money/hunger tick; qb: every key but money/metadata/items), handed over by
+    -- the bridge as a normalised player: the fingerprint check runs right here, and a thread is only started when a
+    -- mirrored field really changed.
+    Bridge.onPlayerUpdated(function(_src, player)
+        local row = M.claimRow(player)
         if row then Core.async('mirror on update', M.writeClaimed, row) end
     end)
-    -- Last chance to catch a charinfo change whose event we did not see.
-    AddEventHandler('QBCore:Server:OnPlayerUnload', function(src)
-        src = tonumber(src) or tonumber(source)
+    -- Last chance to catch a charinfo change whose event we did not see (logout; on qb-core also a disconnect).
+    AddEventHandler('fredpd:bridge:playerUnloaded', function(src)
+        src = tonumber(src)
         if src and src > 0 then Core.async('mirror on unload', M.syncSource, src) end
     end)
 end

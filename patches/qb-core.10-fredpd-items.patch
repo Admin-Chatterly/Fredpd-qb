@@ -1,0 +1,20 @@
+diff --git a/shared/items.lua b/shared/items.lua
+index d829235..b1d7012 100644
+--- a/shared/items.lua
++++ b/shared/items.lua
+@@ -355,6 +355,15 @@ QBCore.Shared.Items = {
+     empty_evidence_bag           = { name = 'empty_evidence_bag', label = 'Empty Evidence Bag', weight = 0, type = 'item', image = 'evidence.png', unique = false, useable = false, shouldClose = false, description = 'Used a lot to keep DNA from blood, bullet shells and more' },
+     filled_evidence_bag          = { name = 'filled_evidence_bag', label = 'Evidence Bag', weight = 200, type = 'item', image = 'evidence.png', unique = true, useable = false, shouldClose = false, description = 'A filled evidence bag to see who committed the crime >:(' },
+ 
++    -- FredPD (patches/qb-core.10-fredpd-items.patch; the ox_inventory twins are patches/ox_inventory.10/30). pd_tablet:
++    -- Ledning issues it with /surfplatta, which sets info.serial and info.owner server-side; fredpd_mdt registers the
++    -- use (fredpd_core bridge registerUsable -> QBCore.Functions.CreateUseableItem) and refuses a tablet whose serial
++    -- is missing, unknown or revoked. pd_ram: not used from the inventory; carrying it enables "Forcera dörr", and
++    -- fredpd_breach checks it again server-side (grant tool:ram, on duty). Images reuse qb-inventory's tablet.png and
++    -- police_stormram.png.
++    pd_tablet                    = { name = 'pd_tablet', label = 'Surfplatta', weight = 800, type = 'item', image = 'tablet.png', unique = true, useable = true, shouldClose = true, description = 'Polisens surfplatta med tillgång till registren. Kräver behörighet och tjänst.' },
++    pd_ram                       = { name = 'pd_ram', label = 'Murbräcka', weight = 9000, type = 'item', image = 'police_stormram.png', unique = true, useable = false, shouldClose = true, description = 'Tung murbräcka för att forcera låsta dörrar. Kräver behörighet och tjänst.' },
++
+     -- Firework Tools
+     firework1                    = { name = 'firework1', label = '2Brothers', weight = 1000, type = 'item', image = 'firework1.png', unique = false, useable = true, shouldClose = true, description = 'Fireworks' },
+     firework2                    = { name = 'firework2', label = 'Poppelers', weight = 1000, type = 'item', image = 'firework2.png', unique = false, useable = true, shouldClose = true, description = 'Fireworks' },

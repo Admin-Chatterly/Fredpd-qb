@@ -51,5 +51,38 @@
     "$comment": "qbx_police ANPR cameras (config/client.lua radars, off by default): a pass is accepted only from the driver of a vehicle with that plate within maxDistance metres of the camera; one fredpd:boloHit per plate and camera per cooldownSeconds.",
     "cooldownSeconds": 60,
     "maxDistance": 50
+  },
+  "qbPolicejob": {
+    "$comment": "The same mapping for the patched qb-policejob (QBCore; patches/qb-policejob.*.patch, docs/modules/police-qb.md), read by it the same way. It uses the shared 'actions' and 'radar' above; 'actions' here adds or overrides qb-policejob-only actions. Armory items are qb-core shared/items.lua names (weapon:weapon_pistol, armory:pistol_ammo). garage.vehicles {} = every model in qb-policejob config.lua AuthorizedVehicles. qbShops: qb-inventory shop type -> armory id (ShopOpened/ItemBought hooks); empty = no hook. maxFine: highest /fine and bill amount in kr.",
+    "actions": {
+      "evidence": "duty",
+      "search": "duty",
+      "seizelicense": "duty"
+    },
+    "garage": {
+      "vehicles": {},
+      "maxDistance": 15
+    },
+    "armories": {
+      "mrpd": {
+        "label": "Mission Row",
+        "coords": [462.23, -981.12, 30.68],
+        "radius": 1.5,
+        "items": [
+          { "name": "weapon_pistol", "count": 1, "max": 1 },
+          { "name": "weapon_stungun", "count": 1, "max": 1 },
+          { "name": "weapon_nightstick", "count": 1, "max": 1 },
+          { "name": "weapon_flashlight", "count": 1, "max": 1 },
+          { "name": "weapon_carbinerifle", "count": 1, "max": 1 },
+          { "name": "pistol_ammo", "count": 2, "max": 6 },
+          { "name": "rifle_ammo", "count": 2, "max": 6 },
+          { "name": "handcuffs", "count": 1, "max": 2 }
+        ]
+      }
+    },
+    "qbShops": {
+      "$comment": "e.g. \"policearmory\": \"mrpd\""
+    },
+    "maxFine": 100000
   }
 }

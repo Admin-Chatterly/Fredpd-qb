@@ -1,0 +1,1611 @@
+diff --git a/client/job.lua b/client/job.lua
+index 7536455..89f5f04 100644
+--- a/client/job.lua
++++ b/client/job.lua
+@@ -154,7 +154,9 @@ end
+ function TakeOutImpound(vehicle)
+     local coords = Config.Locations['impound'][currentGarage]
+     if coords then
+-        QBCore.Functions.TriggerCallback('QBCore:Server:SpawnVehicle', function(netId)
++        -- FredPD: the server checks the impound grant and the impounded row before it spawns (patch 10)
++        QBCore.Functions.TriggerCallback('police:server:fredpdSpawnVehicle', function(netId)
++            if not netId then return end
+             local veh = NetToVeh(netId)
+             QBCore.Functions.SetVehicleProperties(veh, json.decode(vehicle.mods))
+             SetVehicleNumberPlateText(veh, vehicle.plate)
+@@ -167,17 +169,19 @@ function TakeOutImpound(vehicle)
+             TaskWarpPedIntoVehicle(PlayerPedId(), veh, -1)
+             TriggerEvent('vehiclekeys:client:SetOwner', QBCore.Functions.GetPlate(veh))
+             SetVehicleEngineOn(veh, true, true, true)
+-        end, vehicle.vehicle, coords, true)
++        end, 'impound', vehicle.vehicle, currentGarage, vehicle.plate)
+     end
+ end
+ 
+ function TakeOutVehicle(vehicleInfo)
+     local coords = Config.Locations['vehicle'][currentGarage]
+     if coords then
+-        QBCore.Functions.TriggerCallback('QBCore:Server:SpawnVehicle', function(netId)
++        -- FredPD: the server checks the vehicle grant (or the upstream grade list) and makes the plate (patch 10)
++        QBCore.Functions.TriggerCallback('police:server:fredpdSpawnVehicle', function(netId, plate)
++            if not netId then return end
+             local veh = NetToVeh(netId)
+             SetCarItemsInfo()
+-            SetVehicleNumberPlateText(veh, Lang:t('info.police_plate') .. tostring(math.random(1000, 9999)))
++            SetVehicleNumberPlateText(veh, plate)
+             SetEntityHeading(veh, coords.w)
+             exports[Config.FuelResource]:SetFuel(veh, 100.0)
+             closeMenuFull()
+@@ -192,7 +196,7 @@ function TakeOutVehicle(vehicleInfo)
+             TaskWarpPedIntoVehicle(PlayerPedId(), veh, -1)
+             TriggerEvent('vehiclekeys:client:SetOwner', QBCore.Functions.GetPlate(veh))
+             SetVehicleEngineOn(veh, true, true)
+-        end, vehicleInfo, coords, true)
++        end, 'garage', vehicleInfo, currentGarage)
+     end
+ end
+ 
+@@ -204,35 +208,35 @@ function MenuGarage(currentSelection)
+         }
+     }
+ 
+-    local playerGrade = QBCore.Functions.GetPlayerData().job.grade.level
+-    for grade = 0, playerGrade do
+-        local authorizedVehicles = Config.AuthorizedVehicles[grade]
+-        if authorizedVehicles then
+-            for veh, label in pairs(authorizedVehicles) do
+-                vehicleMenu[#vehicleMenu + 1] = {
+-                    header = label,
+-                    txt = '',
+-                    params = {
+-                        event = 'police:client:TakeOutVehicle',
+-                        args = {
+-                            vehicle = veh,
+-                            currentSelection = currentSelection
+-                        }
++    -- FredPD: the server sends the list (vehicle grants while fredpd_core runs, else AuthorizedVehicles by grade)
++    QBCore.Functions.TriggerCallback('police:server:fredpdGarageVehicles', function(vehicles)
++        for veh, label in pairs(vehicles or {}) do
++            vehicleMenu[#vehicleMenu + 1] = {
++                header = label,
++                txt = '',
++                params = {
++                    event = 'police:client:TakeOutVehicle',
++                    args = {
++                        vehicle = veh,
++                        currentSelection = currentSelection
+                     }
+                 }
+-            end
++            }
++        end
++        if #vehicleMenu == 1 then
++            return QBCore.Functions.Notify(Lang:t('fredpd.garage_empty'), 'error')
+         end
+-    end
+ 
+-    vehicleMenu[#vehicleMenu + 1] = {
+-        header = Lang:t('menu.close'),
+-        txt = '',
+-        params = {
+-            event = 'qb-menu:client:closeMenu'
+-        }
++        vehicleMenu[#vehicleMenu + 1] = {
++            header = Lang:t('menu.close'),
++            txt = '',
++            params = {
++                event = 'qb-menu:client:closeMenu'
++            }
+ 
+-    }
+-    exports['qb-menu']:openMenu(vehicleMenu)
++        }
++        exports['qb-menu']:openMenu(vehicleMenu)
++    end)
+ end
+ 
+ function MenuImpound(currentSelection)
+@@ -484,20 +488,19 @@ RegisterNetEvent('qb-police:client:spawnHelicopter', function(k)
+     if IsPedInAnyVehicle(PlayerPedId(), false) then
+         QBCore.Functions.DeleteVehicle(GetVehiclePedIsIn(PlayerPedId()))
+     else
+-        local coords = Config.Locations['helicopter'][k]
+-        if not coords then coords = GetEntityCoords(PlayerPedId()) end
+-        QBCore.Functions.TriggerCallback('QBCore:Server:SpawnVehicle', function(netId)
++        -- FredPD: the server checks the helicopter grant, picks the pad and makes the plate (patch 10)
++        QBCore.Functions.TriggerCallback('police:server:fredpdSpawnVehicle', function(netId, plate)
++            if not netId then return end
+             local veh = NetToVeh(netId)
+             SetVehicleLivery(veh, 0)
+             SetVehicleMod(veh, 0, 48)
+-            SetVehicleNumberPlateText(veh, 'ZULU' .. tostring(math.random(1000, 9999)))
+-            SetEntityHeading(veh, coords.w)
++            SetVehicleNumberPlateText(veh, plate)
+             exports[Config.FuelResource]:SetFuel(veh, 100.0)
+             closeMenuFull()
+             TaskWarpPedIntoVehicle(PlayerPedId(), veh, -1)
+             TriggerEvent('vehiclekeys:client:SetOwner', QBCore.Functions.GetPlate(veh))
+             SetVehicleEngineOn(veh, true, true)
+-        end, Config.PoliceHelicopter, coords, true)
++        end, 'helicopter', Config.PoliceHelicopter, k)
+     end
+ end)
+ 
+diff --git a/fredpd/client.lua b/fredpd/client.lua
+new file mode 100644
+index 0000000..fde05cb
+--- /dev/null
++++ b/fredpd/client.lua
+@@ -0,0 +1,128 @@
++-- SPDX-License-Identifier: GPL-3.0-only
++-- FredPD armory for qb-policejob (client), added by FredPD's patches/qb-policejob.10-grants.patch.
++-- The server decides everything (fredpd/server.lua): this file only adds the armory zones it is given and shows the
++-- item list the server already filtered by the officer's grants; taking an item is checked again server-side.
++-- No loops: zones are added at start and again when the server says fredpd_core started or stopped. With
++-- Config.UseTarget a qb-target zone, otherwise a PolyZone box that shows a qb-menu header while inside (the same
++-- pattern as the upstream garage, client/job.lua:1002-1037).
++
++local zones = {}
++
++local ERRORS = {
++    off_duty = 'error.on_duty_police_only',
++    no_grant = 'fredpd.no_permission',
++    too_far = 'fredpd.armory_too_far',
++    full = 'fredpd.armory_full',
++    limit = 'fredpd.armory_limit',
++    rate_limited = 'fredpd.try_again',
++    unavailable = 'fredpd.armory_unavailable',
++    failed = 'fredpd.armory_failed',
++}
++
++local function notifyError(err)
++    QBCore.Functions.Notify(Lang:t(ERRORS[err] or 'fredpd.armory_failed'), 'error')
++end
++
++local function onDutyLeo()
++    return PlayerJob ~= nil and PlayerJob.type == 'leo' and PlayerJob.onduty == true
++end
++
++local function openArmory(armoryId)
++    QBCore.Functions.TriggerCallback('police:server:fredpdArmory', function(data, err)
++        if not data then return notifyError(err) end
++        if #data.items == 0 then
++            return QBCore.Functions.Notify(Lang:t('fredpd.armory_empty'), 'primary')
++        end
++        local menu = { { header = Lang:t('fredpd.armory_title', { armory = data.label }), isMenuHeader = true } }
++        for _, item in ipairs(data.items) do
++            menu[#menu + 1] = {
++                header = item.label,
++                txt = Lang:t('fredpd.armory_count', { count = item.count }),
++                params = { event = 'police:client:fredpdArmoryTake', args = { id = armoryId, item = item } },
++            }
++        end
++        menu[#menu + 1] = { header = Lang:t('menu.close'), txt = '', params = { event = 'qb-menu:client:closeMenu' } }
++        exports['qb-menu']:openMenu(menu)
++    end, armoryId)
++end
++
++RegisterNetEvent('police:client:fredpdArmory', function(data)
++    if type(data) == 'table' and type(data.id) == 'string' then openArmory(data.id) end
++end)
++
++RegisterNetEvent('police:client:fredpdArmoryTake', function(data)
++    if type(data) ~= 'table' or type(data.item) ~= 'table' then return end
++    QBCore.Functions.TriggerCallback('police:server:fredpdArmoryTake', function(ok, err)
++        if ok then
++            QBCore.Functions.Notify(Lang:t('fredpd.armory_taken', { count = data.item.count, item = data.item.label }),
++                'success')
++        else
++            notifyError(err)
++        end
++    end, data.id, data.item.name)
++end)
++
++local function clearZones()
++    for i = 1, #zones do
++        local zone = zones[i]
++        pcall(function()
++            if type(zone) == 'string' then exports['qb-target']:RemoveZone(zone) else zone:destroy() end
++        end)
++    end
++    zones = {}
++end
++
++local function addZone(point)
++    local name = 'fredpd_armory_' .. point.id
++    local center = vector3(point.coords.x, point.coords.y, point.coords.z)
++    local radius = tonumber(point.radius) or 1.5
++    if Config.UseTarget then
++        local ok = pcall(function()
++            exports['qb-target']:AddCircleZone(name, center, radius, { name = name, useZ = true, debugPoly = false }, {
++                options = { {
++                    type = 'client',
++                    event = 'police:client:fredpdArmory',
++                    id = point.id,
++                    icon = 'fas fa-gun',
++                    label = Lang:t('target.open_armory'),
++                    jobType = 'leo',
++                    canInteract = onDutyLeo,
++                } },
++                distance = 1.5,
++            })
++        end)
++        if ok then zones[#zones + 1] = name end
++        return
++    end
++    local ok, zone = pcall(function()
++        return BoxZone:Create(center, radius * 2, radius * 2, {
++            name = name, debugPoly = false, minZ = center.z - 1, maxZ = center.z + 1,
++        })
++    end)
++    if not ok or not zone then return end
++    zone:onPlayerInOut(function(isPointInside)
++        if isPointInside and onDutyLeo() then
++            exports['qb-menu']:showHeader({ {
++                header = Lang:t('menu.pol_armory'),
++                params = { event = 'police:client:fredpdArmory', args = { id = point.id } },
++            } })
++        elseif not isPointInside then
++            exports['qb-menu']:closeMenu()
++        end
++    end)
++    zones[#zones + 1] = zone
++end
++
++local function loadZones()
++    QBCore.Functions.TriggerCallback('police:server:fredpdArmories', function(points)
++        clearZones()
++        for _, point in ipairs(points or {}) do addZone(point) end
++    end)
++end
++
++-- qb-target passes the option table as the event argument (its `id` field names the armory).
++RegisterNetEvent('police:client:fredpdArmories', loadZones)
++
++AddEventHandler('onClientResourceStart', function(resource)
++    if resource == GetCurrentResourceName() or resource == 'qb-target' then loadZones() end
++end)
+diff --git a/fredpd/server.lua b/fredpd/server.lua
+new file mode 100644
+index 0000000..0e96b03
+--- /dev/null
++++ b/fredpd/server.lua
+@@ -0,0 +1,739 @@
++-- SPDX-License-Identifier: GPL-3.0-only
++-- FredPD bridge for qb-policejob, added by FredPD's patches/qb-policejob.10-grants.patch (docs/modules/police-qb.md in
++-- the FredPD repository). Listed in fxmanifest.lua right after server/main.lua; sets the global `FredPD`.
++--
++-- While fredpd_core is started, duty and permissions come from FredPD (exports.fredpd_core:isOnDuty / hasGrant,
++-- grants from Discord roles) instead of the qb-core job grade, and the police garage and armory only offer granted
++-- vehicles and items (re-checked by the server when they are handed out). While fredpd_core is not started, `check`
++-- answers nil and every caller applies qb-policejob's own upstream check, so the patch never bricks the job.
++-- Plain Lua 5.4 (no cfxlua syntax); unit-tested by tests/lua/qbpolice_*_test.lua in the FredPD repository.
++
++local M = {}
++
++M.CORE = 'fredpd_core'
++M.CONFIG_FILE = 'config/police.json'
++M.CONFIG_SECTION = 'qbPolicejob'
++M.INVENTORY = 'qb-inventory'
++
++--- Grant types of docs/contracts.md C2.
++M.GRANT_TYPES = {
++    weapon = true, vehicle = true, armory = true, tool = true, mdt_page = true, intel_tier = true, unit = true,
++    perm = true,
++}
++
++--- Built-in configuration. FredPD's config/police.json (copied to fredpd_core/config/) overrides it: the shared
++--- `actions` and `radar`, then its `qbPolicejob` section (`actions` on top of the shared ones, garage, armories,
++--- qbShops, maxFine). actions: qb-policejob action -> 'type:key' grant, or 'duty' (on duty is enough). An action
++--- without a valid entry is refused (fail closed) while fredpd_core runs.
++M.DEFAULTS = {
++    actions = {
++        anklet = 'duty',
++        bill = 'perm:charges.fine',
++        camera = 'duty',
++        cuff = 'duty',
++        evidence = 'duty',
++        fine = 'perm:charges.fine',
++        flagplate = 'perm:bolo.create',
++        impound = 'perm:police.impound',
++        jail = 'perm:police.jail',
++        license = 'perm:police.license',
++        object = 'duty',
++        paylawyer = 'duty',
++        paytow = 'duty',
++        plateinfo = 'duty',
++        search = 'duty',
++        seizecash = 'duty',
++        seizelicense = 'duty',
++        spikestrip = 'duty',
++        tracker = 'duty',
++        unflagplate = 'perm:bolo.resolve',
++    },
++    garage = { vehicles = {}, maxDistance = 15 },
++    armories = {
++        mrpd = {
++            label = 'Mission Row',
++            coords = { 462.23, -981.12, 30.68 },
++            radius = 1.5,
++            -- qb-core shared/items.lua names; max: no take while the officer already carries that many
++            -- (qb-inventory GetItemCount); nil = no limit
++            items = {
++                { name = 'weapon_pistol', count = 1, max = 1 },
++                { name = 'weapon_stungun', count = 1, max = 1 },
++                { name = 'weapon_nightstick', count = 1, max = 1 },
++                { name = 'weapon_flashlight', count = 1, max = 1 },
++                { name = 'weapon_carbinerifle', count = 1, max = 1 },
++                { name = 'pistol_ammo', count = 2, max = 6 },
++                { name = 'rifle_ammo', count = 2, max = 6 },
++                { name = 'handcuffs', count = 1, max = 2 },
++            },
++        },
++    },
++    qbShops = {},
++    maxFine = 100000,
++    radar = { cooldownSeconds = 60, maxDistance = 50 },
++}
++
++local GRANT_KEY = '^[A-Za-z0-9_%.:%*%-]+$'
++local ARMORY_ID = '^[%w_%-]+$'
++
++---------------------------------------------------------------------------------------------------------------
++-- Small helpers
++
++local warned = {}
++
++--- One console warning per distinct message (no log spam from a hot path).
++function M.warnOnce(fmt, ...)
++    local msg = fmt:format(...)
++    if warned[msg] then return end
++    warned[msg] = true
++    print('^3[qb-policejob] ' .. msg .. '^0')
++end
++local warnOnce = M.warnOnce
++
++local function copy(value)
++    if type(value) ~= 'table' then return value end
++    local out = {}
++    for k, v in pairs(value) do out[k] = copy(v) end
++    return out
++end
++M.copy = copy
++
++local function isComment(key)
++    return type(key) == 'string' and key:sub(1, 1) == '$'
++end
++
++--- Parse 'type:key' into type, key (nil when malformed or an unknown type).
++function M.parseGrant(spec)
++    if type(spec) ~= 'string' then return nil end
++    local grantType, key = spec:match('^([%w_]+):(.+)$')
++    if not grantType or not M.GRANT_TYPES[grantType] or #key > 64 or not key:find(GRANT_KEY) then return nil end
++    return grantType, key
++end
++
++--- Plate as FredPD stores it (docs/contracts.md C4): upper case, no whitespace; nil when unusable.
++function M.normalizePlate(plate)
++    if type(plate) ~= 'string' then return nil end
++    local normalized = plate:upper():gsub('%s+', '')
++    if normalized == '' or #normalized > 16 or not normalized:find('^[%w%-]+$') then return nil end
++    return normalized
++end
++
++--- x, y, z of a vector3/vector4, a { x, y, z } table or a { [1], [2], [3] } array (nil when not all numbers).
++function M.xyz(v)
++    local tv = type(v)
++    if tv ~= 'table' and tv ~= 'userdata' and tv ~= 'vector3' and tv ~= 'vector4' then return nil end
++    local ok, x, y, z = pcall(function() return v.x or v[1], v.y or v[2], v.z or v[3] end)
++    if ok and type(x) == 'number' and type(y) == 'number' and type(z) == 'number'
++        and x == x and y == y and z == z then
++        return x, y, z
++    end
++    return nil
++end
++
++function M.distance(a, b)
++    local ax, ay, az = M.xyz(a)
++    local bx, by, bz = M.xyz(b)
++    if not ax or not bx then return math.huge end
++    return math.sqrt((ax - bx) ^ 2 + (ay - by) ^ 2 + (az - bz) ^ 2)
++end
++
++--- Metres between a player and a point (math.huge when unknown).
++function M.playerDistance(src, point)
++    local ped = GetPlayerPed(src)
++    if not ped or ped == 0 then return math.huge end
++    return M.distance(GetEntityCoords(ped), point)
++end
++
++--- A whole number (integer-valued float accepted) or nil.
++function M.int(value)
++    return math.tointeger(tonumber(value))
++end
++
++---------------------------------------------------------------------------------------------------------------
++-- Configuration
++
++local function mergeActions(cfg, actions)
++    if type(actions) ~= 'table' then return end
++    for action, spec in pairs(actions) do
++        if type(action) == 'string' and not isComment(action) then
++            if spec == 'duty' or M.parseGrant(spec) then
++                cfg.actions[action] = spec
++            else
++                warnOnce('config/police.json: action "%s" has an invalid grant %s; the action is refused',
++                    action, tostring(spec))
++                cfg.actions[action] = nil
++            end
++        end
++    end
++end
++
++--- Merge a decoded config/police.json over the defaults. Unknown or malformed entries are warned about and dropped.
++function M.buildConfig(decoded)
++    local cfg = copy(M.DEFAULTS)
++    if type(decoded) ~= 'table' then return cfg end
++    mergeActions(cfg, decoded.actions)
++    if type(decoded.radar) == 'table' then
++        for _, key in ipairs({ 'cooldownSeconds', 'maxDistance' }) do
++            local v = decoded.radar[key]
++            if type(v) == 'number' and v >= 0 then cfg.radar[key] = v end
++        end
++    end
++    local qb = decoded[M.CONFIG_SECTION]
++    if type(qb) ~= 'table' then return cfg end
++    mergeActions(cfg, qb.actions)
++    if type(qb.garage) == 'table' then
++        local g = qb.garage
++        if type(g.vehicles) == 'table' then
++            cfg.garage.vehicles = {}
++            for model, label in pairs(g.vehicles) do
++                if type(model) == 'string' and not isComment(model) and type(label) == 'string' then
++                    cfg.garage.vehicles[model] = label
++                end
++            end
++        end
++        if type(g.maxDistance) == 'number' and g.maxDistance > 0 then cfg.garage.maxDistance = g.maxDistance end
++    end
++    if type(qb.armories) == 'table' then
++        cfg.armories = {}
++        for id, armory in pairs(qb.armories) do
++            if type(id) == 'string' and not isComment(id) then
++                if id:find(ARMORY_ID) and type(armory) == 'table' and M.xyz(armory.coords)
++                    and type(armory.items) == 'table' then
++                    cfg.armories[id] = copy(armory)
++                else
++                    warnOnce('config/police.json: armory "%s" needs coords [x, y, z] and items; ignored', id)
++                end
++            end
++        end
++    end
++    if type(qb.qbShops) == 'table' then
++        cfg.qbShops = {}
++        for shopType, armoryId in pairs(qb.qbShops) do
++            if type(shopType) == 'string' and not isComment(shopType) and type(armoryId) == 'string' then
++                cfg.qbShops[shopType] = armoryId
++            end
++        end
++    end
++    local maxFine = M.int(qb.maxFine)
++    if maxFine and maxFine >= 1 then cfg.maxFine = maxFine end
++    return cfg
++end
++
++local config = nil
++
++--- The active configuration (loaded once; reloaded after fredpd_core restarts).
++function M.config()
++    if config then return config end
++    local raw = LoadResourceFile(M.CORE, M.CONFIG_FILE)
++    local decoded = nil
++    if type(raw) == 'string' and raw ~= '' then
++        local ok, value = pcall(json.decode, raw)
++        if ok and type(value) == 'table' then
++            decoded = value
++        else
++            warnOnce('%s/%s is not valid JSON; using the built-in defaults', M.CORE, M.CONFIG_FILE)
++        end
++    end
++    config = M.buildConfig(decoded)
++    return config
++end
++
++function M.resetConfig()
++    config = nil
++end
++
++---------------------------------------------------------------------------------------------------------------
++-- fredpd_core bridge
++
++--- true while fredpd_core runs: FredPD decides duty and permissions.
++function M.active()
++    return GetResourceState(M.CORE) == 'started'
++end
++
++--- pcall'd export call (exports raise when the resource stops between the state check and the call).
++function M.callExport(resource, fn, ...)
++    local args = table.pack(...)
++    local ok, result = pcall(function()
++        local res = exports[resource]
++        return res[fn](res, table.unpack(args, 1, args.n))
++    end)
++    if not ok then
++        warnOnce('exports.%s:%s failed: %s', resource, fn, tostring(result))
++        return nil, 'error'
++    end
++    return result
++end
++
++function M.isOnDuty(src)
++    return M.callExport(M.CORE, 'isOnDuty', src) == true
++end
++
++function M.hasGrant(src, grantType, key)
++    return M.callExport(M.CORE, 'hasGrant', src, grantType, key) == true
++end
++
++--- Fire-and-forget fredpd_audit row (docs/contracts.md C9 audit export); nothing while fredpd_core is not started.
++function M.audit(src, action, targetType, targetId, meta)
++    if not M.active() then return end
++    M.callExport(M.CORE, 'audit', src, action, targetType, targetId, meta)
++end
++
++--- Grant needed for an action: { type, key }; false = on duty is enough; nil = not mapped (refused).
++function M.grantFor(action)
++    local spec = M.config().actions[action]
++    if spec == 'duty' then return false end
++    local grantType, key = M.parseGrant(spec)
++    if not grantType then return nil end
++    return { grantType, key }
++end
++
++--- FredPD's answer to "is src an on-duty officer allowed to do <action>?" (action nil = on duty only).
++--- @return boolean|nil allowed nil while fredpd_core is not started: the caller applies qb-policejob's own check
++--- @return string|nil reason 'off_duty' | 'no_grant'
++function M.check(src, action)
++    if not M.active() then return nil end
++    src = tonumber(src)
++    if not src or not M.isOnDuty(src) then return false, 'off_duty' end
++    if action == nil then return true end
++    local grant = M.grantFor(action)
++    if grant == false then return true end
++    if grant == nil then
++        warnOnce('qb-policejob action "%s" has no grant in config/police.json; it is refused', tostring(action))
++        return false, 'no_grant'
++    end
++    if M.hasGrant(src, grant[1], grant[2]) then return true end
++    return false, 'no_grant'
++end
++
++--- The gate every patched handler uses: FredPD's answer while fredpd_core runs, else the upstream condition.
++--- @param upstreamOk boolean what unpatched qb-policejob would have decided at this place
++function M.allowed(src, action, upstreamOk)
++    local ok = M.check(src, action)
++    if ok == nil then return upstreamOk == true end
++    return ok
++end
++
++--- Locale key to show when src was refused <action>.
++function M.deniedKey(src, action)
++    local _, reason = M.check(src, action)
++    return reason == 'no_grant' and 'fredpd.no_permission' or 'error.on_duty_police_only'
++end
++
++function M.notify(src, key, kind, subs)
++    TriggerClientEvent('QBCore:Notify', src, Lang:t(key, subs), kind)
++end
++
++--- Tell src why <action> was refused.
++function M.deny(src, action)
++    M.notify(src, M.deniedKey(src, action), 'error')
++end
++
++--- The qb-core player object (nil when not loaded).
++function M.player(src)
++    local ok, player = pcall(function() return exports['qb-core']:GetPlayer(tonumber(src)) end)
++    if ok and type(player) == 'table' then return player end
++    return nil
++end
++
++--- qb-policejob's usual upstream condition: a 'leo' job on duty.
++function M.leoOnDuty(player)
++    local job = type(player) == 'table' and player.PlayerData and player.PlayerData.job
++    return type(job) == 'table' and job.type == 'leo' and job.onduty == true
++end
++
++function M.isLeo(player)
++    local job = type(player) == 'table' and player.PlayerData and player.PlayerData.job
++    return type(job) == 'table' and job.type == 'leo'
++end
++
++--- Does the built-in evidence of qb-policejob stay on? Off only while fredpd_core runs and reports the FredPD
++--- evidence feature (noobsystems/evidences + fredpd_forensics, which need ox_inventory + ox_target), so on a
++--- qb-inventory server the built-in evidence keeps working. Used by patch 20.
++function M.evidenceReplaced()
++    if not M.active() then return false end
++    return M.callExport(M.CORE, 'hasFeature', 'evidence') == true
++end
++
++---------------------------------------------------------------------------------------------------------------
++-- Rate limit (per player and key, cleared on disconnect)
++
++local lastCall = {}
++
++function M.rateLimit(src, key, ms)
++    src = tonumber(src)
++    if not src then return false end
++    local now = GetGameTimer()
++    local calls = lastCall[src]
++    if not calls then
++        calls = {}
++        lastCall[src] = calls
++    end
++    local last = calls[key]
++    if last and now - last < ms then return false end
++    calls[key] = now
++    return true
++end
++
++function M.forget(src)
++    lastCall[tonumber(src) or src] = nil
++end
++
++--- Sanitised spike strip list of police:server:SyncSpikes (client/objects.lua:213-233, 290-292): entries
++--- { coords, netid, object } with numbers only, at most `max` of them; nil when the list is not acceptable.
++function M.spikeList(list, max)
++    if type(list) ~= 'table' then return nil end
++    local out, n = {}, 0
++    max = M.int(max) or 5
++    for key, spike in pairs(list) do
++        if not M.int(key) or type(spike) ~= 'table' or not M.int(spike.netid) or not M.xyz(spike.coords) then
++            return nil
++        end
++        n = n + 1
++        if n > max then return nil end
++        out[key] = { coords = spike.coords, netid = spike.netid, object = M.int(spike.object) }
++    end
++    return out
++end
++
++---------------------------------------------------------------------------------------------------------------
++-- Extension points for later FredPD patches (patch 30 adds fredpd/server_bolo.lua)
++
++M.impoundHooks = {}
++
++--- A vehicle was impounded by src (after the upstream database update): audit it and run the impound hooks.
++function M.afterImpound(src, plate, fullImpound, price, owned)
++    local normalized = M.normalizePlate(plate)
++    M.audit(src, 'police.impound', 'vehicle', normalized or tostring(plate),
++        { full = fullImpound == true, price = price, owned = owned == true })
++    for _, hook in ipairs(M.impoundHooks) do
++        local ok, err = pcall(hook, src, plate, fullImpound == true)
++        if not ok then warnOnce('impound hook failed: %s', tostring(err)) end
++    end
++end
++
++---------------------------------------------------------------------------------------------------------------
++-- Garage (qb-policejob config.lua AuthorizedVehicles / PoliceHelicopter / Locations)
++
++local function lower(s)
++    return type(s) == 'string' and s:lower() or nil
++end
++
++--- Upstream garage list for a qb grade: AuthorizedVehicles[0..grade] ({ [model] = label }, client/job.lua:207-225).
++function M.upstreamGarage(grade)
++    local out = {}
++    grade = M.int(grade) or 0
++    for g, list in pairs(Config.AuthorizedVehicles or {}) do
++        if type(g) == 'number' and g <= grade and type(list) == 'table' then
++            for model, label in pairs(list) do out[model] = label end
++        end
++    end
++    return out
++end
++
++--- Every model the garage can offer while FredPD runs: config garage.vehicles, else every AuthorizedVehicles grade.
++function M.garageCandidates()
++    local configured = M.config().garage.vehicles
++    if type(configured) == 'table' and next(configured) then return copy(configured) end
++    local out = {}
++    for _, list in pairs(Config.AuthorizedVehicles or {}) do
++        if type(list) == 'table' then
++            for model, label in pairs(list) do out[model] = label end
++        end
++    end
++    return out
++end
++
++--- Garage menu for src ({ [model] = label }). FredPD: candidates src holds vehicle:<model> for, empty off duty.
++--- fredpd_core not started: the upstream list for the qb grade, for an on-duty leo only.
++function M.garageVehicles(src)
++    local player = M.player(src)
++    if not player then return {} end
++    if not M.active() then
++        if not M.leoOnDuty(player) then return {} end
++        local grade = player.PlayerData.job.grade
++        return M.upstreamGarage(type(grade) == 'table' and grade.level or grade)
++    end
++    if not M.isOnDuty(src) then return {} end
++    local out = {}
++    for model, label in pairs(M.garageCandidates()) do
++        if M.hasGrant(src, 'vehicle', lower(model)) then out[model] = label end
++    end
++    return out
++end
++
++--- The configured location of a kind ('vehicle' | 'helicopter' | 'impound') by index; for the helicopter without
++--- an index the location nearest to the officer (upstream client/job.lua:483-489 spawns where the officer stands).
++function M.location(src, kind, index)
++    local list = type(Config.Locations) == 'table' and Config.Locations[kind] or nil
++    if type(list) ~= 'table' then return nil end
++    index = M.int(index)
++    if index then return list[index] end
++    if kind ~= 'helicopter' then return nil end
++    local best, bestDistance = nil, math.huge
++    for _, location in ipairs(list) do
++        local d = M.playerDistance(src, location)
++        if d < bestDistance then best, bestDistance = location, d end
++    end
++    return best
++end
++
++--- A plate the police garage makes: prefix + 4 digits (client/job.lua:180 Lang 'info.police_plate', :493 'ZULU').
++function M.makePlate(prefix)
++    return ('%s%04d'):format(prefix, math.random(1000, 9999))
++end
++
++--- Server decision for callback police:server:fredpdSpawnVehicle (the patched client no longer uses qb-core's
++--- unchecked QBCore:Server:SpawnVehicle for the police garage). The client names only the kind, the model, the
++--- location index and (impound) the plate; coordinates come from config.lua.
++--- @return table|nil spawn { model, coords, plate } or nil, error
++function M.spawnRequest(src, kind, model, index, plate)
++    if type(model) ~= 'string' or model == '' or #model > 64 then return nil, 'invalid' end
++    if not M.rateLimit(src, 'garage.spawn', 2000) then return nil, 'rate_limited' end
++    local player = M.player(src)
++    if not player then return nil, 'invalid' end
++    local locationKind = ({ garage = 'vehicle', helicopter = 'helicopter', impound = 'impound' })[kind]
++    if not locationKind then return nil, 'invalid' end
++    local coords = M.location(src, locationKind, index)
++    if not coords then return nil, 'invalid' end
++    if M.playerDistance(src, coords) > M.config().garage.maxDistance then return nil, 'too_far' end
++    local fredpd = M.active()
++    if kind == 'garage' then
++        if fredpd then
++            if not M.isOnDuty(src) then return nil, 'off_duty' end
++            if not M.garageCandidates()[model] or not M.hasGrant(src, 'vehicle', lower(model)) then
++                return nil, 'no_grant'
++            end
++        elseif not M.garageVehicles(src)[model] then
++            return nil, M.leoOnDuty(player) and 'no_grant' or 'off_duty'
++        end
++        return { model = model, coords = coords, plate = M.makePlate(Lang:t('info.police_plate')) }
++    elseif kind == 'helicopter' then
++        if lower(model) ~= lower(Config.PoliceHelicopter) then return nil, 'invalid' end
++        if fredpd then
++            if not M.isOnDuty(src) then return nil, 'off_duty' end
++            if not M.hasGrant(src, 'vehicle', lower(model)) then return nil, 'no_grant' end
++        elseif not M.leoOnDuty(player) then
++            return nil, 'off_duty'
++        end
++        return { model = model, coords = coords, plate = M.makePlate('ZULU') }
++    end
++    -- impound take-out: the vehicle row must be impounded (state 2) with this plate and model
++    if not M.allowed(src, 'impound', M.leoOnDuty(player)) then return nil, fredpd and 'no_grant' or 'off_duty' end
++    if type(plate) ~= 'string' or plate == '' or #plate > 16 then return nil, 'invalid' end
++    local stored = MySQL.scalar.await('SELECT vehicle FROM player_vehicles WHERE plate = ? AND state = 2 LIMIT 1',
++        { plate })
++    if stored ~= model then return nil, 'invalid' end
++    return { model = model, coords = coords, plate = plate }
++end
++
++--- Spawn the vehicle of an accepted request (qb-core QBCore.Functions.SpawnVehicle, server/functions.lua:331-356).
++--- @return number|nil netId, string|nil plate
++function M.spawnVehicle(src, kind, model, index, plate)
++    local spawn, err = M.spawnRequest(src, kind, model, index, plate)
++    if not spawn then
++        if err == 'no_grant' then
++            M.notify(src, 'fredpd.no_permission', 'error')
++        elseif err == 'off_duty' then
++            M.notify(src, 'error.on_duty_police_only', 'error')
++        end
++        return nil
++    end
++    local veh = QBCore.Functions.SpawnVehicle(src, spawn.model, spawn.coords, true)
++    if not veh or veh == 0 or not DoesEntityExist(veh) then return nil end
++    SetVehicleNumberPlateText(veh, spawn.plate)
++    return NetworkGetNetworkIdFromEntity(veh), spawn.plate
++end
++
++---------------------------------------------------------------------------------------------------------------
++-- Armory (FredPD armories from config/police.json; qb-inventory shops listed in qbShops are hooked)
++
++local sharedItems = nil
++
++--- qb-core shared item (cached; qb-core GetShared, server/functions.lua). nil when unknown.
++function M.item(name)
++    if type(name) ~= 'string' then return nil end
++    if not sharedItems then
++        local ok, items = pcall(function() return exports['qb-core']:GetShared('Items') end)
++        sharedItems = ok and type(items) == 'table' and items or nil
++        if not sharedItems then return nil end
++    end
++    local item = sharedItems[name:lower()]
++    return type(item) == 'table' and item or nil
++end
++
++function M.resetItems()
++    sharedItems = nil
++end
++
++--- May src take this item? Weapons need weapon:<item name>, everything else armory:<item name> (lower case).
++function M.itemAllowed(src, name)
++    if type(name) ~= 'string' then return false end
++    local key = name:lower()
++    if key:sub(1, 7) == 'weapon_' then return M.hasGrant(src, 'weapon', key) end
++    return M.hasGrant(src, 'armory', key)
++end
++
++--- Armory positions for the client zones: { { id, label, coords = { x, y, z }, radius } } (empty while inactive).
++function M.armoryPoints()
++    local out = {}
++    if not M.active() then return out end
++    for id, armory in pairs(M.config().armories) do
++        local x, y, z = M.xyz(armory.coords)
++        out[#out + 1] = { id = id, coords = { x = x, y = y, z = z }, radius = tonumber(armory.radius) or 1.5 }
++    end
++    table.sort(out, function(a, b) return a.id < b.id end)
++    return out
++end
++
++--- Common checks for opening and taking: armory exists, fredpd_core runs, on duty, armory grant, in reach.
++--- @return table|nil armory, string|nil error 'unavailable' | 'off_duty' | 'no_grant' | 'too_far'
++local function armoryFor(src, id)
++    if not M.active() then return nil, 'unavailable' end
++    local armory = type(id) == 'string' and M.config().armories[id] or nil
++    if not armory then return nil, 'unavailable' end
++    if not M.isOnDuty(src) then return nil, 'off_duty' end
++    if not M.hasGrant(src, 'armory', id) then return nil, 'no_grant' end
++    if M.playerDistance(src, armory.coords) > (tonumber(armory.radius) or 1.5) + 3.0 then return nil, 'too_far' end
++    return armory
++end
++
++--- Callback police:server:fredpdArmory: { id, label, items = { { name, label, count } } } or nil, error.
++--- Only the items src holds a grant for are sent.
++function M.openArmory(src, id)
++    if not M.rateLimit(src, 'armory.open', 500) then return nil, 'rate_limited' end
++    local armory, err = armoryFor(src, id)
++    if not armory then return nil, err end
++    local items = {}
++    for _, entry in ipairs(armory.items) do
++        if type(entry) == 'table' and M.itemAllowed(src, entry.name) then
++            local item = M.item(entry.name)
++            if item then
++                items[#items + 1] = { name = item.name, label = item.label or item.name,
++                    count = M.int(entry.count) or 1 }
++            else
++                warnOnce('armory "%s": qb-core has no item "%s"', id, tostring(entry.name))
++            end
++        end
++    end
++    return { id = id, label = armory.label or id, items = items }
++end
++
++--- Callback police:server:fredpdArmoryTake: hands out one configured amount of an item after checking everything
++--- again (the client may send any item name) and the item's `max` (what the officer already carries).
++--- true or nil, error. Items are signed out, not bought; every take is audited.
++function M.takeFromArmory(src, id, name)
++    if not M.rateLimit(src, 'armory.take', 1000) then return nil, 'rate_limited' end
++    local armory, err = armoryFor(src, id)
++    if not armory then return nil, err end
++    local entry = nil
++    for _, item in ipairs(armory.items) do
++        if type(item) == 'table' and type(name) == 'string' and type(item.name) == 'string'
++            and item.name:lower() == name:lower() then
++            entry = item
++            break
++        end
++    end
++    if not entry then return nil, 'unavailable' end
++    if not M.itemAllowed(src, entry.name) then return nil, 'no_grant' end
++    local item = M.item(entry.name)
++    if not item then return nil, 'unavailable' end
++    local count = M.int(entry.count) or 1
++    if count < 1 then return nil, 'unavailable' end
++    local inv = exports[M.INVENTORY]
++    local max = M.int(entry.max)
++    if max and (inv:GetItemCount(src, item.name) or 0) >= max then return nil, 'limit' end
++    if not inv:CanAddItem(src, item.name, count) then return nil, 'full' end
++    local info = type(entry.info) == 'table' and copy(entry.info) or {}
++    if not inv:AddItem(src, item.name, count, false, info, 'qb-policejob:fredpd-armory') then return nil, 'failed' end
++    TriggerClientEvent('qb-inventory:client:ItemBox', src, item, 'add')
++    M.audit(src, 'police.armory', 'item', item.name:lower(), { armory = id, count = count })
++    return true
++end
++
++--- qb-inventory ShopOpened / ItemBought hook (qb-inventory server/functions.lua:611-612, server/main.lua:456-457:
++--- fn(shopType, payload)) for the shop types in qbShops. Returns false to refuse; nil = no opinion (always nil while
++--- fredpd_core is not started, so the shop keeps its upstream rules).
++function M.shopHook(shopType, payload)
++    if not M.active() or type(payload) ~= 'table' then return nil end
++    local armoryId = M.config().qbShops[shopType]
++    if not armoryId then return nil end
++    local src = tonumber(payload.source or payload.toId)
++    if not src then return false end
++    local itemName = type(payload.item) == 'table' and payload.item.name or nil
++    local allowed = M.isOnDuty(src) and M.hasGrant(src, 'armory', armoryId)
++        and (itemName == nil or M.itemAllowed(src, itemName))
++    if allowed then return nil end
++    M.notify(src, 'fredpd.no_permission', 'error')
++    return false
++end
++
++local hookIds = nil
++
++--- Register the qb-inventory hooks (once per qb-inventory start; qb-inventory drops a stopped resource's hooks,
++--- server/main.lua:147-166). Needs a non-empty qbShops.
++function M.registerInventoryHooks()
++    if hookIds or GetResourceState(M.INVENTORY) ~= 'started' then return false end
++    if not next(M.config().qbShops) then return false end
++    local ok, err = pcall(function()
++        local inv = exports[M.INVENTORY]
++        hookIds = {
++            ShopOpened = inv:AddHook('ShopOpened', M.shopHook),
++            ItemBought = inv:AddHook('ItemBought', M.shopHook),
++        }
++    end)
++    if not ok then
++        hookIds = nil
++        warnOnce('could not register the qb-inventory armory hooks: %s', tostring(err))
++        return false
++    end
++    return true
++end
++
++---------------------------------------------------------------------------------------------------------------
++-- Wiring (runs once when fxmanifest loads this file, after server/main.lua has set the global QBCore)
++
++function M.register()
++    QBCore.Functions.CreateCallback('police:server:fredpdGarageVehicles', function(source, cb)
++        local src = source
++        if not M.rateLimit(src, 'garage.list', 500) then return cb({}) end
++        cb(M.garageVehicles(src))
++    end)
++    QBCore.Functions.CreateCallback('police:server:fredpdSpawnVehicle', function(source, cb, kind, model, index, plate)
++        local src = source
++        cb(M.spawnVehicle(src, kind, model, index, plate))
++    end)
++    QBCore.Functions.CreateCallback('police:server:fredpdArmories', function(_, cb)
++        cb(M.armoryPoints())
++    end)
++    QBCore.Functions.CreateCallback('police:server:fredpdArmory', function(source, cb, id)
++        local src = source
++        cb(M.openArmory(src, id))
++    end)
++    QBCore.Functions.CreateCallback('police:server:fredpdArmoryTake', function(source, cb, id, name)
++        local src = source
++        cb(M.takeFromArmory(src, id, name))
++    end)
++
++    AddEventHandler('onServerResourceStart', function(resource)
++        if resource == M.CORE then
++            M.resetConfig()
++            M.registerInventoryHooks()
++            TriggerClientEvent('police:client:fredpdArmories', -1)
++        elseif resource == M.INVENTORY then
++            hookIds = nil
++            M.registerInventoryHooks()
++        elseif resource == 'qb-core' then
++            M.resetItems()
++        end
++    end)
++    AddEventHandler('onServerResourceStop', function(resource)
++        if resource == M.CORE then TriggerClientEvent('police:client:fredpdArmories', -1) end
++    end)
++    AddEventHandler('playerDropped', function()
++        M.forget(source)
++    end)
++    M.registerInventoryHooks()
++end
++
++FredPD = M
++M.register()
+diff --git a/fxmanifest.lua b/fxmanifest.lua
+index f52600f..3dd807a 100644
+--- a/fxmanifest.lua
++++ b/fxmanifest.lua
+@@ -24,12 +24,15 @@ client_scripts {
+ 	'client/anpr.lua',
+ 	'client/evidence.lua',
+ 	'client/objects.lua',
+-	'client/tracker.lua'
++	'client/tracker.lua',
++	'fredpd/client.lua', -- FredPD armory (patches/qb-policejob.10-grants.patch)
+ }
+ 
+ server_scripts {
+ 	'@oxmysql/lib/MySQL.lua',
+ 	'server/main.lua',
++	'fredpd/server.lua', -- FredPD grants bridge (global FredPD); after main.lua, which sets QBCore
++	'fredpd/server_*.lua', -- later FredPD patches (30: server_bolo.lua); never before fredpd/server.lua
+ 	'server/commands.lua',
+ 	'server/interactions.lua',
+ 	'server/evidence.lua',
+diff --git a/locales/en.lua b/locales/en.lua
+index 6147dac..a9fe612 100644
+--- a/locales/en.lua
++++ b/locales/en.lua
+@@ -196,7 +196,24 @@ local Translations = {
+         open_fingerprint = 'Open Fingerprint',
+         open_armory = 'Open Armory',
+         open_evidence_stash = 'Open Evidence Stash',
+-    }
++    },
++    -- FredPD (patches/qb-policejob.10-grants.patch); Swedish in locales/sv.lua (patch 40)
++    fredpd = {
++        no_permission = 'You are not authorised to do that',
++        try_again = 'Wait a moment and try again',
++        amount_too_high = 'The amount can be at most %{max}',
++        garage_empty = 'There are no vehicles you are authorised to take out',
++        armory_title = 'Armoury – %{armory}',
++        armory_count = 'Quantity: %{count}',
++        armory_taken = 'You signed out %{count} × %{item}',
++        armory_empty = 'There is nothing here you are authorised to sign out',
++        armory_too_far = 'You are too far from the armoury',
++        armory_full = 'You cannot carry that',
++        armory_limit = 'You already carry the most you may sign out',
++        armory_unavailable = 'The armoury is not available',
++        armory_failed = 'The item could not be handed out',
++        bolo_radar = 'Wanted vehicle %{plate} passed %{street} (ANPR camera %{radar})',
++    },
+ }
+ 
+ Lang = Lang or Locale:new({
+diff --git a/server/commands.lua b/server/commands.lua
+index 43ed921..9ea70d9 100644
+--- a/server/commands.lua
++++ b/server/commands.lua
+@@ -12,7 +12,8 @@ end
+ QBCore.Commands.Add('grantlicense', Lang:t('commands.license_grant'), { { name = 'id', help = Lang:t('info.player_id') }, { name = 'license', help = Lang:t('info.license_type') } }, true, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.grade.level >= Config.LicenseRank then
++    -- FredPD: perm:police.license while fredpd_core runs (upstream: grade >= Config.LicenseRank)
++    if FredPD.allowed(src, 'license', FredPD.isLeo(Player) and Player.PlayerData.job.grade.level >= Config.LicenseRank) then
+         if args[2] == 'driver' or args[2] == 'weapon' then
+             local SearchedPlayer = exports['qb-core']:GetPlayer(tonumber(args[1]))
+             if not SearchedPlayer then return end
+@@ -29,14 +30,14 @@ QBCore.Commands.Add('grantlicense', Lang:t('commands.license_grant'), { { name =
+             TriggerClientEvent('QBCore:Notify', src, Lang:t('error.error_license_type'), 'error')
+         end
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.rank_license'), 'error')
++        TriggerClientEvent('QBCore:Notify', src, Lang:t(FredPD.active() and FredPD.deniedKey(src, 'license') or 'error.rank_license'), 'error')
+     end
+ end)
+ 
+ QBCore.Commands.Add('revokelicense', Lang:t('commands.license_revoke'), { { name = 'id', help = Lang:t('info.player_id') }, { name = 'license', help = Lang:t('info.license_type') } }, true, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.grade.level >= Config.LicenseRank then
++    if FredPD.allowed(src, 'license', FredPD.isLeo(Player) and Player.PlayerData.job.grade.level >= Config.LicenseRank) then
+         if args[2] == 'driver' or args[2] == 'weapon' then
+             local SearchedPlayer = exports['qb-core']:GetPlayer(tonumber(args[1]))
+             if not SearchedPlayer then return end
+@@ -53,17 +54,17 @@ QBCore.Commands.Add('revokelicense', Lang:t('commands.license_revoke'), { { name
+             TriggerClientEvent('QBCore:Notify', src, Lang:t('error.error_license'), 'error')
+         end
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.rank_revoke'), 'error')
++        TriggerClientEvent('QBCore:Notify', src, Lang:t(FredPD.active() and FredPD.deniedKey(src, 'license') or 'error.rank_revoke'), 'error')
+     end
+ end)
+ 
+ QBCore.Commands.Add('takedrivinglicense', Lang:t('commands.drivinglicense'), {}, false, function(source)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'seizelicense', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('police:client:SeizeDriverLicense', source)
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'seizelicense')
+     end
+ end)
+ 
+@@ -72,8 +73,10 @@ end)
+ QBCore.Commands.Add('spikestrip', Lang:t('commands.place_spike'), {}, false, function(source)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'spikestrip', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('police:client:SpawnSpikeStrip', src)
++    else
++        FredPD.deny(src, 'spikestrip')
+     end
+ end)
+ 
+@@ -81,7 +84,7 @@ QBCore.Commands.Add('pobject', Lang:t('commands.place_object'), { { name = 'type
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+     local type = args[1]:lower()
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'object', FredPD.leoOnDuty(Player)) then
+         if type == 'cone' then
+             TriggerClientEvent('police:client:spawnCone', src)
+         elseif type == 'barrier' then
+@@ -96,7 +99,7 @@ QBCore.Commands.Add('pobject', Lang:t('commands.place_object'), { { name = 'type
+             TriggerClientEvent('police:client:deleteObject', src)
+         end
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'object')
+     end
+ end)
+ 
+@@ -105,10 +108,10 @@ end)
+ QBCore.Commands.Add('cuff', Lang:t('commands.cuff_player'), {}, false, function(source)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'cuff', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('police:client:CuffPlayer', src)
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'cuff')
+     end
+ end)
+ 
+@@ -126,51 +129,63 @@ end)
+ QBCore.Commands.Add('jail', Lang:t('commands.jail_player'), {}, false, function(source)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'jail', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('police:client:JailPlayer', src)
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'jail')
+     end
+ end)
+ 
+ QBCore.Commands.Add('unjail', Lang:t('commands.unjail_player'), { { name = 'id', help = Lang:t('info.player_id') } }, true, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'jail', FredPD.leoOnDuty(Player)) then
+         local targetId = tonumber(args[1])
++        if not targetId or not exports['qb-core']:GetPlayer(targetId) then return end -- FredPD: -1 would free everyone
+         TriggerClientEvent('prison:client:UnjailPerson', targetId)
++        FredPD.audit(src, 'police.unjail', 'player', exports['qb-core']:GetPlayer(targetId).PlayerData.citizenid, {})
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'jail')
+     end
+ end)
+ 
+ QBCore.Commands.Add('seizecash', Lang:t('commands.seizecash'), {}, false, function(source)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'seizecash', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('police:client:SeizeCash', src)
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'seizecash')
+     end
+ end)
+ 
+ QBCore.Commands.Add('sc', Lang:t('commands.softcuff'), {}, false, function(source)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'cuff', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('police:client:CuffPlayerSoft', src)
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'cuff')
+     end
+ end)
+ 
+ QBCore.Commands.Add('fine', Lang:t('commands.fine'), { { name = 'id', help = Lang:t('info.player_id') }, { name = 'amount', help = Lang:t('info.amount') } }, false, function(source, args)
++    local src = source
+     local biller = exports['qb-core']:GetPlayer(source)
+     local billed = exports['qb-core']:GetPlayer(tonumber(args[1]))
+-    local amount = tonumber(args[2])
++    local amount = FredPD.int(args[2]) -- FredPD: whole kronor only (upstream crashed on a missing amount)
+ 
+-    if biller.PlayerData.job.type ~= 'leo' then
+-        TriggerClientEvent('QBCore:Notify', source, Lang:t('error.on_duty_police_only'), 'error')
++    -- FredPD: perm:charges.fine while fredpd_core runs (upstream: any leo, on duty or not)
++    if not biller or not FredPD.allowed(src, 'fine', FredPD.isLeo(biller)) then
++        FredPD.deny(src, 'fine')
++        return
++    end
++    if not FredPD.rateLimit(src, 'fine', 2000) then
++        FredPD.notify(src, 'fredpd.try_again', 'error')
++        return
++    end
++    if amount and amount > FredPD.config().maxFine then
++        FredPD.notify(src, 'fredpd.amount_too_high', 'error', { max = FredPD.config().maxFine })
+         return
+     end
+ 
+@@ -184,10 +199,11 @@ QBCore.Commands.Add('fine', Lang:t('commands.fine'), { { name = 'id', help = Lan
+         return
+     end
+ 
+-    if amount <= 0 then
++    if not amount or amount <= 0 then
+         TriggerClientEvent('QBCore:Notify', source, Lang:t('error.amount_higher'), 'error')
+         return
+     end
++    FredPD.audit(src, 'police.fine', 'player', billed.PlayerData.citizenid, { amount = amount })
+ 
+     if billed.Functions.RemoveMoney('bank', amount, 'paid-fine') then
+         TriggerClientEvent('QBCore:Notify', source, Lang:t('info.fine_issued'), 'success')
+@@ -250,17 +266,17 @@ end)
+ QBCore.Commands.Add('anklet', Lang:t('commands.anklet'), {}, false, function(source)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'anklet', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('police:client:CheckDistance', src)
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'anklet')
+     end
+ end)
+ 
+ QBCore.Commands.Add('ankletlocation', Lang:t('commands.ankletlocation'), { { name = 'cid', help = Lang:t('info.citizen_id') } }, true, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'anklet', FredPD.leoOnDuty(Player)) then
+         local citizenid = args[1]
+         local Target = QBCore.Functions.GetPlayerByCitizenId(citizenid)
+         if not Target then return end
+@@ -270,7 +286,7 @@ QBCore.Commands.Add('ankletlocation', Lang:t('commands.ankletlocation'), { { nam
+             TriggerClientEvent('QBCore:Notify', src, Lang:t('error.no_anklet'), 'error')
+         end
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'anklet')
+     end
+ end)
+ 
+@@ -279,20 +295,20 @@ end)
+ QBCore.Commands.Add('depot', Lang:t('commands.depot'), { { name = 'price', help = Lang:t('info.impound_price') } }, false, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'impound', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('police:client:ImpoundVehicle', src, false, tonumber(args[1]))
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'impound')
+     end
+ end)
+ 
+ QBCore.Commands.Add('impound', Lang:t('commands.impound'), {}, false, function(source)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'impound', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('police:client:ImpoundVehicle', src, true)
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'impound')
+     end
+ end)
+ 
+@@ -301,17 +317,19 @@ end)
+ QBCore.Commands.Add('cam', Lang:t('commands.camera'), { { name = 'camid', help = Lang:t('info.camera_id') } }, false, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'camera', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('police:client:ActiveCamera', src, tonumber(args[1]))
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'camera')
+     end
+ end)
+ 
+ QBCore.Commands.Add('paytow', Lang:t('commands.paytow'), { { name = 'id', help = Lang:t('info.player_id') } }, true, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'paytow', FredPD.leoOnDuty(Player)) then
++        -- FredPD: one payment per 2 s (the money comes from nowhere)
++        if not FredPD.rateLimit(src, 'paytow', 2000) then return FredPD.notify(src, 'fredpd.try_again', 'error') end
+         local playerId = tonumber(args[1])
+         local OtherPlayer = exports['qb-core']:GetPlayer(playerId)
+         if OtherPlayer then
+@@ -324,14 +342,17 @@ QBCore.Commands.Add('paytow', Lang:t('commands.paytow'), { { name = 'id', help =
+             end
+         end
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'paytow')
+     end
+ end)
+ 
+ QBCore.Commands.Add('paylawyer', Lang:t('commands.paylawyer'), { { name = 'id', help = Lang:t('info.player_id') } }, true, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' or Player.PlayerData.job.name == 'judge' then
++    -- FredPD: a police officer needs FredPD duty + the paylawyer grant while fredpd_core runs; the judge job keeps
++    -- its upstream right in both modes
++    if Player.PlayerData.job.name == 'judge' or FredPD.allowed(src, 'paylawyer', FredPD.isLeo(Player)) then
++        if not FredPD.rateLimit(src, 'paylawyer', 2000) then return FredPD.notify(src, 'fredpd.try_again', 'error') end
+         local playerId = tonumber(args[1])
+         local OtherPlayer = exports['qb-core']:GetPlayer(playerId)
+         if not OtherPlayer then return end
+@@ -343,7 +364,7 @@ QBCore.Commands.Add('paylawyer', Lang:t('commands.paylawyer'), { { name = 'id',
+             TriggerClientEvent('QBCore:Notify', src, Lang:t('error.not_lawyer'), 'error')
+         end
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'paylawyer')
+     end
+ end)
+ 
+diff --git a/server/interactions.lua b/server/interactions.lua
+index cd50cb0..cd77527 100644
+--- a/server/interactions.lua
++++ b/server/interactions.lua
+@@ -5,7 +5,7 @@ RegisterNetEvent('police:server:SearchPlayer', function()
+     local Player = exports['qb-core']:GetPlayer(src)
+     if not Player then return end
+     local PlayerData = Player.PlayerData
+-    if PlayerData.job.type ~= 'leo' then return end
++    if not FredPD.allowed(src, 'search', PlayerData.job.type == 'leo') then return FredPD.deny(src, 'search') end
+     local player, distance = QBCore.Functions.GetClosestPlayer(src)
+     if player ~= -1 and distance < 2.5 then
+         local SearchedPlayer = exports['qb-core']:GetPlayer(tonumber(player))
+@@ -28,7 +28,8 @@ RegisterNetEvent('police:server:CuffPlayer', function(playerId, isSoftcuff)
+ 
+     local Player = exports['qb-core']:GetPlayer(src)
+     local CuffedPlayer = exports['qb-core']:GetPlayer(playerId)
+-    if not Player or not CuffedPlayer or (not Player.GetItemByName('handcuffs') and Player.PlayerData.job.type ~= 'leo') then return end
++    -- FredPD: the leo bypass of the handcuffs item needs FredPD duty while fredpd_core runs
++    if not Player or not CuffedPlayer or (not Player.GetItemByName('handcuffs') and not FredPD.allowed(src, 'cuff', Player.PlayerData.job.type == 'leo')) then return end
+ 
+     TriggerClientEvent('police:client:GetCuffed', CuffedPlayer.PlayerData.source, Player.PlayerData.source, isSoftcuff)
+ end)
+@@ -45,7 +46,7 @@ RegisterNetEvent('police:server:EscortPlayer', function(playerId)
+     local EscortPlayer = exports['qb-core']:GetPlayer(playerId)
+     if not Player or not EscortPlayer then return end
+ 
+-    if (Player.PlayerData.job.type == 'leo' or Player.PlayerData.job.name == 'ambulance') or (EscortPlayer.PlayerData.metadata['ishandcuffed'] or EscortPlayer.PlayerData.metadata['isdead'] or EscortPlayer.PlayerData.metadata['inlaststand']) then
++    if (FredPD.allowed(src, 'cuff', Player.PlayerData.job.type == 'leo') or Player.PlayerData.job.name == 'ambulance') or (EscortPlayer.PlayerData.metadata['ishandcuffed'] or EscortPlayer.PlayerData.metadata['isdead'] or EscortPlayer.PlayerData.metadata['inlaststand']) then
+         TriggerClientEvent('police:client:GetEscorted', EscortPlayer.PlayerData.source, Player.PlayerData.source)
+     else
+         TriggerClientEvent('QBCore:Notify', src, Lang:t('error.not_cuffed_dead'), 'error')
+@@ -118,7 +119,14 @@ RegisterNetEvent('police:server:BillPlayer', function(playerId, price)
+ 
+     local Player = exports['qb-core']:GetPlayer(src)
+     local OtherPlayer = exports['qb-core']:GetPlayer(playerId)
+-    if not Player or not OtherPlayer or Player.PlayerData.job.type ~= 'leo' then return end
++    if not Player or not OtherPlayer then return end
++    -- FredPD: perm:charges.fine while fredpd_core runs (upstream: any leo); a whole amount 1..maxFine (upstream took
++    -- any number, a negative bill paid the target); one bill per 2 s
++    if not FredPD.allowed(src, 'bill', Player.PlayerData.job.type == 'leo') then return FredPD.deny(src, 'bill') end
++    price = FredPD.int(price)
++    if not price or price < 1 or price > FredPD.config().maxFine then return end
++    if not FredPD.rateLimit(src, 'bill', 2000) then return end
++    FredPD.audit(src, 'police.fine', 'player', OtherPlayer.PlayerData.citizenid, { amount = price, via = 'bill' })
+ 
+     OtherPlayer.Functions.RemoveMoney('bank', price, 'paid-bills')
+     exports['qb-banking']:AddMoney('police', price, 'Fine paid')
+@@ -135,7 +143,13 @@ RegisterNetEvent('police:server:JailPlayer', function(playerId, time)
+ 
+     local Player = exports['qb-core']:GetPlayer(src)
+     local OtherPlayer = exports['qb-core']:GetPlayer(playerId)
+-    if not Player or not OtherPlayer or Player.PlayerData.job.type ~= 'leo' then return end
++    if not Player or not OtherPlayer then return end
++    -- FredPD: perm:police.jail while fredpd_core runs (upstream: any leo); whole months >= 1; one per 2 s
++    if not FredPD.allowed(src, 'jail', Player.PlayerData.job.type == 'leo') then return FredPD.deny(src, 'jail') end
++    time = FredPD.int(time)
++    if not time or time < 1 then return end
++    if not FredPD.rateLimit(src, 'jail', 2000) then return end
++    FredPD.audit(src, 'police.jail', 'player', OtherPlayer.PlayerData.citizenid, { minutes = time })
+ 
+     local currentDate = os.date('*t')
+     if currentDate.day == 31 then
+@@ -161,7 +175,9 @@ RegisterNetEvent('police:server:SeizeCash', function(playerId)
+     local Player = exports['qb-core']:GetPlayer(src)
+     local SearchedPlayer = exports['qb-core']:GetPlayer(playerId)
+     if not Player or not SearchedPlayer then return end
+-    if Player.PlayerData.job.type ~= 'leo' then return end
++    -- FredPD: on duty (FredPD duty while fredpd_core runs; upstream: any leo, on duty or not); one per s
++    if not FredPD.allowed(src, 'seizecash', FredPD.leoOnDuty(Player)) then return FredPD.deny(src, 'seizecash') end
++    if not FredPD.rateLimit(src, 'seizecash', 1000) then return end
+     local moneyAmount = SearchedPlayer.PlayerData.money['cash']
+     local info = { cash = moneyAmount }
+     SearchedPlayer.Functions.RemoveMoney('cash', moneyAmount, 'police-cash-seized')
+@@ -179,7 +195,10 @@ RegisterNetEvent('police:server:SeizeDriverLicense', function(playerId)
+     if #(playerCoords - targetCoords) > 2.5 then return DropPlayer(src, 'Attempted exploit abuse') end
+ 
+     local SearchedPlayer = exports['qb-core']:GetPlayer(playerId)
+-    if not exports['qb-core']:GetPlayer(src) or not SearchedPlayer then return end
++    local Officer = exports['qb-core']:GetPlayer(src)
++    if not Officer or not SearchedPlayer then return end
++    -- FredPD: only an on-duty officer (upstream: anyone) may take a driving licence
++    if not FredPD.allowed(src, 'seizelicense', FredPD.leoOnDuty(Officer)) then return FredPD.deny(src, 'seizelicense') end
+ 
+     local driverLicense = SearchedPlayer.PlayerData.metadata['licences']['driver']
+     if driverLicense then
+diff --git a/server/main.lua b/server/main.lua
+index 82c49b7..0cb0440 100644
+--- a/server/main.lua
++++ b/server/main.lua
+@@ -8,8 +8,7 @@ local updatingCops = false
+ local function UpdateBlips()
+     local dutyPlayers = {}
+     local players = QBCore.Functions.GetQBPlayers()
+-    for i = 1, #players do
+-        local v = players[i]
++    for _, v in pairs(players) do -- FredPD: the players map is keyed by source ('#' missed most of them)
+         if v and (v.PlayerData.job.type == 'leo' or v.PlayerData.job.type == 'ems') and v.PlayerData.job.onduty then
+             local coords = GetEntityCoords(GetPlayerPed(v.PlayerData.source))
+             local heading = GetEntityHeading(GetPlayerPed(v.PlayerData.source))
+@@ -205,7 +204,11 @@ RegisterNetEvent('police:server:SetTracker', function(targetId)
+     if #(playerCoords - targetCoords) > 2.5 then return DropPlayer(src, 'Attempted exploit abuse') end
+ 
+     local Target = exports['qb-core']:GetPlayer(targetId)
+-    if not exports['qb-core']:GetPlayer(src) or not Target then return end
++    local Officer = exports['qb-core']:GetPlayer(src)
++    if not Officer or not Target then return end
++    -- FredPD: only an on-duty officer (upstream: anyone) may put on or take off an anklet
++    if not FredPD.allowed(src, 'tracker', FredPD.leoOnDuty(Officer)) then return FredPD.deny(src, 'tracker') end
++    if not FredPD.rateLimit(src, 'tracker', 1000) then return end
+ 
+     local TrackerMeta = Target.PlayerData.metadata['tracker']
+     if TrackerMeta then
+diff --git a/server/objects.lua b/server/objects.lua
+index ea3f8f2..867cd96 100644
+--- a/server/objects.lua
++++ b/server/objects.lua
+@@ -13,17 +13,33 @@ local function CreateObjectId()
+     end
+ end
+ 
++-- FredPD: the three events below had no check at all (any client could place, remove and sync anything). Now an
++-- on-duty officer only (FredPD duty while fredpd_core runs), a known object type / id, one call per 500 ms.
++local function officerMay(src, action)
++    if not FredPD.allowed(src, action, FredPD.leoOnDuty(FredPD.player(src))) then return false end
++    return FredPD.rateLimit(src, 'objects', 500)
++end
++
+ RegisterNetEvent('police:server:spawnObject', function(type)
+     local src = source
++    if not Config.Objects[type] then return end -- (the parameter `type` hides Lua's type())
++    if not officerMay(src, 'object') then return end
+     local objectId = CreateObjectId()
+     Objects[objectId] = type
+     TriggerClientEvent('police:client:spawnObject', src, objectId, type, src)
+ end)
+ 
+ RegisterNetEvent('police:server:deleteObject', function(objectId)
++    local src = source
++    if not Objects[objectId] or not officerMay(src, 'object') then return end
++    Objects[objectId] = nil
+     TriggerClientEvent('police:client:removeObject', -1, objectId)
+ end)
+ 
+ RegisterNetEvent('police:server:SyncSpikes', function(table)
+-    TriggerClientEvent('police:client:SyncSpikes', -1, table)
++    local src = source
++    if not officerMay(src, 'spikestrip') then return end
++    local spikes = FredPD.spikeList(table, Config.MaxSpikes)
++    if not spikes then return end
++    TriggerClientEvent('police:client:SyncSpikes', -1, spikes)
+ end)
+diff --git a/server/vehicle.lua b/server/vehicle.lua
+index 1d08e65..4e9ef05 100644
+--- a/server/vehicle.lua
++++ b/server/vehicle.lua
+@@ -7,7 +7,9 @@ end
+ 
+ -- Callbacks
+ 
+-QBCore.Functions.CreateCallback('police:GetImpoundedVehicles', function(_, cb)
++QBCore.Functions.CreateCallback('police:GetImpoundedVehicles', function(source, cb)
++    -- FredPD: impound grant while fredpd_core runs, else an on-duty leo (upstream: every client got every row)
++    if not FredPD.allowed(source, 'impound', FredPD.leoOnDuty(FredPD.player(source))) then return cb({}) end
+     local vehicles = {}
+     MySQL.query('SELECT * FROM player_vehicles WHERE state = ?', { 2 }, function(result)
+         if result[1] then
+@@ -36,8 +38,14 @@ end)
+ 
+ RegisterNetEvent('police:server:Impound', function(plate, fullImpound, price, body, engine, fuel)
+     local src = source
+-    price = price and price or 0
+-    if IsVehicleOwned(plate) then
++    -- FredPD: perm:police.impound while fredpd_core runs, else an on-duty leo (upstream: no check at all); a whole
++    -- price >= 0; one impound per second; audit + impound hooks (fredpd/server.lua afterImpound) afterwards
++    if not FredPD.allowed(src, 'impound', FredPD.leoOnDuty(FredPD.player(src))) then return FredPD.deny(src, 'impound') end
++    if type(plate) ~= 'string' or plate == '' or #plate > 16 or not FredPD.rateLimit(src, 'impound', 1000) then return end
++    price = price and FredPD.int(price) or 0
++    if not price or price < 0 then return end
++    local owned = IsVehicleOwned(plate) ~= nil
++    if owned then
+         if not fullImpound then
+             MySQL.query('UPDATE player_vehicles SET state = ?, depotprice = ?, body = ?, engine = ?, fuel = ? WHERE plate = ?', { 0, price, body, engine, fuel, plate })
+             TriggerClientEvent('QBCore:Notify', src, Lang:t('info.vehicle_taken_depot', { price = price }))
+@@ -46,15 +54,20 @@ RegisterNetEvent('police:server:Impound', function(plate, fullImpound, price, bo
+             TriggerClientEvent('QBCore:Notify', src, Lang:t('info.vehicle_seized'))
+         end
+     end
++    FredPD.afterImpound(src, plate, fullImpound, price, owned)
+ end)
+ 
+ RegisterNetEvent('police:server:TakeOutImpound', function(plate, garage)
+     local src = source
++    -- FredPD: impound grant / on-duty leo, a known lot (upstream errored on any other index), one per second, and
++    -- only an impounded (state 2) row is released
++    if not FredPD.allowed(src, 'impound', FredPD.leoOnDuty(FredPD.player(src))) then return FredPD.deny(src, 'impound') end
++    local targetCoords = Config.Locations['impound'][FredPD.int(garage) or 0]
++    if not targetCoords or type(plate) ~= 'string' or not FredPD.rateLimit(src, 'takeout', 1000) then return end
+     local playerPed = GetPlayerPed(src)
+     local playerCoords = GetEntityCoords(playerPed)
+-    local targetCoords = Config.Locations['impound'][garage]
+     if #(playerCoords - targetCoords) > 10.0 then return DropPlayer(src, 'Attempted exploit abuse') end
+-    MySQL.update('UPDATE player_vehicles SET state = ? WHERE plate = ?', { 0, plate })
++    MySQL.update('UPDATE player_vehicles SET state = ? WHERE plate = ? AND state = ?', { 0, plate, 2 })
+     TriggerClientEvent('QBCore:Notify', src, Lang:t('success.impound_vehicle_removed'), 'success')
+ end)
+ 
+@@ -75,7 +88,7 @@ end)
+ QBCore.Commands.Add('flagplate', Lang:t('commands.flagplate'), { { name = 'plate', help = Lang:t('info.plate_number') }, { name = 'reason', help = Lang:t('info.flag_reason') } }, true, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'flagplate', FredPD.leoOnDuty(Player)) then
+         local reason = {}
+         for i = 2, #args, 1 do
+             reason[#reason + 1] = args[i]
+@@ -86,14 +99,14 @@ QBCore.Commands.Add('flagplate', Lang:t('commands.flagplate'), { { name = 'plate
+         }
+         TriggerClientEvent('QBCore:Notify', src, Lang:t('info.vehicle_flagged', { vehicle = args[1]:upper(), reason = table.concat(reason, ' ') }))
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'flagplate')
+     end
+ end)
+ 
+ QBCore.Commands.Add('unflagplate', Lang:t('commands.unflagplate'), { { name = 'plate', help = Lang:t('info.plate_number') } }, true, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'unflagplate', FredPD.leoOnDuty(Player)) then
+         if Plates and Plates[args[1]:upper()] then
+             if Plates[args[1]:upper()].isflagged then
+                 Plates[args[1]:upper()].isflagged = false
+@@ -105,14 +118,14 @@ QBCore.Commands.Add('unflagplate', Lang:t('commands.unflagplate'), { { name = 'p
+             TriggerClientEvent('QBCore:Notify', src, Lang:t('error.vehicle_not_flag'), 'error')
+         end
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'unflagplate')
+     end
+ end)
+ 
+ QBCore.Commands.Add('plateinfo', Lang:t('commands.plateinfo'), { { name = 'plate', help = Lang:t('info.plate_number') } }, true, function(source, args)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.allowed(src, 'plateinfo', FredPD.leoOnDuty(Player)) then
+         if Plates and Plates[args[1]:upper()] then
+             if Plates[args[1]:upper()].isflagged then
+                 TriggerClientEvent('QBCore:Notify', src, Lang:t('success.vehicle_flagged', { plate = args[1]:upper(), reason = Plates[args[1]:upper()].reason }), 'success')
+@@ -123,6 +136,6 @@ QBCore.Commands.Add('plateinfo', Lang:t('commands.plateinfo'), { { name = 'plate
+             TriggerClientEvent('QBCore:Notify', src, Lang:t('error.vehicle_not_flag'), 'error')
+         end
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'plateinfo')
+     end
+ end)

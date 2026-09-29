@@ -26,7 +26,7 @@ local Names = {}     -- [discordId] = { displayName, avatarUrl } from /officer p
 local Pending = {}   -- [citizenid] = true while a callsign allocation runs
 local Warned = {}    -- [citizenid] = reason a callsign could not be given, logged once; cleared on a grant change
 
---- Duty and job events come from qbx_core, but duty toggling starts with a client net event (QBCore:ToggleDuty),
+--- Duty and job events come from the framework (bridge), but duty toggling starts with a client net event (QBCore:ToggleDuty),
 --- so each handler runs at most once per player per this many ms (each run costs DB queries).
 M.EVENT_INTERVAL_MS = 2000
 
@@ -113,7 +113,7 @@ function M.getCitizenId(src)
     return pd and pd.citizenid or nil
 end
 
---- qbx: job.type == 'leo' and job.onduty.
+--- Bridge player (qb-core or qbx_core): job.type == 'leo' and job.onduty.
 function M.isOnDuty(src)
     local pd = Core.getPlayerData(src)
     return isLeo(pd) and pd.job.onduty == true
@@ -354,22 +354,24 @@ function M.register()
         if src then Core.async('callsign', M.ensureCallsign, src) end
     end)
 
-    -- VERIFY (docs/modules/core.md): qbx_core event names. AddEventHandler only (no client may trigger these).
-    AddEventHandler('QBCore:Server:PlayerLoaded', function(player)
-        local src = type(player) == 'table' and type(player.PlayerData) == 'table' and tonumber(player.PlayerData.source)
+    -- Framework events, normalised by the bridge (server/bridge.lua, docs/contracts.md §C17: qb-core or qbx_core).
+    -- Server-local (AddEventHandler only): no client can trigger them, and every handler re-reads the player anyway.
+    AddEventHandler('fredpd:bridge:playerLoaded', function(src)
+        src = tonumber(src)
         if src then Core.async('officer on load', M.onCharacter, src) end
     end)
     -- Rate limited per player (M.EVENT_INTERVAL_MS): duty toggling starts on the client. A dropped repeat loses
     -- nothing, the run it follows already did the work (and the first-duty callsign is also given on load).
-    AddEventHandler('QBCore:Server:SetDuty', function(src, onDuty)
+    AddEventHandler('fredpd:bridge:dutyChanged', function(src, onDuty)
         src = tonumber(src)
         if src and onDuty and Core.rateLimit(src, 'officers:duty', M.EVENT_INTERVAL_MS) then
             Core.async('callsign on duty', M.ensureCallsign, src)
         end
     end)
-    AddEventHandler('QBCore:Server:OnJobUpdate', function(src, job)
+    -- Only police characters (job.type 'leo', checked synchronously) start a thread.
+    AddEventHandler('fredpd:bridge:jobChanged', function(src)
         src = tonumber(src)
-        if src and type(job) == 'table' and job.type == 'leo' and Core.rateLimit(src, 'officers:job', M.EVENT_INTERVAL_MS) then
+        if src and isLeo(Core.getPlayerData(src)) and Core.rateLimit(src, 'officers:job', M.EVENT_INTERVAL_MS) then
             Core.async('officer on job', M.onCharacter, src)
         end
     end)

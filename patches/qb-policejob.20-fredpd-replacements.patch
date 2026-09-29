@@ -1,0 +1,220 @@
+diff --git a/client/evidence.lua b/client/evidence.lua
+index 2c101d3..c572c91 100644
+--- a/client/evidence.lua
++++ b/client/evidence.lua
+@@ -193,8 +193,18 @@ end)
+ 
+ -- Threads
+ 
++-- FredPD (patches/qb-policejob.20-fredpd-replacements.patch): the four loops below run only while the server says
++-- qb-policejob's own evidence is on (it is off while fredpd_core reports the evidences feature). Each start is a new
++-- generation; the loops of an older generation end at their next pass.
++local evidenceGeneration = 0
++local evidenceOn = false
++
++local function startEvidence()
++evidenceGeneration = evidenceGeneration + 1
++local generation = evidenceGeneration
++
+ CreateThread(function()
+-    while true do
++    while evidenceGeneration == generation do
+         Wait(10000)
+         if LocalPlayer.state.isLoggedIn then
+             if CurrentStatusList and next(CurrentStatusList) then
+@@ -215,7 +225,7 @@ CreateThread(function()
+ end)
+ 
+ CreateThread(function() -- Gunpowder Status when shooting
+-    while true do
++    while evidenceGeneration == generation do
+         Wait(1)
+         local ped = PlayerPedId()
+         if IsPedShooting(ped) then
+@@ -234,7 +244,7 @@ CreateThread(function() -- Gunpowder Status when shooting
+ end)
+ 
+ CreateThread(function()
+-    while true do
++    while evidenceGeneration == generation do
+         Wait(1)
+         if CurrentCasing and CurrentCasing ~= 0 then
+             local pos = GetEntityCoords(PlayerPedId())
+@@ -313,7 +323,7 @@ CreateThread(function()
+ end)
+ 
+ CreateThread(function()
+-    while true do
++    while evidenceGeneration == generation do
+         Wait(10)
+         if LocalPlayer.state.isLoggedIn then
+             if PlayerJob.type == 'leo' and PlayerJob.onduty then
+@@ -354,3 +364,13 @@ CreateThread(function()
+         end
+     end
+ end)
++end
++
++local function setEvidence(on)
++    if on == evidenceOn then return end
++    evidenceOn = on
++    if on then startEvidence() else evidenceGeneration = evidenceGeneration + 1 end
++end
++
++RegisterNetEvent('police:client:fredpdEvidence', function(on) setEvidence(on == true) end)
++QBCore.Functions.TriggerCallback('police:server:fredpdEvidence', function(on) setEvidence(on == true) end)
+diff --git a/config.lua b/config.lua
+index 6838772..e9e3d4f 100644
+--- a/config.lua
++++ b/config.lua
+@@ -120,7 +120,8 @@ Config.Radars = {
+ Config.CarItems = {
+     [1] = { name = 'heavyarmor', amount = 2, info = {}, type = 'item', slot = 1, },
+     [2] = { name = 'empty_evidence_bag', amount = 10, info = {}, type = 'item', slot = 2, },
+-    [3] = { name = 'police_stormram', amount = 1, info = {}, type = 'item', slot = 3, },
++    -- FredPD: the ram is fredpd_breach's pd_ram; the stormram comes back only with `setr fredpd_police_legacy true`
++    [3] = GetConvar('fredpd_police_legacy', 'false') == 'true' and { name = 'police_stormram', amount = 1, info = {}, type = 'item', slot = 3, } or nil,
+ }
+ 
+ Config.AuthorizedVehicles = {
+diff --git a/server/commands.lua b/server/commands.lua
+index 9ea70d9..28318a8 100644
+--- a/server/commands.lua
++++ b/server/commands.lua
+@@ -228,20 +228,22 @@ end)
+ QBCore.Commands.Add('clearcasings', Lang:t('commands.clear_casign'), {}, false, function(source)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences handles casings
++    if FredPD.allowed(src, 'evidence', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('evidence:client:ClearCasingsInArea', src)
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'evidence')
+     end
+ end)
+ 
+ QBCore.Commands.Add('clearblood', Lang:t('commands.clearblood'), {}, false, function(source)
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+-    if Player.PlayerData.job.type == 'leo' and Player.PlayerData.job.onduty then
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences handles blood
++    if FredPD.allowed(src, 'evidence', FredPD.leoOnDuty(Player)) then
+         TriggerClientEvent('evidence:client:ClearBlooddropsInArea', src)
+     else
+-        TriggerClientEvent('QBCore:Notify', src, Lang:t('error.on_duty_police_only'), 'error')
++        FredPD.deny(src, 'evidence')
+     end
+ end)
+ 
+@@ -249,7 +251,8 @@ QBCore.Commands.Add('takedna', Lang:t('commands.takedna'), { { name = 'id', help
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+     local OtherPlayer = exports['qb-core']:GetPlayer(tonumber(args[1]))
+-    if not OtherPlayer or Player.PlayerData.job.type ~= 'leo' or not Player.PlayerData.job.onduty then return end
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences handles DNA
++    if not OtherPlayer or not FredPD.allowed(src, 'evidence', FredPD.leoOnDuty(Player)) then return end
+     if exports['qb-inventory']:RemoveItem(src, 'empty_evidence_bag', 1, false, 'qb-policejob:takedna') then
+         local info = {
+             label = Lang:t('info.dna_sample'),
+diff --git a/server/evidence.lua b/server/evidence.lua
+index 99a9772..ce242f2 100644
+--- a/server/evidence.lua
++++ b/server/evidence.lua
+@@ -65,11 +65,13 @@ end)
+ -- Events
+ 
+ RegisterNetEvent('evidence:server:UpdateStatus', function(data)
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences + fredpd_forensics handle evidence
+     local src = source
+     PlayerStatus[src] = data
+ end)
+ 
+ RegisterNetEvent('evidence:server:CreateBloodDrop', function(citizenid, bloodtype, coords)
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences + fredpd_forensics handle evidence
+     local bloodId = CreateBloodId()
+     BloodDrops[bloodId] = {
+         dna = citizenid,
+@@ -79,6 +81,7 @@ RegisterNetEvent('evidence:server:CreateBloodDrop', function(citizenid, bloodtyp
+ end)
+ 
+ RegisterNetEvent('evidence:server:CreateFingerDrop', function(coords)
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences + fredpd_forensics handle evidence
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+     local fingerId = CreateFingerId()
+@@ -87,6 +90,7 @@ RegisterNetEvent('evidence:server:CreateFingerDrop', function(coords)
+ end)
+ 
+ RegisterNetEvent('evidence:server:ClearBlooddrops', function(blooddropList)
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences + fredpd_forensics handle evidence
+     if blooddropList and next(blooddropList) then
+         for _, v in pairs(blooddropList) do
+             TriggerClientEvent('evidence:client:RemoveBlooddrop', -1, v)
+@@ -96,6 +100,7 @@ RegisterNetEvent('evidence:server:ClearBlooddrops', function(blooddropList)
+ end)
+ 
+ RegisterNetEvent('evidence:server:AddBlooddropToInventory', function(bloodId, bloodInfo)
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences + fredpd_forensics handle evidence
+     local src = source
+     if exports['qb-inventory']:RemoveItem(src, 'empty_evidence_bag', 1, false, 'evidence:server:AddBlooddropToInventory') then
+         if exports['qb-inventory']:AddItem(src, 'filled_evidence_bag', 1, false, bloodInfo, 'evidence:server:AddBlooddropToInventory') then
+@@ -109,6 +114,7 @@ RegisterNetEvent('evidence:server:AddBlooddropToInventory', function(bloodId, bl
+ end)
+ 
+ RegisterNetEvent('evidence:server:AddFingerprintToInventory', function(fingerId, fingerInfo)
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences + fredpd_forensics handle evidence
+     local src = source
+     if exports['qb-inventory']:RemoveItem(src, 'empty_evidence_bag', 1, false, 'evidence:server:AddFingerprintToInventory') then
+         if exports['qb-inventory']:AddItem(src, 'filled_evidence_bag', 1, false, fingerInfo, 'evidence:server:AddFingerprintToInventory') then
+@@ -122,6 +128,7 @@ RegisterNetEvent('evidence:server:AddFingerprintToInventory', function(fingerId,
+ end)
+ 
+ RegisterNetEvent('evidence:server:CreateCasing', function(weapon, coords)
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences + fredpd_forensics handle evidence
+     local src = source
+     local Player = exports['qb-core']:GetPlayer(src)
+     if not Player then return end
+@@ -140,6 +147,7 @@ RegisterNetEvent('evidence:server:CreateCasing', function(weapon, coords)
+ end)
+ 
+ RegisterNetEvent('evidence:server:ClearCasings', function(casingList)
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences + fredpd_forensics handle evidence
+     if casingList and next(casingList) then
+         for _, v in pairs(casingList) do
+             TriggerClientEvent('evidence:client:RemoveCasing', -1, v)
+@@ -149,6 +157,7 @@ RegisterNetEvent('evidence:server:ClearCasings', function(casingList)
+ end)
+ 
+ RegisterNetEvent('evidence:server:AddCasingToInventory', function(casingId, casingInfo)
++    if FredPD.evidenceReplaced() then return end -- FredPD: evidences + fredpd_forensics handle evidence
+     local src = source
+     if exports['qb-inventory']:RemoveItem(src, 'empty_evidence_bag', 1, false, 'evidence:server:AddCasingToInventory') then
+         if exports['qb-inventory']:AddItem(src, 'filled_evidence_bag', 1, false, casingInfo, 'evidence:server:AddCasingToInventory') then
+@@ -160,3 +169,25 @@ RegisterNetEvent('evidence:server:AddCasingToInventory', function(casingId, casi
+         TriggerClientEvent('QBCore:Notify', src, Lang:t('error.have_evidence_bag'), 'error')
+     end
+ end)
++
++-- FredPD (patches/qb-policejob.20-fredpd-replacements.patch): the built-in evidence above is off only while
++-- fredpd_core reports the evidence feature (exports.fredpd_core:hasFeature('evidence'): noobsystems/evidences and
++-- fredpd_forensics run, which needs ox_inventory + ox_target). On a qb-inventory server it stays on. Clients ask once
++-- at start and are told again when one of the resources that decide it starts or stops (client/evidence.lua).
++local evidenceOff = nil
++
++QBCore.Functions.CreateCallback('police:server:fredpdEvidence', function(_, cb)
++    evidenceOff = FredPD.evidenceReplaced()
++    cb(not evidenceOff)
++end)
++
++local function evidenceChanged(resource)
++    if resource ~= 'fredpd_core' and resource ~= 'fredpd_forensics' and resource ~= 'evidences' then return end
++    local off = FredPD.evidenceReplaced()
++    if off == evidenceOff then return end
++    evidenceOff = off
++    TriggerClientEvent('police:client:fredpdEvidence', -1, not off)
++end
++
++AddEventHandler('onServerResourceStart', evidenceChanged)
++AddEventHandler('onServerResourceStop', evidenceChanged)

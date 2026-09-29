@@ -246,14 +246,16 @@ function M.unitIndex(units)
 end
 
 ---------------------------------------------------------------------------------------------------------------
--- Players (qbx_core). Always asks qbx_core so the actor is never taken from a stale cache or from the client.
+-- Players, through the framework bridge (server/bridge.lua, docs/contracts.md §C17: qb-core or qbx_core). Always
+-- asks the framework, so the actor is never taken from a stale cache or from the client.
 
---- qbx PlayerData of an online player, or nil.
+--- Normalised player of an online player ({ source, citizenid, license, name, job = { name, type, grade, onduty,
+--- ... }, charinfo }), or nil.
 function M.getPlayerData(src)
     src = tonumber(src)
     if not src or src <= 0 then return nil end
-    local ok, player = pcall(function() return exports.qbx_core:GetPlayer(src) end)
-    if ok and type(player) == 'table' and type(player.PlayerData) == 'table' then return player.PlayerData end
+    local ok, player = pcall(function() return require('server.bridge').getPlayer(src) end)
+    if ok and type(player) == 'table' then return player end
     return nil
 end
 
