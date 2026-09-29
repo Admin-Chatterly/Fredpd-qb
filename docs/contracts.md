@@ -228,3 +228,70 @@ Do not edit `docs/contracts.md` from a module task; record module-level decision
   hit, bolo_id, created_at)`, index (plate, created_at)).
 - Items live in `patches/ox_inventory.*.patch` (upstream is never edited): `pd_tablet` (`client.export =
   'fredpd_mdt.open'`, `stack = false`, metadata `serial`, `owner`).
+
+## C13. Alerts (Phase 3) — `packages/types/src/dispatch.ts`
+
+- **Event names (deviation from IMPLEMENTATION.md §5.5):** the ps-dispatch patch fires the *inbound* server event
+  `fredpd:dispatch:incoming(data, playerSrc)` (its raw call data plus the `source` that reported it). fredpd_dispatch
+  normalises, stores and then fires the *outbound* `fredpd:alertCreated(alert)` of §4.3 for other resources. Using one
+  name for both directions would loop. The inbound handler uses `AddEventHandler` (not `RegisterNetEvent`), so clients
+  cannot call it directly. ps-dispatch alerts are reported by clients, though, so the data is still untrusted:
+  per-reporter rate limit (5 per 30 s), string caps, coords validation, priority clamped to 1–3.
+- Exports (`{ ok, data | error }` for the src-taking ones, §C12): `createAlert(data)` (AlertCreateInput; used by
+  fredpd_bolo hits with `source = 'bolo'` and a 60 s per-plate cooldown on the bolo side), `listAlerts(src, input)`,
+  `assignSelf(src, { id })` (= takeAlert), `leaveAlert(src, { id })`, `closeAlert(src, { id })` (assigned officer or perm
+  `alerts.manage`), `getUnits(src)`, `takeNewest(src)` (the keybind).
+- Keybind "Ta larm" (`lib.addKeybind`, default `G`): client → `lib.callback.await('fredpd:dispatch:takeNewest')`; the
+  server checks grant `mdt_page:alerts`, on duty, rate limit 1/s; it picks the newest `open` alert, assigns and returns
+  the Alert (client sets `SetNewWaypoint(coords.x, coords.y)`). No tablet needs to be open.
+- Toast: `TriggerClientEvent('fredpd:client:alertToast', src, AlertToast)` to every on-duty officer with
+  `mdt_page:alerts`; client shows `lib.notify` (custom style + sound). No always-on NUI.
+- Tablet: push topic `alerts` (AlertPush) and `units` (UnitsPush) only to open tablets
+  (`exports.fredpd_mdt:pushToOpenTablets`). The mdt dispatcher merges `DISPATCH_ACTIONS` into its action table.
+- Service: FXServer posts `/internal/events` with `DispatchInternalEvent`; `/ws` forwards to logged-in users whose
+  grants include `mdt_page:alerts`.
+- Status rules: `open` → `assigned` on the first take; `assigned` → `open` when the last unit leaves; `closed` is
+  final. Every take/leave/close is audited (`alert.assign`, `alert.leave`, `alert.close`). Alert creation is not
+  audited (high volume; the alert row itself is the record).
+- Perm keys added: `alerts.manage`.
+
+## C14. Cases, reports, charges (Phase 5) — `packages/types/src/records.ts`
+
+- `RECORDS_ACTIONS` merge into the fredpd_mdt dispatcher (§C12 order and export convention). Fine-grained rules are
+  enforced in fredpd_records: edit/assign/close = case owner, lead assignee or perm `records.admin`; reading follows
+  canView (`none` → `not_found`, never `unauthorized`, so existence does not leak).
+- Numbers: case `formatId(caseNumber, { seq, date })` where `seq` comes from `fredpd_sequences` (`seq_type = 'case'`,
+  year in Europe/Stockholm) incremented in the same transaction as the insert; report `n` = next per case
+  (`MAX(n)+1` under `SELECT … FOR UPDATE` on the case row); evidence tag the same per case.
+- Level rules: a case/report level is never set above the actor's tier; lowering needs `records.admin`; closing keeps
+  the level (sekretess after close stays, §8.7), but canView's closed-case rules then give `masked` Standard parts.
+- Reports: markdown-lite rendered as text (no HTML passthrough, no links/images). Autosave writes only
+  `fredpd_report_drafts`, debounced in the NUI (≥ 10 s after the last keystroke, only while focused and dirty).
+- Charges: catalogue read-only in game (`fredpd_charges`, seeded); `applyCharges` copies title/class/fine/jail into
+  `fredpd_records` rows (history stays stable if the catalogue changes). `issueFine` accepts only class `ordningsbot`
+  and bills through the prison/billing adapter (qbx_police `police:server:BillPlayer` path verified in
+  docs/deps-verification.md); jail goes through the prison adapter `jail(src, minutes, charges)`.
+- Timeline = audit rows for the case (`target_type = 'case'`) plus its reports/evidence, newest first, max 100.
+- Perm keys added: `cases.create`, `charges.apply`, `charges.fine`.
+
+## C15. Intelligence (Phase 5b) — `packages/types/src/intel.ts`
+
+- Record types for canView: `intel_source`, `intel_report`, `mission` (links inherit their report's/own level; entities
+  carry no level — what is hidden are the links and reports around them).
+- Real identity of a source: only for (handler with perm `intel.handler`) or perm `intel.command`; every such read
+  audited `intel.source.identity`. Every read of a Hemlig (level 2) report audited `intel.report.read` (§5.8).
+- Graph: built server-side, BFS from the root to `depth` (1 or 2), only links the viewer may see, capped at
+  `GRAPH_NODE_CAP` (150) nodes with `truncated = true`; the NUI lazy-loads Cytoscape, runs `cose` once, then `stop()`.
+- Portal: intel routes answer 404 (not 403) without `intel.read`, and for any record canView says `none`.
+- Perm keys: `intel.read`, `intel.handler`, `intel.command` (already listed); mdt_page `intel`.
+
+## C16. Evidence and breach (Phases 4 and 6) — `packages/types/src/evidence.ts`
+
+- fredpd_forensics listens to `evidences:evidenceItemAnalysed(playerId, item)` (verify exact payload in
+  docs/deps-verification.md), upserts `fredpd_evidence` by `item_uid`, appends custody entries on collect / hand-in
+  (ox_inventory `swapItems` hook filtered to evidence stashes) / analyse / link. Linking assigns `tag` via
+  `formatId(evidenceTag, { case, n })` in the same transaction; audited `evidence.link` + `fredpd:evidenceLinked`.
+- Perm keys: `evidence.link`; mdt_page `evidence`.
+- fredpd_breach: `tool:ram` grant, on duty, door locked (ox_doorlock) → progress → `ox_doorlock:setState(id, 0)`;
+  audited `breach.door`. Export `sceneEvidence(kind: SceneKind, coords, suspectSrc)` for crime scripts (server-only;
+  validates kind, coords and that `suspectSrc` is a connected player).

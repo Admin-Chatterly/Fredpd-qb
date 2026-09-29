@@ -1,0 +1,60 @@
+# SPDX-License-Identifier: GPL-3.0-only
+# CI for FredPD: the same gate as the definition of done (IMPLEMENTATION.md §0 rule 6) minus the in-game test:
+# pnpm lint (ESLint + typecheck + Lua syntax/polling lint), pnpm test (Vitest + Lua 5.4 against MariaDB), build.
+name: ci
+
+on:
+  push:
+    branches: [main, 'claude/**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    services:
+      mariadb:
+        image: mariadb:10.11
+        env:
+          MARIADB_ROOT_PASSWORD: fredpd-ci-root
+          MARIADB_USER: fredpd
+          MARIADB_PASSWORD: fredpd
+          MARIADB_DATABASE: fredpd_test
+        ports: ['3306:3306']
+        options: >-
+          --health-cmd="healthcheck.sh --connect --innodb_initialized"
+          --health-interval=5s --health-timeout=5s --health-retries=20
+    env:
+      # DB-backed tests create their own fredpd_test_* databases; the CI user needs global privileges for that.
+      FREDPD_TEST_DB_URL: mysql://fredpd:fredpd@127.0.0.1:3306/fredpd_test
+      PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: '1'
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Lua 5.4 and the MariaDB client
+        run: sudo apt-get update -qq && sudo apt-get install -y -qq lua5.4 mariadb-client
+
+      - name: Grant the test user rights to create test databases
+        run: |
+          mariadb -h127.0.0.1 -uroot -pfredpd-ci-root -e \
+            "GRANT ALL ON *.* TO 'fredpd'@'%'; FLUSH PRIVILEGES;"
+
+      - uses: pnpm/action-setup@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm gen:locale-keys --check
+      - run: pnpm lint
+      - run: pnpm test
+      - name: Build web apps and copy shared files into resources
+        run: node scripts/build.mjs
