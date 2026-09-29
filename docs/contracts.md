@@ -172,3 +172,18 @@ Lua wraps it as `Core.fetch(method, path, body)` returning `status, decoded` ins
 
 As IMPLEMENTATION.md §4.3. fredpd_core additionally exports `signedFetch`, `getOfficer(src)`, `isOnDuty(src)`,
 `getCitizenId(src)`, `L(key, vars)`. Other resources never read `Grants[src]` directly.
+
+## C10. Permissions admin API (portal "Behörigheter", task 1.8)
+
+Requires perm `admin.permissions` (grant `perm:admin.permissions`). Schemas in `packages/types/src/actions.ts`.
+
+- `GET /api/admin/roles` → `{ roles: RoleRow[], grants: RoleGrantRow[], catalog: { type: GrantType, keys: string[] }[] }`
+  (catalog = known keys per type: units from config/units.json, tiers 0–2, perms list, plus keys already in use).
+- `PUT /api/admin/roles/:discordRoleId/grants` body `{ grants: { grantType, grantKey, effect }[] }` → replaces that
+  role's rows in one transaction, writes `fredpd_audit` (`action = 'perms.update'`), recomputes every online member
+  holding the role and pushes to FXServer. Returns `{ ok: true, recomputed: n }`.
+- Writes need the `x-csrf-token` header (value from `GET /api/session` → `{ user, csrfToken }`).
+
+## C11. Ownership while modules are built in parallel
+
+Do not edit `docs/contracts.md` from a module task; record module-level decisions in `docs/modules/<module>.md`.
