@@ -295,3 +295,45 @@ Do not edit `docs/contracts.md` from a module task; record module-level decision
 - fredpd_breach: `tool:ram` grant, on duty, door locked (ox_doorlock) → progress → `ox_doorlock:setState(id, 0)`;
   audited `breach.door`. Export `sceneEvidence(kind: SceneKind, coords, suspectSrc)` for crime scripts (server-only;
   validates kind, coords and that `suspectSrc` is a connected player).
+
+## C17. Framework bridge (QBCore first; ox or qb scripts chosen by config)
+
+The target server runs **qb-core** with **qb-inventory, qb-target, qb-doorlock** today and may switch to the ox
+scripts later. FredPD's own resources never call a framework, inventory, target or doorlock resource directly; they go
+through `fredpd_core`'s bridge, selected in `config/integrations.json`:
+
+```json
+"framework": "qb-core",        // "qb-core" | "qbx_core"
+"inventory": "qb-inventory",   // "qb-inventory" | "ox_inventory"
+"target":    "qb-target",      // "qb-target" | "ox_target"
+"doorlock":  "qb-doorlock"     // "qb-doorlock" | "ox_doorlock"
+```
+
+`"auto"` picks the first started resource of each pair (ox wins when both run). Switching = change the value and
+restart; no code change, no DB change.
+
+- **Layout:** `fredpd_core/bridge/<kind>/<impl>.lua` (server + client parts as needed), one interface per kind,
+  loaded like the adapters (§9). Server exports on fredpd_core: `bridge(kind)` is internal; other resources use the
+  exports below. Client side: a shared file other resources load with `'@fredpd_core/bridge/client.lua'`.
+- **framework** (server): `getPlayer(src)` → `{ citizenid, license, name, job = { name, type, grade, onduty },
+  charinfo }` or nil; `getPlayerByCitizenId(cid)` → src or nil; `getPlayers()` → srcs; normalised server events
+  `fredpd:bridge:playerLoaded(src)`, `fredpd:bridge:playerUnloaded(src)`, `fredpd:bridge:jobChanged(src)`,
+  `fredpd:bridge:dutyChanged(src, onduty)`. "Police" = `job.type == 'leo'` (both frameworks set it; qb-core's default
+  police job has `type = 'leo'`). Money for fines: `removeMoney(src, 'bank', amount, reason)`.
+- **inventory** (server): `count(src, item)`, `find(src, item, metadataFilter)` → `{ slot, metadata }[]`,
+  `add(src, item, count, metadata)`, `remove(src, item, count, slot?)`, `registerUsable(item, fn(src, slot, metadata))`
+  (qb: `QBCore.Functions.CreateUseableItem`; ox: the item's `server.export`, both reach the same fn); capability flag
+  `hooks` (ox `registerHook('swapItems')` only; qb-inventory has none). Item definitions ship for both:
+  `patches/qb-core.*-fredpd-items.patch` (qb-core `shared/items.lua`) and `patches/ox_inventory.*.patch`.
+- **target** (client): `addGlobalVehicle(opts)`, `addModel(models, opts)`, `addBoxZone(name, box, opts)`,
+  `addEntity(netIds, opts)`, `remove(handle)`; options normalised to `{ name, label, icon, distance, canInteract,
+  onSelect }`.
+- **doorlock:** server `getDoor(id)` → `{ id, name, locked, coords }` or nil, `setLocked(id, locked, src?)`; client
+  `listDoors()`; event `fredpd:bridge:doorChanged(id, locked)`. qb-doorlock ids are its door config keys.
+- **Degradation:** features whose upstream needs the ox stack are disabled with ONE start-up warning, never an error:
+  **evidences requires ox_inventory + ox_target** (its fxmanifest), so with qb-inventory `fredpd_forensics` stays
+  idle and qb-policejob's built-in evidence stays ON (the police patch only disables it when fredpd_forensics is
+  active). Chain-of-custody hand-in (ox hook) is ox-only.
+- **Police job:** `patches/qb-policejob.*.patch` (grants, armory/garage filtering, stormram off, radar/impound BOLO
+  hooks, Swedish locale) is the primary target; the `qbx_policejob` patches stay for Qbox servers.
+  `fetch-deps` pins both stacks; `apply-patches` only patches resources that are fetched.

@@ -1,5 +1,9 @@
 {
-  "$comment": "Active adapter per integration kind (IMPLEMENTATION.md §9). A missing resource makes the adapter a no-op that logs one warning at start.",
+  "$comment": "Active adapter per integration kind (IMPLEMENTATION.md §9). A missing resource makes the adapter a no-op that logs one warning at start. framework/inventory/target/doorlock select the bridge (docs/contracts.md §C17); 'auto' picks ox when both run.",
+  "framework": "qb-core",
+  "inventory": "qb-inventory",
+  "target": "qb-target",
+  "doorlock": "qb-doorlock",
   "housing": "ps-housing",
   "garage": "qbx_garages",
   "prison": "none",
