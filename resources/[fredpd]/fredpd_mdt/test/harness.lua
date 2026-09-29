@@ -125,6 +125,7 @@ end
 function H.memoryMySQL(env)
     local function single(sql, params)
         env.queries[#env.queries + 1] = sql
+        if env.onQuery then env.onQuery(sql, params) end
         if env.dbDown then error('Lost connection to MySQL server', 0) end
         if sql:find('FROM fredpd_tablets WHERE serial = ?', 1, true) then
             local row = env.tablets[params[1]]

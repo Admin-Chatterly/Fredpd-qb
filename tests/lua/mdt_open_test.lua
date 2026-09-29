@@ -193,6 +193,13 @@ tests['10 sessions: close only clears its own; drop clears session and limits; f
         t.eq(Open.isOpen(2), true)
         Open.onDropped(2)
         t.eq(Open.isOpen(2), false)
+        -- Dropped while the serial lookup yielded: playerDropped ran first, no stale session is written.
+        env.now = env.now + 1000
+        local saved = env.players[1]
+        env.onQuery = function() env.players[1] = nil; Open.onDropped(1) end
+        t.eq(Open.open(1, { mode = 'item' }), { error = 'tablet.unavailable' })
+        t.eq(Open.isOpen(1), false)
+        env.onQuery, env.players[1] = nil, saved
         H.openTablet(mods, 2) -- limiter forgotten on drop: no rate limit right after
         -- Lost grants: still one mdt_page -> stays open; none -> forced closed with the reason.
         env.players[2].grants = { ['mdt_page:bolos'] = true }

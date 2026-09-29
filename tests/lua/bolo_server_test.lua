@@ -551,6 +551,15 @@ tests['07 listBolos (active): newest first, canView shaping, paging, grant'] = f
         t.eq(notice.subject, 'Sara Öberg')
         t.eq(notice.level, 1)
         t.eq(keys(notice), { 'active', 'citizenid', 'createdAt', 'id', 'kind', 'level', 'reason', 'subject' })
+        -- a Hemlig (level 2) BOLO's kontaktnotis carries the fixed notice level, never a level-2 marker
+        local Visibility = mods['server.visibility']
+        local hemlig = Visibility.shape({ id = 9, kind = 'vehicle', plate = 'HEM11T', subject = 'HEM11T · kuruma',
+            reason = 'Hemlig spaning', level = 2, createdAt = '2026-09-29T10:20:00Z', unit = 'span',
+            issuedBy = { citizenid = 'FPD10009', displayName = 'Eva L.', callsign = 'LED-01' } }, 'notice', true)
+        t.eq(hemlig.level, Visibility.NOTICE_LEVEL)
+        t.eq(hemlig.level, 1)
+        for k, v in pairs(hemlig) do t.ok(v ~= 2, 'no level-2 value in ' .. k) end
+        t.eq(tostring(hemlig.reason):find('Hemlig', 1, true), nil, 'no level name or real reason')
         -- the issuer, the unit colleague and a tier 1 officer see it in full
         t.eq(Service.listBolos(2, {}).data.items[1].reason, 'Hot mot tjänsteman')
         t.eq(Service.listBolos(7, {}).data.items[1].reason, 'Hot mot tjänsteman')
@@ -1132,6 +1141,59 @@ tests['22 failures: DB errors give unavailable (never a false "no BOLO"); a stal
         -- back again
         t.eq(Service.plateCheck(1, { plate = 'ABC12D' }).ok, true)
         t.eq(Cache.ready, true)
+    end)
+end
+
+tests['22b stale in-flight flags: an await that never resumes blocks a subject / rebuilds for STALE_FLAG_MS only'] =
+    function(t)
+    withEnv(t, function(_, env, mods)
+        local Service, Store = mods['server.service'], mods['server.store']
+        -- MySQL.*.await that never resumes (deps-verification §10): the insert yields and is never resumed
+        local insert = Store.insert
+        Store.insert = function() coroutine.yield() end
+        local hung = coroutine.create(function() return Service.createBolo(1, vehicleInput()) end)
+        t.eq(coroutine.resume(hung), true)
+        t.eq(coroutine.status(hung), 'suspended', 'insert in flight')
+        Store.insert = insert
+        t.eq(Service.createBolo(1, vehicleInput()), { ok = false, error = 'validation', reason = 'duplicate' })
+        env.now = env.now + Service.STALE_FLAG_MS + 1
+        t.eq(Service.createBolo(1, vehicleInput()).ok, true, 'released after STALE_FLAG_MS')
+
+        -- the same for the rebuild flag
+        local rebuild, calls = Service.rebuild, 0
+        Service.rebuild = function()
+            calls = calls + 1
+            coroutine.yield()
+        end
+        local stuck = coroutine.create(function() Service.scheduleRebuild() end)
+        coroutine.resume(stuck)
+        t.eq(calls, 1)
+        Service.scheduleRebuild()
+        t.eq(calls, 1, 'still held: marked dirty only')
+        env.now = env.now + Service.STALE_FLAG_MS + 1
+        Service.rebuild = function() calls = calls + 1; return true end
+        Service.scheduleRebuild()
+        t.eq(calls, 2, 'stale flag released')
+        Service.rebuild = rebuild
+    end)
+end
+
+tests['22c alert code: from the locale only, trimmed and cut to 16; missing key = no alert'] = function(t)
+    withEnv(t, function(_, env, mods)
+        local Fanout = mods['server.fanout']
+        local L = Fanout.L
+        t.eq(Fanout.alertCode(), SV['bolo.hit.alertCode'])
+        Fanout.L = function(key) return key end
+        t.eq(Fanout.alertCode(), nil)
+        env.resources.fredpd_dispatch = 'started'
+        local entry = { id = 1, kind = 'vehicle', plate = 'ABC12D', subject = 'ABC12D', reason = 'x', level = 0 }
+        t.eq(Fanout.hitAlert(entry, { source = 'plate_check' }, 'x'), false)
+        t.eq(#env.alerts, 0)
+        Fanout.L = function() return '  Efterlyst fordon i Stockholm ' end
+        local code = Fanout.alertCode()
+        t.eq(code, 'Efterlyst fordon')
+        t.ok(utf8.len(code) <= Fanout.HIT_CODE_MAX)
+        Fanout.L = L
     end)
 end
 

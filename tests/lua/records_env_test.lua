@@ -7,7 +7,7 @@
 -- fredpd_test_records_lua, reset once per run, every session at time_zone '+02:00') with FiveM mocked:
 -- exports.fredpd_core (hasGrant, getTier, getCitizenId, canView/canViewMany evaluated by shared/canview.lua with the
 -- seeded default rules, audit capture, refreshPlate = the real mirror code, getAdapter housing), exports.fredpd_bolo
--- (checkPlate, checkPerson, getBolosFor), GetResourceState, LoadResourceFile (config/formats.json), lib.print.
+-- (checkPlate, checkPerson, hasVisibleBolo, getBolosFor), GetResourceState, LoadResourceFile (config/formats.json), lib.print.
 -- Skips with one notice when MariaDB is unreachable.
 -- Golden files (test/golden/*.json, parsed by contract.test.ts) are compared, not written: a difference fails the
 -- test. FREDPD_UPDATE_GOLDEN=1 rewrites them instead.
@@ -109,7 +109,7 @@ function H.makeEnv()
     local Mirror = require('server.mirror')
     local env = {
         players = defaultPlayers(), audits = {}, logs = {}, exported = {}, sql = {},
-        calls = { canView = 0, canViewMany = 0, checkPlate = 0, checkPerson = 0, getBolosFor = 0, refreshPlate = 0,
+        calls = { canView = 0, canViewMany = 0, checkPlate = 0, checkPerson = 0, hasVisibleBolo = 0, getBolosFor = 0, refreshPlate = 0,
             getAdapter = 0 },
         resources = { fredpd_core = 'started', fredpd_bolo = 'started' },
         bolos = { plates = {}, persons = {}, lists = {} },
@@ -173,12 +173,16 @@ function H.makeEnv()
         getAdapter = function(_, kind)
             env.calls.getAdapter = env.calls.getAdapter + 1
             if kind ~= 'housing' then return nil end
+            -- Functions in a table returned across resources arrive as msgpack function references: tables with a
+            -- __call metamethod (citizenfx scheduler.lua funcref_mt), never plain Lua functions.
             return {
                 kind = 'housing',
-                getAddresses = function(cid)
-                    if env.adapterThrows then error('ps-housing export missing', 0) end
-                    return env.addresses[cid] or {}
-                end,
+                getAddresses = setmetatable({ __cfx_functionReference = 'fredpd_core:1' }, {
+                    __call = function(_, cid)
+                        if env.adapterThrows then error('ps-housing export missing', 0) end
+                        return env.addresses[cid] or {}
+                    end,
+                }),
             }
         end,
     }
@@ -196,6 +200,16 @@ function H.makeEnv()
         end,
         -- An explicit env.bolos.lists entry wins; otherwise the live BOLO of the check maps, filtered with canView
         -- the way fredpd_bolo's Visibility.record does (unit, issuer as owner).
+        -- As fredpd_bolo's hasVisibleBolo: the live BOLO of the check maps, canView on it (unit, issuer as owner).
+        hasVisibleBolo = function(_, src, kind, id)
+            env.calls.hasVisibleBolo = env.calls.hasVisibleBolo + 1
+            if env.boloThrows then error('No such export hasVisibleBolo in resource fredpd_bolo', 0) end
+            local b = (kind == 'person' and env.bolos.persons or env.bolos.plates)[id]
+            if type(b) ~= 'table' or b.active == false then return false end
+            local rec = { type = 'bolo', id = b.id, level = b.level or 0, status = 'open', unit = b.unit,
+                ownerCitizenid = type(b.issuedBy) == 'table' and b.issuedBy.citizenid or nil }
+            return env.evaluate(src, rec) ~= 'none'
+        end,
         getBolosFor = function(_, src, kind, id)
             env.calls.getBolosFor = env.calls.getBolosFor + 1
             if env.boloThrows then error('No such export getBolosFor in resource fredpd_bolo', 0) end

@@ -11,9 +11,9 @@ Tick each step. If one fails, copy the F8 console and the txAdmin Live Console l
 
 ## Before you start (once)
 
-1. **Texts:** `node scripts/merge-pending-locales.mjs` (merges `locales/pending/*.json`; otherwise some messages
-   show their key, e.g. `tablet.unregistered`). Then `scripts\build.ps1` and copy `resources\[fredpd]` to the
-   server. For step 3 build the NUI in dev mode once: `pnpm --filter @fredpd/nui build:dev`, then
+1. **Build:** `scripts\build.ps1` and copy `resources\[fredpd]` to the server. (The tablet texts are already in
+   `locales/sv.json`; only if `locales/pending/` holds files from later work, run
+   `node scripts/merge-pending-locales.mjs` first.) For step 3 build the NUI in dev mode once: `pnpm --filter @fredpd/nui build:dev`, then
    `node scripts/build.mjs --skip-web`.
 2. **Item:** `scripts\apply-patches.ps1` adds `pd_tablet` to ox_inventory. On a txAdmin **Qbox recipe** install the
    patch cannot apply (the recipe replaced `data/items.lua`): paste the block from `docs/modules/mdt.md`

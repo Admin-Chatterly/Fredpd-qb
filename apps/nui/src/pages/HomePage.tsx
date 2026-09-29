@@ -48,7 +48,7 @@ const STAT_LINKS: Readonly<Record<HomeStat, { to: string; page: MdtPageKey }>> =
   onDuty: { to: '/register', page: 'roster' },
 };
 
-const STAT_LABELS: Readonly<Record<HomeStat, string>> = {
+const STAT_LABELS: Readonly<Record<HomeStat, LocaleKey>> = {
   activeBolos: 'home.activeBolos',
   myOpenCases: 'home.myOpenCases',
   onDuty: 'officer.onDuty',
@@ -77,11 +77,11 @@ export function homeLayoutFor(variant: HomeVariant, grants: GrantLists | null | 
 }
 
 function StatCard({ stat, value, emphasis, to }: { stat: HomeStat; value: number | null; emphasis: boolean; to: string | null }) {
-  const { tx } = useI18n();
+  const { t } = useI18n();
   const body = (
     <>
       <span className={cn('text-3xl font-semibold tabular-nums', emphasis ? 'text-accent-text' : 'text-fg')}>{value === null ? <Spinner size="sm" /> : value}</span>
-      <span className="text-sm text-muted">{tx(STAT_LABELS[stat])}</span>
+      <span className="text-sm text-muted">{t(STAT_LABELS[stat])}</span>
     </>
   );
   const className = cn(

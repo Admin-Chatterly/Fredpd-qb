@@ -94,6 +94,15 @@ function M.handle(src, req)
 
     -- 1. open tablet (close is exempt so a stale client can always end its session)
     if not isClose and not Open.isOpen(src) then return err('unauthorized') end
+    -- A terminal session is only valid while seated in the police vehicle (cheap, no DB): a client that suppressed
+    -- its close event on leaving the car is closed here.
+    if not isClose then
+        local session = Open.session(src)
+        if session and session.mode == 'terminal' and not Open.inTerminalVehicle(src) then
+            Open.forceClose(src, 'tablet.unavailable')
+            return err('unauthorized')
+        end
+    end
 
     -- 2. known action, valid input
     local def = type(action) == 'string' and rawget(M.ACTIONS, action) or nil

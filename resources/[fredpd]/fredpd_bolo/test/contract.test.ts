@@ -146,6 +146,9 @@ describe('fredpd_bolo golden JSON vs packages/types/src/mdt.ts', () => {
     const checked = golden('plateCheck.notice') as { bolo: Record<string, unknown> };
     expect(checked.bolo.issuedBy).toBeUndefined();
     expect(String(checked.bolo.reason)).toContain('Kontakta');
+    // The HEM11T BOLO is Hemlig (level 2): its kontaktnotis carries the fixed notice level 1, no level-2 marker.
+    expect(checked.bolo.level).toBe(1);
+    expect(notice.level).toBe(1);
   });
 
   it('masked hides who issued it; full and resolved carry OfficerRefs and ISO-8601 UTC times', () => {

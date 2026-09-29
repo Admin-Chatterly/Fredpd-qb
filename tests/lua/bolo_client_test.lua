@@ -23,7 +23,7 @@ end)()
 
 local GLOBALS = { 'lib', 'exports', 'QBX', 'GetResourceState', 'AddEventHandler', 'CreateThread', 'DoesEntityExist',
     'NetworkGetEntityIsNetworked', 'NetworkGetNetworkIdFromEntity', 'PlaySoundFrontend', 'GetCurrentResourceName',
-    'LoadResourceFile', 'locale' }
+    'LoadResourceFile', 'locale', 'GetGameTimer' }
 
 local HIT = {
     plate = 'ABC12D', model = 'sultan', owner = { citizenid = 'FPD10002', name = 'Erik Lindqvist' },
@@ -40,7 +40,7 @@ local function withClient(fn, opts)
     local env = { adds = {}, removes = {}, calls = {}, notifies = {}, contexts = {}, shown = {}, sounds = {},
         handlers = {}, states = { ox_target = opts.oxTarget or 'started' }, reply = nil,
         entities = { [5001] = 77, [6000] = 90 }, localOnly = { [6000] = true },
-        job = { name = 'police', type = 'leo', onduty = true } }
+        job = { name = 'police', type = 'leo', onduty = true }, now = 1000 }
     local globals = {
         exports = {
             ox_target = {
@@ -52,6 +52,7 @@ local function withClient(fn, opts)
         GetResourceState = function(name) return env.states[name] or 'missing' end,
         AddEventHandler = function(name, fn) env.handlers[name] = fn end,
         CreateThread = function(f) f() end,
+        GetGameTimer = function() return env.now end,
         DoesEntityExist = function(e) return env.entities[e] ~= nil end,
         NetworkGetEntityIsNetworked = function(e) return env.entities[e] ~= nil and not env.localOnly[e] end,
         NetworkGetNetworkIdFromEntity = function(e) return env.entities[e] end,
@@ -179,6 +180,19 @@ tests['check: one request at a time'] = function(t)
         opt.onSelect({ entity = 5001 })
         t.eq(#env.calls, 1)
         t.eq(#env.contexts, 1)
+
+        -- a callback that never answers blocks the option for BUSY_STALE_MS only
+        env.reply = function() coroutine.yield() end
+        local hung = coroutine.create(function() opt.onSelect({ entity = 5001 }) end)
+        coroutine.resume(hung)
+        t.eq(#env.calls, 2)
+        env.reply = HIT
+        opt.onSelect({ entity = 5001 })
+        t.eq(#env.calls, 2, 'still in flight')
+        env.now = env.now + env.M.BUSY_STALE_MS
+        opt.onSelect({ entity = 5001 })
+        t.eq(#env.calls, 3, 'stale busy flag released')
+        t.eq(#env.contexts, 2)
     end)
 end
 

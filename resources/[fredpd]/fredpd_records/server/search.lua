@@ -136,12 +136,17 @@ function M.needsLike(term, settings)
     return false
 end
 
---- REGEXP pattern: `term` at the start of a word, i.e. at the start of the name or right after a character that is
---- not a letter/digit (MariaDB's PCRE2 runs in UCP mode, so Å/Ä/Ö and other letters beyond ASCII are word characters,
---- and it is case-insensitive under the column's _ci collation). Terms hold only letters/digits; any ASCII character
+--- Separator before a word start: the name's start or a code point that is not a word code point. The class lists
+--- the word code points beyond ASCII explicitly (the same ranges as isWordCodePoint above) instead of relying on
+--- PCRE2's UCP mode for [:alnum:], so Å/Ä/Ö never count as separators on a build without UCP ('rn' must not find
+--- "Björn"). Case-insensitive under the column's _ci collation.
+M.WORD_START = '(^|[^[:alnum:]\\x{C0}-\\x{D6}\\x{D8}-\\x{F6}\\x{F8}-\\x{1FFF}\\x{2C00}-\\x{2FFF}'
+    .. '\\x{3040}-\\x{FE0F}\\x{FE70}-\\x{FEFE}\\x{FF21}-\\x{10FFFF}])'
+
+--- REGEXP pattern: `term` at the start of a word (M.WORD_START). Terms hold only letters/digits; any ASCII character
 --- outside [A-Za-z0-9] is escaped anyway, so a term can never act as a regex operator.
 function M.wordStartPattern(term)
-    return '(^|[^[:alnum:]])' .. (term:gsub('[^%w\128-\255]', '\\%0'))
+    return M.WORD_START .. (term:gsub('[^%w\128-\255]', '\\%0'))
 end
 
 --- The name a word-start term is matched against: first and last name as one string (the separating space starts
@@ -151,7 +156,9 @@ local NAME_TEXT = "CONCAT_WS(' ', p.firstname, p.lastname)"
 --- WHERE clause and params for a name search, or nil when no usable term is left. Every term is required. A term the
 --- FULLTEXT index can hold is '+term*' in one MATCH (ft_name); the others must start a word anywhere in the name
 --- (REGEXP). With at least one FULLTEXT term, MATCH picks the rows through ft_name and the REGEXP terms only filter
---- those; a query of short/stopword terms only (e.g. 'Bo', 'Li') has no index to use and scans fredpd_persons.
+--- those; a query of short/stopword terms only (e.g. 'Bo', 'Li') has no index to use and scans fredpd_persons
+--- (docs/modules/records.md "Short-term scan": LIKE 'x%' on lastname/firstname would not avoid it either, since
+--- firstname leads no index and an OR with it defeats idx_name).
 function M.nameWhere(terms, settings)
     settings = settings or M.ftSettings()
     local ft, words, params = {}, {}, {}

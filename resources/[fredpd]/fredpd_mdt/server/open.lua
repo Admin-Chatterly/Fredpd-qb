@@ -265,6 +265,8 @@ function M.open(src, req)
     if type(unit) ~= 'string' or #unit > 32 or not unit:find(M.UNIT_PATTERN) then unit = nil end
     local me = M.me(src, citizenid)
 
+    -- The checks above yield (inventory, MySQL, core); a player who dropped meanwhile must not leave a stale session.
+    if not GetPlayerName(tostring(src)) then return fail('tablet.unavailable') end
     Open[src] = { mode = mode, serial = serial, since = C.now() }
     return { grants = grants, unit = unit, me = { citizenid = me.citizenid, displayName = me.displayName,
         callsign = me.callsign } }

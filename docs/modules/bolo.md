@@ -82,17 +82,24 @@ hit/boloId/via — the lookup audit of §4.5; the `fredpd_plate_checks` row itse
 - **Level ≤ the actor's tier** on create (as §C14 for cases): tier 0 officers issue Standard only.
 - **Visibility** (record `{ type = 'bolo', id, level, status = live and 'open' or 'closed', unit = issuer's unit,
   ownerCitizenid = issued_by }`, defaults 50–55): `full`; `masked` = without `issuedBy`, `resolvedBy`,
-  `resolveNote`; `notice` = kontaktnotis: id, kind, citizenid/plate, subject, level, createdAt, active, and `reason` =
+  `resolveNote`; `notice` = kontaktnotis: id, kind, citizenid/plate, subject, `level` = fixed `NOTICE_LEVEL` 1 (never the real
+  level, so Begränsad and Hemlig cannot be told apart; BoloSchema requires a level), createdAt, active, and `reason` =
   `visibility.notice.text` ("Det finns uppgifter som rör {subject}. Kontakta Bo C. (SPAN-02)."), everything else
   absent; `none` = hidden (`resolveBolo` → `not_found`; a kontaktnotis viewer gets `unauthorized`). canView's cap
   makes masked impossible above the viewer's tier (it becomes notice).
 - **Paginated history** is filtered in SQL, so hidden BOLOs are neither on a page nor in `total`: a BOLO's result
   depends only on (level, open/closed, viewer is issuer, BOLO unit ∈ viewer units); those ≤ 24 combinations are
   evaluated in one `canViewMany` call and the visible ones become the WHERE clause (none with the default rules).
+- **Duplicate check reveals hidden BOLOs (accepted)**: `createBolo` answers `validation` + `duplicate` whenever an
+  active BOLO exists for the subject, even one whose canView result for the actor is `none`, so an officer with
+  `bolo.create` can learn that a hidden BOLO exists (not its content). This is the price of one active BOLO per
+  subject; any other answer (e.g. `unauthorized`) would differ from a successful create just the same. With the
+  default rules no BOLO is ever `none`, so it only matters under configured rules.
 - **Pushes carry ids only**: every open tablet refetches through `listBolos`, which applies canView per viewer, so no
   Begränsad/Hemlig text is broadcast. `fredpd:boloChanged` (server-side) carries the full Bolo.
 - **Hit fan-out**: `fredpd_dispatch:createAlert` in its own thread, at most once per plate (vehicle) or citizenid
-  (person) per 60 s, whatever the source; code `Efterlyst` (`bolo.hit.alertCode`), title `bolo.hit.alertTitle` /
+  (person) per 60 s, whatever the source; code `Efterlyst` (`bolo.hit.alertCode`, trimmed/cut to 16 characters; no hardcoded fallback: a missing key means no
+  alert and an error log), title `bolo.hit.alertTitle` /
   `alertTitlePerson`, description "{subject} är efterlyst: {reason}" + "Källa: {source}", priority 2, `source =
   'bolo'`, meta `{ boloId, hit, plate, radar }`. Alerts reach every on-duty officer, so for level > 0 the description
   carries the kontaktnotis instead of the reason. The payload of `fredpd:boloHit` is not trusted: the BOLO is looked
@@ -103,6 +110,10 @@ hit/boloId/via — the lookup audit of §4.5; the `fredpd_plate_checks` row itse
   vehicle (no bone: many models lack `platelight`), 3 m, added once at start (and again if ox_target restarts),
   removed on stop. Result: ox_lib context menu, hit first (red icon + full red bar + frontend sound), then owner and
   model; values are markdown-escaped (ox_lib renders context text as markdown). One request at a time per client.
+- **In-flight flags never stick** (docs/deps-verification.md §10: `MySQL.*.await` may never resume): the rebuild
+  flag and the per-subject create guard store `GetGameTimer()` and count as released after `STALE_FLAG_MS` (30 s);
+  the client's one-request-at-a-time flag after `BUSY_STALE_MS` (15 s). Checked on the next call, no timer.
+- **Subject placeholder**: a BOLO whose subject has no register row and no citizenid/plate shows `common.unknown`.
 - **`fredpd_plate_checks.source`** (`target` | `tablet` | `radar`) is an addition to the §C12 column list;
   `idx_officer_created` supports per-officer review. 010 also widens `resolve_note` to `VARCHAR(500)`
   (`BoloResolveInputSchema` allows 500; 004 had 255).
@@ -112,10 +123,11 @@ hit/boloId/via — the lookup audit of §4.5; the `fredpd_plate_checks` row itse
 
 ## Tests
 
-- **36 passed**: `lua5.4 tests/lua/run.lua bolo_input` 7 (validation mirror, plate normalisation vs
-  `detectSearchType`, menu/escaping/errors), `bolo_server` 23 against MariaDB database `fredpd_test_bolo_lua`
-  (session `+02:00`; real fredpd_core audit/mirror/canview modules), `bolo_client` 6. (`run.lua bolo_` also picks up
-  `police_bolo_test`, 13 more, which uses the same exports.)
+- **39 passed** in fredpd_bolo's own suites: `lua5.4 tests/lua/run.lua bolo_input` 7 (validation mirror, plate
+  normalisation vs `detectSearchType`, menu/escaping/errors), `bolo_server` 26 against MariaDB database
+  `fredpd_test_bolo_lua` (session `+02:00`; real fredpd_core audit/mirror/canview modules), `bolo_client` 6.
+  `run.lua bolo` reports **54** because it also picks up `police_bolo_test` (15, not ours), which uses the same
+  exports.
 - `pnpm exec vitest run --project resources fredpd_bolo` → **19 passed** (13 golden files parsed with
   `BoloSchema` / `BoloListOutputSchema` / `PlateCheckResultSchema` / `AlertCreateInputSchema` after restoring absent
   nulls, no unknown keys; push payload shape). Golden files are rewritten by `bolo_server_test` only on change.
@@ -185,11 +197,16 @@ hit/boloId/via — the lookup audit of §4.5; the `fredpd_plate_checks` row itse
 
 ## Open questions
 
-1. `BoloSchema` has no `visibility` field, so the NUI cannot mark a kontaktnotis as such (it only reads the text).
-   Add `visibility: 'full' | 'masked' | 'notice'` (like `CaseRefSchema`)?
+1. **Contract request (§C11/§C12)**: `BoloSchema` has no `visibility` field, so the NUI cannot mark a kontaktnotis
+   as such, and `level`/`createdAt` are required. Add `visibility: 'full' | 'masked' | 'notice'` (like
+   `CaseRefSchema`) and make `level` and `createdAt` nullable/omitted for notices; then fredpd_bolo drops both from
+   the notice shape and the NUI (`apps/nui/src/components/Bolos.tsx`) hides the level badge for notices. Until then
+   every notice carries level 1 (a notice row shows "Begränsad" even for Hemlig) and its real `createdAt`.
 2. MDT_ERROR_CODES has no `conflict`: a duplicate BOLO is `validation` + `reason = 'duplicate'`.
 3. Vehicle BOLOs need a plate in the register; efterlysning of an unregistered/stolen-plate or NPC car is refused
    (`not_found`), as the task asked. Allow it (subject = plate only) if Rami wants that.
 4. `fredpd_plate_checks` grows without bound (every check, every radar hit); a manual retention command like the
    audit archive may be wanted.
 5. Hit alert priority is 2 (normal); raise to 1 for BOLO hits?
+6. **Contract request (§C12)**: record the `fredpd_plate_checks.source` column and the `fredpd_bolos.resolve_note`
+   widening to `VARCHAR(500)` done by 010.

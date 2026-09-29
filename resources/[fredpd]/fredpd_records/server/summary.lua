@@ -266,6 +266,7 @@ end
 function M.homeCases(src, input)
     src = C.playerSrc(src)
     if not src then return C.fail('unauthorized') end
+    if not C.hasAnyPageGrant(src) then return C.fail('unauthorized') end
     if input ~= nil and type(input) ~= 'table' then return C.fail('validation') end
     local limit = C.optInt(input and input.limit, 1, M.MAX_HOME, M.MAX_HOME)
     if not limit then return C.fail('validation') end
@@ -282,6 +283,7 @@ end
 function M.countMyOpenCases(src)
     src = C.playerSrc(src)
     if not src then return C.fail('unauthorized') end
+    if not C.hasAnyPageGrant(src) then return C.fail('unauthorized') end
     local cid = actor(src)
     if not cid then return C.fail('unauthorized') end
     local n = MySQL.scalar.await("SELECT COUNT(*)" .. MY_CASES_FROM .. " WHERE c.status = 'open'", { cid, cid })

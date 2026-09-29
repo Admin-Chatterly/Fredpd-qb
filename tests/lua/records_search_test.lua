@@ -184,7 +184,7 @@ tests['04 several terms, short terms and stopwords (REGEXP fallback), Swedish le
         -- short/stopword terms are a bound word-start REGEXP on the whole name, never interpolated
         names('Bo')
         local re = lastSql(env, 'REGEXP')
-        t.eq(re.params, { '(^|[^[:alnum:]])Bo' })
+        t.eq(re.params, { mods['server.search'].WORD_START .. 'Bo' })
         t.ok(not re.sql:find('Bo', 1, true), 'term only as a parameter')
         t.eq(({ names('bo') })[2], 20, 'REGEXP is case-insensitive under the _ci collation')
     end)
@@ -197,6 +197,7 @@ tests['04b word-start REGEXP: inside hyphenated/multi-word names, letters beyond
             { 'RP902', 'Carlos', 'de la Cruz', nil, nil, 0, nil },
             { 'RP903', 'Åsa', 'Öst', nil, nil, 1, nil },
             { 'RP904', 'Olivia', 'Kalix', nil, nil, 1, nil },
+            { 'RP905', 'Björn', 'Åkesson', nil, nil, 0, nil },
         })
         local function ids(q)
             local r = search(mods, 1, { query = q })
@@ -210,6 +211,17 @@ tests['04b word-start REGEXP: inside hyphenated/multi-word names, letters beyond
         t.eq(ids('Li Ek'), { 'RP901' }, 'two short terms, both required')
         t.eq(ids('Cruz la'), { 'RP902' }, 'FULLTEXT term + REGEXP filter')
         t.eq(ids('ix'), {}, 'no mid-word match')
+        t.eq(ids('rn'), {}, 'ASCII term after a non-ASCII letter mid-word (Björn) is no word start')
+        t.eq(ids('Bj'), { 'RP905' })
+        t.eq(ids('ke'), {}, 'nor after Å (Åkesson)')
+        -- the separator class itself, independent of the server's PCRE2 UCP mode
+        local S = mods['server.search']
+        for _, case in ipairs({ { 'Björn', 'rn', 0 }, { 'Anna-Li', 'Li', 1 }, { 'Åsa Öberg', 'öb', 1 },
+            { 'O\u{2014}Li', 'Li', 1 }, { 'Zoë', 'e', 0 }, { 'Olivia', 'li', 0 } }) do
+            local v = MySQL.scalar.await('SELECT CAST(? AS CHAR CHARACTER SET utf8mb4) COLLATE utf8mb4_swedish_ci REGEXP ?',
+                { case[1], S.wordStartPattern(case[2]) })
+            t.eq(tonumber(v), case[3], case[1] .. ' / ' .. case[2])
+        end
     end)
 end
 
@@ -272,9 +284,9 @@ tests['06 terms(): word splitting and caps'] = function(t)
         t.eq(#S.terms(('x'):rep(40))[1], 32, 'terms cut to 32 characters')
         t.eq(S.terms('×÷«»–—“”'), {})
         t.eq(S.terms('Ber\255g'), { 'Ber', 'g' }, 'invalid UTF-8 bytes separate words')
-        t.eq(S.wordStartPattern('Bo'), '(^|[^[:alnum:]])Bo')
-        t.eq(S.wordStartPattern('Åsa'), '(^|[^[:alnum:]])Åsa', 'letters beyond ASCII stay literal')
-        t.eq(S.wordStartPattern('a.b*'), '(^|[^[:alnum:]])a\\.b\\*', 'regex characters escaped (defence in depth)')
+        t.eq(S.wordStartPattern('Bo'), S.WORD_START .. 'Bo')
+        t.eq(S.wordStartPattern('Åsa'), S.WORD_START .. 'Åsa', 'letters beyond ASCII stay literal')
+        t.eq(S.wordStartPattern('a.b*'), S.WORD_START .. 'a\\.b\\*', 'regex characters escaped (defence in depth)')
         local C = mods['server.common']
         t.eq(C.cutBytes('abc', 64), 'abc')
         t.eq(C.cutBytes(('ö'):rep(40), 64), ('ö'):rep(32))
@@ -411,11 +423,16 @@ tests['10 BOLO flags: person hits, level above the viewer, fredpd_bolo stopped o
         -- fredpd_bolo stopped: no export calls at all, flags false
         env.bolos.persons.RP011 = H.bolo(4, 'person', { citizenid = 'RP011' })
         env.resources.fredpd_bolo = 'stopped'
-        local before = env.calls.checkPerson
+        local before = env.calls.hasVisibleBolo
         local stopped = search(mods, 1, { query = 'Anna Berg' })
         t.eq(stopped.ok, true)
         t.eq(stopped.data.hits[1].bolo, false)
-        t.eq(env.calls.checkPerson, before, 'no calls into a stopped resource')
+        t.eq(env.calls.hasVisibleBolo, before, 'no calls into a stopped resource')
+        -- the flag comes from hasVisibleBolo alone (memory in fredpd_bolo): no getBolosFor per hit
+        env.resources.fredpd_bolo = 'started'
+        local lists = env.calls.getBolosFor
+        t.eq(search(mods, 1, { query = 'Anna Berg' }).data.hits[1].bolo, true)
+        t.eq(env.calls.getBolosFor, lists, 'search never asks getBolosFor')
         -- started but the export raises: flags false, one warning
         env.resources.fredpd_bolo = 'started'
         env.boloThrows = true

@@ -43,7 +43,7 @@ function CheckResult({ result }: { result: PlateCheckResult }) {
 
 export function VehicleView({ data }: { data: VehicleSummary }) {
   const i18n = useI18n();
-  const { t, tx } = i18n;
+  const { t } = i18n;
   const errorText = useErrorText();
   const { grants } = useSession();
   const canCreate = usePerm(PERMS.boloCreate);
@@ -121,7 +121,7 @@ export function VehicleView({ data }: { data: VehicleSummary }) {
                 <li key={`${c.checkedAt}-${i}`} className="flex items-center gap-3 px-4 py-2 text-sm">
                   <span className="w-40 shrink-0 text-muted">{fmtDateTime(i18n, c.checkedAt)}</span>
                   <span className="min-w-0 flex-1 truncate text-fg">{c.officer ? t('vehicle.checkedBy', { name: officerLabel(c.officer) }) : null}</span>
-                  <Badge tone={c.hit ? 'danger' : 'neutral'}>{tx(c.hit ? 'vehicle.checkHit' : 'vehicle.checkClear')}</Badge>
+                  <Badge tone={c.hit ? 'danger' : 'neutral'}>{t(c.hit ? 'vehicle.checkHit' : 'vehicle.checkClear')}</Badge>
                 </li>
               ))}
             </ul>

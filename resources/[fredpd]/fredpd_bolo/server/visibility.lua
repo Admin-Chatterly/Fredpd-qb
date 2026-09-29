@@ -8,10 +8,10 @@
 --           rules never give masked for a BOLO; a configured rule may.
 --   notice  kontaktnotis: subject (kind, citizenid/plate, subject label) and a reason that reads "Det finns
 --           uppgifter som rör {subject}. Kontakta {owner}." (visibility.notice.text); issuedBy, expiresAt and the
---           resolve fields are left out. BoloSchema requires id, level, createdAt and active, so those stay too; the
---           level of a kontaktnotis is more than the task allows (CaseRefSchema's notice has no id or level) and is
---           not shown by this module's own UI (shared/view.lua). BoloSchema has no visibility field, so the NUI
---           cannot tell a notice from a full BOLO except by its content (docs/modules/bolo.md, open questions 1-2).
+--           resolve fields are left out. BoloSchema requires id, level, createdAt and active, so those stay; the
+--           real level must not leak (Begränsad vs Hemlig), so every kontaktnotis carries the fixed NOTICE_LEVEL (1)
+--           whatever the BOLO's level is. BoloSchema has no visibility field yet; the contract request to add one
+--           and make level/createdAt nullable for notices is in docs/modules/bolo.md (open question 1).
 --   none    hidden (list/getBolosFor drop it; resolve answers not_found).
 --
 -- Default rules (db/seed/visibility_rules_default.sql 50-55): records.admin, level 0, the issuer (assigned =
@@ -29,6 +29,9 @@ local M = {}
 
 --- Locale function; server/main.lua sets it to fredpd_core's L.
 M.L = function(key) return key end
+
+--- Level every kontaktnotis carries, so a notice never tells Begränsad from Hemlig (the real level stays hidden).
+M.NOTICE_LEVEL = 1
 
 M.WIRE_FIELDS = { 'id', 'kind', 'citizenid', 'plate', 'subject', 'reason', 'level', 'issuedBy', 'createdAt',
     'expiresAt', 'active', 'resolvedBy', 'resolvedAt', 'resolveNote' }
@@ -106,7 +109,7 @@ function M.shape(entry, result, live)
             plate = entry.plate,
             subject = entry.subject,
             reason = M.noticeText(entry),
-            level = entry.level,
+            level = M.NOTICE_LEVEL,
             createdAt = entry.createdAt,
             active = live == true,
         }

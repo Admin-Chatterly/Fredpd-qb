@@ -386,6 +386,12 @@ tests['9 resource stop, logout and ox_target restarts'] = function(t)
         useItem(env)
         env.net['QBCore:Client:OnPlayerUnload']()
         t.eq(M.isOpen(), false, 'logout closes')
+        -- Closed already: logout/forceClose must not touch focus (another NUI, e.g. multicharacter, may hold it).
+        local focusCalls = #env.focus
+        env.net['QBCore:Client:OnPlayerUnload']()
+        env.net['fredpd:client:forceClose']('tablet.revoked')
+        t.eq(#env.focus, focusCalls, 'no focus release while closed')
+        t.eq(#env.server, 1, 'only the first logout told the server')
     end)
 end
 

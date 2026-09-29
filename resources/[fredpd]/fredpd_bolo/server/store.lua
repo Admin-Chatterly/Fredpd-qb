@@ -108,15 +108,16 @@ local function officerRef(citizenid, displayName, callsign, unit)
 end
 M.officerRef = officerRef
 
---- Subject label: person name (mirror) or plate + model; the citizenid / bare plate when the mirror has no row.
+--- Subject label: person name (mirror) or plate + model; the citizenid / bare plate when the mirror has no row,
+--- common.unknown ("Okänt") when there is neither.
 function M.subject(kind, citizenid, plate, firstname, lastname, model)
     if kind == 'person' then
         local name = ((str(firstname) or '') .. ' ' .. (str(lastname) or '')):gsub('^%s+', ''):gsub('%s+$', '')
         if name ~= '' then return name end
-        return citizenid or '?'
+        return citizenid or M.L('common.unknown')
     end
     if plate and str(model) then return M.L('bolo.subject.vehicle', { plate = plate, model = str(model) }) end
-    return plate or '?'
+    return plate or M.L('common.unknown')
 end
 
 --- One fredpd_bolos row (M.SELECT) -> entry.

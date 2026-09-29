@@ -51,6 +51,19 @@ describe('Dialog', () => {
     expect(onClose).toHaveBeenCalledTimes(2);
   });
 
+  it('ignores the backdrop when dismissOnBackdrop is false', () => {
+    const onClose = vi.fn();
+    wrap(
+      <Dialog open title="T" onClose={onClose} dismissOnBackdrop={false}>
+        <p>formulär</p>
+      </Dialog>,
+    );
+    fireEvent.mouseDown(screen.getByRole('dialog').parentElement as HTMLElement);
+    expect(onClose).not.toHaveBeenCalled();
+    fireEvent.click(screen.getByRole('button', { name: 'Stäng' }));
+    expect(onClose).toHaveBeenCalledTimes(1);
+  });
+
   it('gives the focus back when it closes', () => {
     function Harness() {
       const [open, setOpen] = useState(false);

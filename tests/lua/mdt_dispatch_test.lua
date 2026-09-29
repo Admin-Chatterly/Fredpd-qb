@@ -299,4 +299,26 @@ tests['11 main.lua: callbacks, the close event (own session only), exports and p
     end)
 end
 
+tests['12 terminal session: re-checked per action; leaving the vehicle force-closes it'] = function(t)
+    H.with(function(env, mods)
+        local D, Open = mods['server.dispatch'], mods['server.open']
+        env.seat(2, 7003, 'police3', -1)
+        H.openTablet(mods, 2, { mode = 'terminal' })
+        t.eq(D.handle(2, { action = 'search', input = { query = 'Anna' } }), { routed = 'fredpd_records:search' })
+        -- Client left the car but suppressed its close event.
+        env.vehicles = {}
+        env.client = {}
+        env.now = env.now + 10000
+        t.eq(D.handle(2, { action = 'search', input = { query = 'Anna' } }), { error = 'unauthorized' })
+        t.eq(Open.isOpen(2), false)
+        t.eq(env.sent(2, 'fredpd:client:forceClose')[1].args, { 'tablet.unavailable' })
+        t.eq(#env.callsTo('fredpd_records', 'search'), 1, 'not routed after leaving')
+        t.eq(D.handle(2, { action = 'close', input = {} }), { ok = true }, 'close still works')
+        -- Item sessions are not tied to a vehicle.
+        env.now = env.now + 10000
+        H.openTablet(mods, 1)
+        t.eq(D.handle(1, { action = 'search', input = { query = 'Anna' } }), { routed = 'fredpd_records:search' })
+    end)
+end
+
 return tests

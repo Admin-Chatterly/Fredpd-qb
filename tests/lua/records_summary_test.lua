@@ -91,7 +91,12 @@ tests['02 person: full summary with every CaseRef variant, records and audit'] =
             personnummer = '19900517-1234', gender = 'female', phone = '070-123 45 67' })
         t.eq(d.vehicles, { { plate = 'ABC123', model = 'sultan', bolo = true }, { plate = 'XYZ98A', bolo = false } })
         t.eq(d.bolos, { H.bolo(3, 'person') })
-        t.eq(d.address, 'Grove Street 12; Vinewood Hills 3')
+        t.eq(d.address, 'Grove Street 12; Vinewood Hills 3') -- getAddresses is a funcref-like table (env mock)
+        local C = mods['server.common']
+        t.eq(C.callable(function() end), true)
+        t.eq(C.callable(setmetatable({}, { __call = function() end })), true, 'msgpack function reference')
+        t.eq(C.callable({}), false)
+        t.eq(C.callable('getAddresses'), false)
         t.eq(d.cases, {
             { visibility = 'masked', id = 7, caseNumber = 'K-7-26', status = 'open', level = 1, role = 'other' },
             { visibility = 'full', id = 4, caseNumber = 'K-4-26', title = 'Misshandel på Grove Street', status = 'open',
@@ -370,7 +375,8 @@ tests['09 home: owner or assignee, open first, limit, canView applied, count'] =
         for _, ref in ipairs(r.data) do H.checkRef(t, ref) end
         t.eq(#S.homeCases(1, { limit = 1 }).data, 1)
         t.eq(#S.homeCases(1, nil).data, 3, 'input may be omitted')
-        t.eq(S.homeCases(4, {}).data, {}, 'no cases')
+        t.eq(S.homeCases(4, {}), { ok = false, error = 'unauthorized' }, 'no mdt_page grant')
+        t.eq(S.countMyOpenCases(4), { ok = false, error = 'unauthorized' }, 'no mdt_page grant')
         t.eq(S.homeCases(5, {}), { ok = false, error = 'unauthorized' }, 'no character loaded')
         t.eq(S.homeCases(0, {}), { ok = false, error = 'unauthorized' })
         for i, input in ipairs({ 'x', { limit = 0 }, { limit = 11 }, { limit = 2.5 }, { limit = '3' } }) do

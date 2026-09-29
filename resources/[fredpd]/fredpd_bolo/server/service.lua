@@ -33,6 +33,15 @@ local M = {}
 M.TARGET_RATE_MS = 1000 -- ox_target plate check: 1 per second per player (server side)
 M.TARGET_DISTANCE = 10.0 -- metres between the officer and the vehicle (ox_target option distance is 3)
 M.REBUILD_ATTEMPTS = 5
+-- In-flight flags (rebuild, create per subject) hold the GetGameTimer() they were set at. MySQL.*.await never resumes
+-- when the pool cannot hand out a connection (docs/deps-verification.md §10), so a flag older than this is treated as
+-- released on the next call (no timer): a DB outage cannot block rebuilds or a subject for good.
+M.STALE_FLAG_MS = 30000
+
+--- True while a flag set at `since` (GetGameTimer ms, or nil) is still held.
+local function held(since)
+    return since ~= nil and GetGameTimer() - since < M.STALE_FLAG_MS
+end
 
 --- Locale function; server/main.lua sets it to fredpd_core's L.
 M.L = function(key) return key end
@@ -110,22 +119,24 @@ function M.rebuild()
     return Cache.replaceAll(entries, startGen)
 end
 
-local rebuilding, dirty = false, false
+local rebuildingSince, dirty = nil, false -- GetGameTimer() when the running rebuild started
 
 --- Rebuild in a thread of its own; changes during a rebuild make it run again (bounded, no loop while idle).
 function M.scheduleRebuild()
-    if rebuilding then
+    if held(rebuildingSince) then
         dirty = true
         return
     end
-    rebuilding = true
+    local mine = GetGameTimer()
+    rebuildingSince = mine
     CreateThread(function()
         for _ = 1, M.REBUILD_ATTEMPTS do
             dirty = false
             local okRun, applied = pcall(M.rebuild)
             if okRun and applied and not dirty then break end
         end
-        rebuilding = false
+        -- a stale run that finally resumes must not release a newer rebuild's flag
+        if rebuildingSince == mine then rebuildingSince = nil end
     end)
 end
 
@@ -219,7 +230,7 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- createBolo
 
-local pending = {} -- [subject key] = true while an insert for it is in flight
+local pending = {} -- [subject key] = GetGameTimer() while an insert for it is in flight (stale after STALE_FLAG_MS)
 
 --- The actor's primary unit (fredpd_officers.unit, else the first unit grant) and intel tier.
 local function actorProfile(src)
@@ -267,11 +278,12 @@ function M.createBolo(src, input)
     if not ensureCache() then return fail('unavailable') end
     local key = q.kind == 'person' and ('person:' .. q.citizenid) or ('vehicle:' .. q.plate)
     local existing = q.kind == 'person' and Cache.getByCitizen(q.citizenid) or Cache.getByPlate(q.plate)
-    if existing or pending[key] then return fail('validation', 'duplicate') end
+    if existing or held(pending[key]) then return fail('validation', 'duplicate') end
 
-    pending[key] = true
+    local mine = GetGameTimer()
+    pending[key] = mine
     local okInsert, id = pcall(Store.insert, q, { citizenid = actor.citizenid, unit = unit })
-    pending[key] = nil
+    if pending[key] == mine then pending[key] = nil end
     if not okInsert then
         Fanout.logThrottled('create', 'error', 'createBolo insert failed: %s', tostring(id))
         return fail('unavailable')

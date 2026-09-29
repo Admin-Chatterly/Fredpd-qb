@@ -53,11 +53,15 @@ not rate limited: idempotent, O(1), and a dropped close would leave a stale sess
 **Forced closes** (`TriggerClientEvent('fredpd:client:forceClose', src, reasonKey)`): a revoked serial
 (`tablet.revoked`), `fredpd:grantsChanged` leaving no mdt_page grant (`tablet.noGrant`), `QBCore:Server:SetDuty`
 false / `OnJobUpdate` while off duty (`tablet.notOnDuty`), the `closeTablet` export. Those handlers are
-`AddEventHandler` only and ignore a player `source`.
+`AddEventHandler` only and ignore a player `source`. The session is written only after a final
+`GetPlayerName(src)` check: the open checks yield (inventory, MySQL, core), and a player who dropped meanwhile
+(playerDropped already ran) must not leave a stale session.
 
 ## Dispatcher (`lib.callback 'fredpd:mdt:action'`, `server/dispatch.lua`)
 
-Exactly §C12: (1) `Open[src]` except `close` → `unauthorized`; (2) unknown action or input failing
+Exactly §C12: (1) `Open[src]` except `close` → `unauthorized`; a `terminal` session also re-runs the server seat
+check (natives only, no DB) and is force-closed (`tablet.unavailable`) → `unauthorized` when the player is no
+longer seated in the police vehicle, so a client that suppresses its close event cannot keep the terminal; (2) unknown action or input failing
 `shared/validate.lua` → `validation`; (3) the action's grant → `unauthorized`, then on duty except `close` →
 `{ error = 'unauthorized', reason = 'off_duty' }`; (4) rate limit per player per action → `rate_limited`;
 (5) route. A refusal at any step does not consume the rate limit. Exports answer `{ ok, data | error, reason? }`
@@ -149,8 +153,10 @@ sent as `null` is accepted as absent (zod refuses); `[]` and `{}` are the same L
   to bone 28422 with the config offset/rotation, `SetModelAsNoLongerNeeded`, `TaskPlayAnim` flag 49,
   `RemoveAnimDict`. A tablet closed while the model streams releases it; a load failure keeps the tablet open
   without prop. No prop in a vehicle.
-- `close(notifyServer)`: `SetNuiFocus(false, false)` always (also when not open), `{ action = 'close' }`, prop
-  detached and deleted, anim stopped, `fredpd:mdt:closed` unless the server closed it.
+- `close(notifyServer)`: only when open: `SetNuiFocus(false, false)`, `{ action = 'close' }`, prop detached and
+  deleted, anim stopped, `fredpd:mdt:closed` unless the server closed it. When closed it does nothing, so logout
+  (`OnPlayerUnload`) or a forceClose never takes focus from another resource's NUI (qbx multicharacter). Focus is
+  released unconditionally only by the NUI `close` callback (our own page asked), the F8 command and resource stop.
 - **Focus traps (§8.3):** NUI `close` callback (Esc, close button; answers `{ ok = true }`), `forceClose`, death
   (`gameEventTriggered` `CEventNetworkEntityDamage` with the own ped dead, `baseevents:onPlayerDied/Killed`,
   state bag `isDead` of `player:<serverId>` — these handlers are added on open and removed on close, so a closed
@@ -233,6 +239,8 @@ Note: `tablet.issued` ends with "." after `{name}`, so a name ending in "." show
 4. Serial without an `fredpd_tablets` row → `tablet.unregistered` (an admin `/giveitem pd_tablet` does not work).
 5. The vehicle terminal needs no item by default (`terminal.requireItem`); §4.6's item rule is applied to the
    hand-held tablet. Say if the terminal must also require a registered tablet.
-6. A tablet taken from the holder while open keeps working until it closes (the item is checked at open, §4.6).
+6. A hand-held tablet taken from the holder while open keeps working until it closes (the item is checked at open,
+   §4.6; grant and duty are checked on every action). Not done: an ox_inventory `swapItems` hook (itemFilter
+   `pd_tablet`) that force-closes when the serial leaves the inventory. The terminal is re-checked per action.
 7. `pushToOpenTablets` gained the duty/topic-grant rules dispatch.md asked for and an optional filter argument.
 8. §C12 names no Hem variant for officers without a unit: `igv` is used.

@@ -2,7 +2,8 @@
 // Modal dialog. By default it covers the nearest positioned ancestor (`absolute`): in the tablet that is the
 // tablet frame, so the dialog never spills over the game around it. The portal can pass `position="fixed"`.
 // Esc is not handled here: in the tablet Esc always closes the tablet (IMPLEMENTATION.md §5.2). Clicking the
-// backdrop or the close button calls onClose. Focus moves into the dialog on open and back when it closes.
+// backdrop (unless `dismissOnBackdrop={false}`, for forms whose input a stray click must not discard) or the close
+// button calls onClose. Focus moves into the dialog on open and back when it closes.
 import { useEffect, useId, useRef } from 'react';
 import type { ReactNode } from 'react';
 import { cn } from '../cn';
@@ -22,12 +23,14 @@ export interface DialogProps {
   size?: DialogSize;
   /** `absolute` (default) covers the nearest positioned ancestor; `fixed` covers the viewport. */
   position?: 'absolute' | 'fixed';
+  /** Close on a mouse-down on the backdrop (default true). Pass false for forms holding user input. */
+  dismissOnBackdrop?: boolean;
 }
 
 const SIZES: Record<DialogSize, string> = { md: 'max-w-lg', lg: 'max-w-2xl' };
 const FOCUSABLE = '[data-autofocus], input:not([disabled]), select:not([disabled]), textarea:not([disabled]), button:not([disabled])';
 
-export function Dialog({ open, title, onClose, children, footer, size = 'md', position = 'absolute' }: DialogProps) {
+export function Dialog({ open, title, onClose, children, footer, size = 'md', position = 'absolute', dismissOnBackdrop = true }: DialogProps) {
   const t = useT();
   const titleId = useId();
   const panelRef = useRef<HTMLDivElement>(null);
@@ -48,7 +51,7 @@ export function Dialog({ open, title, onClose, children, footer, size = 'md', po
     <div
       className={cn(position === 'fixed' ? 'fixed' : 'absolute', 'inset-0 z-50 flex items-center justify-center bg-black/60 p-4')}
       onMouseDown={(e) => {
-        if (e.target === e.currentTarget) onClose();
+        if (dismissOnBackdrop && e.target === e.currentTarget) onClose();
       }}
     >
       <div

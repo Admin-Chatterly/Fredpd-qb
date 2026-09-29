@@ -8,6 +8,7 @@ import { useState } from 'react';
 import type { ReactNode } from 'react';
 import { Link } from 'react-router';
 import type { Bolo, Level } from '@fredpd/types/mdt';
+import type { LocaleKey } from '@fredpd/types/locale-keys';
 import { Badge, Button, Dialog, EmptyState, LEVEL_LOCALE_KEYS, Label, SearchInput, Textarea, cn, fieldClass, useI18n } from '@fredpd/ui';
 import { useMdtMutation, useMdtQuery } from '../api/hooks';
 import { useErrorText } from '../api/errors';
@@ -102,7 +103,7 @@ export function BoloList({ bolos, showSubject = false, onResolve, empty }: BoloL
 
 /** Search-based subject picker: person (name or personnummer) or vehicle (plate). Enter searches. */
 function SubjectPicker({ kind, onPick }: { kind: BoloKind; onPick: (subject: BoloSubject) => void }) {
-  const { t, tx } = useI18n();
+  const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');
   const enabled = submitted.length >= SEARCH_MIN_LENGTH;
@@ -119,7 +120,7 @@ function SubjectPicker({ kind, onPick }: { kind: BoloKind; onPick: (subject: Bol
     return [];
   });
 
-  const placeholder = tx(kind === 'person' ? 'bolo.create.searchPerson' : 'bolo.create.searchVehicle');
+  const placeholder = t(kind === 'person' ? 'bolo.create.searchPerson' : 'bolo.create.searchVehicle');
   return (
     <div className="flex flex-col gap-2">
       <SearchInput
@@ -158,7 +159,7 @@ function createErrorText(err: MdtClientError, subject: string, i18n: ReturnType<
   return errorText(err);
 }
 
-const ISSUE_KEYS: Readonly<Record<BoloFormIssue, string>> = {
+const ISSUE_KEYS: Readonly<Record<BoloFormIssue, LocaleKey>> = {
   subject: 'bolo.create.subjectRequired',
   reason: 'errors.field.tooShort',
   level: 'bolo.create.levelTooHigh',
@@ -179,7 +180,7 @@ export interface BoloCreateDialogProps {
 /** Mount it to open it (each mount starts from a fresh form). */
 export function BoloCreateDialog({ onClose, kind: initialKind, subject: initialSubject = null, tier, onCreated }: BoloCreateDialogProps) {
   const i18n = useI18n();
-  const { t, tx } = i18n;
+  const { t } = i18n;
   const errorText = useErrorText();
   const [form, setForm] = useState<BoloForm>(() => initialBoloForm(initialKind ?? initialSubject?.kind ?? 'person', initialSubject));
   const [issues, setIssues] = useState<BoloFormIssue[]>([]);
@@ -201,12 +202,13 @@ export function BoloCreateDialog({ onClose, kind: initialKind, subject: initialS
   };
 
   const issueText = (issue: BoloFormIssue) =>
-    issue === 'reason' ? t('errors.field.tooShort', { min: BOLO_REASON_MIN }) : tx(ISSUE_KEYS[issue]);
+    issue === 'reason' ? t('errors.field.tooShort', { min: BOLO_REASON_MIN }) : t(ISSUE_KEYS[issue]);
   const has = (issue: BoloFormIssue) => issues.includes(issue);
 
   return (
     <Dialog
       open
+      dismissOnBackdrop={false}
       title={t('bolo.create.title')}
       onClose={onClose}
       footer={
@@ -327,6 +329,7 @@ export function BoloResolveDialog({ bolo, onClose, onResolved }: BoloResolveDial
   return (
     <Dialog
       open
+      dismissOnBackdrop={false}
       title={t('bolo.resolve.button')}
       onClose={onClose}
       footer={

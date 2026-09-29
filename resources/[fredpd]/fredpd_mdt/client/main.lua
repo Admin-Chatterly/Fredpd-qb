@@ -190,9 +190,11 @@ function M.open(mode, slot, vehicle)
 end
 
 --- Close the tablet. notifyServer = false when the server already closed it (forceClose). @return boolean was open
+--- Focus is only released when this resource holds it, so logout/forceClose never steals focus from another NUI
+--- (e.g. the qbx character selector). The NUI 'close' callback, the F8 command and resource stop release it always.
 function M.close(notifyServer)
-    SetNuiFocus(false, false)
     if not state.open then return false end
+    SetNuiFocus(false, false)
     state.open, state.mode, state.vehicle = false, nil, nil
     state.gen = state.gen + 1
     removeHandlers()
@@ -215,7 +217,8 @@ exports('isOpen', M.isOpen)
 -- NUI callbacks
 
 RegisterNUICallback('close', function(_, cb)
-    M.close(true)
+    -- Our own page asked: release focus even if the state says closed (never leave a focus trap).
+    if not M.close(true) then SetNuiFocus(false, false) end
     cb({ ok = true })
 end)
 
@@ -262,7 +265,7 @@ end)
 
 -- Last-resort escape hatch, typed in the F8 console if the page ever fails to answer Esc.
 RegisterCommand('fredpd_mdt_close', function()
-    M.close(true)
+    if not M.close(true) then SetNuiFocus(false, false) end
 end, false)
 
 -- Terminal: leaving the vehicle (or switching to another one) closes it.

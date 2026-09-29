@@ -19,8 +19,6 @@ M.HIT_COOLDOWN_MS = 60000 -- IMPLEMENTATION.md §5.4 "cooldown 60 s per plate"
 M.HIT_MEMORY = 256 -- cooldown keys kept before old ones are pruned (no timer)
 M.HIT_PRIORITY = 2 -- alert priority: normal
 M.HIT_CODE_MAX = 16 -- AlertCreateInputSchema.code (dispatch.ts)
-M.HIT_CODE_FALLBACK = 'BOLO' -- a radio-style code like fredpd_dispatch's '10-11', used only if the locale value
--- (bolo.hit.alertCode, "Efterlyst") is missing (pending locale not merged) or does not fit
 
 --- Locale function; server/main.lua sets it to fredpd_core's L.
 M.L = function(key) return key end
@@ -151,15 +149,16 @@ function M.street(s)
     return s
 end
 
---- Alert code: the locale's (bolo.hit.alertCode), or HIT_CODE_FALLBACK when that is missing or too long for
---- fredpd_dispatch (which would refuse the whole alert).
+--- Alert code: the locale's (bolo.hit.alertCode, "Efterlyst"), trimmed and cut to HIT_CODE_MAX characters so
+--- fredpd_dispatch accepts it. nil when the key is missing (no hardcoded fallback text; the locale test guarantees it).
 function M.alertCode()
     local key = 'bolo.hit.alertCode'
     local code = M.L(key)
-    local n = type(code) == 'string' and utf8.len(code) or nil
-    if code == key or not n or n < 1 or n > M.HIT_CODE_MAX or code:find('^%s') or code:find('%s$') then
-        return M.HIT_CODE_FALLBACK
-    end
+    if type(code) ~= 'string' or code == key or not utf8.len(code) then return nil end
+    code = code:gsub('^%s+', ''):gsub('%s+$', '')
+    local n = utf8.len(code)
+    if n > M.HIT_CODE_MAX then code = code:sub(1, utf8.offset(code, M.HIT_CODE_MAX + 1) - 1):gsub('%s+$', '') end
+    if code == '' then return nil end
     return code
 end
 
@@ -203,10 +202,14 @@ function M.hitAlert(entry, ctx, publicReason)
         M.logThrottled('dispatch', 'warn', 'BOLO hit #%d not alerted: fredpd_dispatch is not running', entry.id)
         return false
     end
+    local input = M.alertInput(entry, ctx, publicReason)
+    if not input.code then
+        M.logThrottled('code', 'error', 'BOLO hit #%d not alerted: locale key bolo.hit.alertCode is missing', entry.id)
+        return false
+    end
     local key = M.hitKey(entry)
     local startedAt = M.takeCooldown(key)
     if not startedAt then return false end
-    local input = M.alertInput(entry, ctx, publicReason)
     CreateThread(function()
         local ok, alert, err = pcall(function() return exports.fredpd_dispatch:createAlert(input) end)
         if not ok or not alert then

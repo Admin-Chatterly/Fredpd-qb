@@ -216,32 +216,18 @@ function M.bolosFor(src, kind, id)
     return list
 end
 
---- true when `bolo` (what fredpd_bolo's checkPlate/checkPerson returned: the live BOLO or nil) is one the viewer may
---- know about. The wire Bolo carries neither the BOLO's unit nor its issuer as fredpd_bolo's own VisRecord uses them,
---- so visibility is not rebuilt here: the flag is set only when that BOLO is also in getBolosFor(src, kind, id), which
---- fredpd_bolo filters with canView (any shape: full, masked or kontaktnotis). The flag and the page's BOLO list thus
---- always agree, under any rule set. Only hits that have a live BOLO pay for that call.
-function M.boloVisible(src, kind, id, bolo)
-    if type(bolo) ~= 'table' or bolo.active == false or bolo.active == 0 then return false end
-    local boloId = M.int(bolo.id)
-    if not boloId then return false end
-    for _, b in ipairs(M.bolosFor(src, kind, id)) do
-        if M.int(b.id) == boloId and b.active ~= false and b.active ~= 0 then return true end
-    end
-    return false
-end
-
---- BOLO flag for a search hit / vehicle row: exports.fredpd_bolo:checkPlate(plate) or checkPerson(citizenid)
---- (memory only), then M.boloVisible. false when fredpd_bolo is stopped or a call fails. `running` =
+--- BOLO flag for a search hit / vehicle row: exports.fredpd_bolo:hasVisibleBolo(src, kind, id) (memory only; canView
+--- on the cached entry, so the BOLO's unit and issuer count, and any shape - full, masked, kontaktnotis - sets the flag,
+--- as the page's getBolosFor list shows it). false when fredpd_bolo is stopped or the call fails. `running` =
 --- M.boloRunning(), checked once by the caller.
 function M.boloFlag(src, kind, id, running)
     if not running then return false end
-    local ok, bolo = pcall(call, M.BOLO, kind == 'vehicle' and 'checkPlate' or 'checkPerson', id)
+    local ok, visible = pcall(call, M.BOLO, 'hasVisibleBolo', src, kind == 'vehicle' and 'vehicle' or 'person', id)
     if not ok then
-        M.warnOnce('bolo:check', ('exports.fredpd_bolo check failed: %s'):format(tostring(bolo)))
+        M.warnOnce('bolo:check', ('exports.fredpd_bolo:hasVisibleBolo failed: %s'):format(tostring(visible)))
         return false
     end
-    return M.boloVisible(src, kind, id, bolo)
+    return visible == true
 end
 
 --- Audit a lookup (§4.5; basis for "obehörig sökning"). Fire-and-forget: a failed audit call is logged, never
@@ -255,6 +241,18 @@ end
 function M.hasGrant(src, grantType, key)
     local ok, res = M.core('hasGrant', src, grantType, key)
     return ok and res == true
+end
+
+--- Every `mdt_page` key (packages/types/src/mdtPages.ts MDT_PAGE_KEYS; keep in sync). There is no 'home' key:
+--- Hem is open to anyone who can open the tablet, i.e. holds at least one mdt_page grant (fredpd_mdt getHome).
+M.MDT_PAGE_KEYS = { 'search', 'alerts', 'bolos', 'cases', 'evidence', 'intel', 'charges', 'roster', 'command' }
+
+--- Does src hold any mdt_page grant (the gate fredpd_mdt applies to opening the tablet and to getHome)?
+function M.hasAnyPageGrant(src)
+    for _, key in ipairs(M.MDT_PAGE_KEYS) do
+        if M.hasGrant(src, 'mdt_page', key) then return true end
+    end
+    return false
 end
 
 --- Viewer tier 0..2 (0 when unknown).
@@ -272,10 +270,20 @@ end
 M.MAX_ADDRESSES = 3
 M.MAX_ADDRESS_CHARS = 200
 
+--- A function, or a table with a __call metamethod: functions inside a table returned across resources (the adapter
+--- from exports.fredpd_core:getAdapter) arrive as msgpack function references, which FiveM's Lua runtime unpacks as
+--- tables with a callable metatable (citizenfx scheduler.lua funcref_mt), so type() is 'table' there.
+function M.callable(fn)
+    if type(fn) == 'function' then return true end
+    if type(fn) ~= 'table' then return false end
+    local mt = getmetatable(fn)
+    return type(mt) == 'table' and mt.__call ~= nil
+end
+
 --- One display string (labels joined with '; ', at most 3, cut to 200 characters) or nil.
 function M.address(citizenid)
     local ok, adapter = M.core('getAdapter', 'housing')
-    if not ok or type(adapter) ~= 'table' or type(adapter.getAddresses) ~= 'function' then return nil end
+    if not ok or type(adapter) ~= 'table' or not M.callable(adapter.getAddresses) then return nil end
     local okList, list = pcall(adapter.getAddresses, citizenid)
     if not okList then
         M.warnOnce('housing', ('housing adapter getAddresses failed: %s'):format(tostring(list)))

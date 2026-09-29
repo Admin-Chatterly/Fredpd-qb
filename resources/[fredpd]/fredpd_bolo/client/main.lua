@@ -13,8 +13,9 @@ local M = {}
 M.OPTION = 'fredpd_bolo:checkPlate'
 M.DISTANCE = 3.0
 M.HIT_SOUND = { 'TIMER_STOP', 'HUD_MINI_GAME_SOUNDSET' }
+M.BUSY_STALE_MS = 15000 -- a check whose callback never answers stops blocking the option after this (no timer)
 
-local busy = false
+local busySince = nil -- GetGameTimer() of the check in flight
 local added = false
 
 local function notify(kind, text)
@@ -48,14 +49,15 @@ end
 
 --- Ask the server about the targeted vehicle and show the result (awaits; runs in its own thread).
 function M.check(entity)
-    if busy then return end
+    if busySince and GetGameTimer() - busySince < M.BUSY_STALE_MS then return end
     if not entity or entity == 0 or not DoesEntityExist(entity) or not NetworkGetEntityIsNetworked(entity) then
         notify('error', L('errors.notFound'))
         return
     end
-    busy = true
+    local mine = GetGameTimer()
+    busySince = mine
     local okCall, res = pcall(lib.callback.await, 'fredpd:bolo:plateCheck', false, NetworkGetNetworkIdFromEntity(entity))
-    busy = false
+    if busySince == mine then busySince = nil end
     if not okCall or type(res) ~= 'table' then
         notify('error', L('errors.unknown'))
         return

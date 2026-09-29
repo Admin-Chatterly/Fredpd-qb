@@ -1,7 +1,0 @@
-{
-  "breach.noItem": { "sv": "Du behöver en dörrkross.", "en": "You need a battering ram." },
-  "breach.cooldown": { "sv": "Vänta en stund innan du forcerar nästa dörr.", "en": "Wait a moment before breaching the next door." },
-  "breach.expired": { "sv": "Forceringen tog för lång tid. Försök igen.", "en": "The breach took too long. Try again." },
-  "audit.action.breach.door": { "sv": "Dörrforcering", "en": "Door breach" },
-  "audit.action.breach.scene": { "sv": "Brottsplatsspår skapade", "en": "Scene evidence created" }
-}

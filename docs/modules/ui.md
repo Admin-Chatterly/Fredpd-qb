@@ -12,7 +12,7 @@ and docs/contracts.md §C8 (t()) and §C10 (permissions admin API, client side).
 | `src/theme.css` | Tailwind v4 `@theme` tokens. Dark and flat. There is one accent hue (`accent`, `accent-strong`, `accent-text`, `accent-soft`), plus `canvas/surface/raised`, `line`, `fg/muted/subtle` and the status colours `success/warning/danger`. The base is 15 px (`html { font-size: 15px }`, so 1rem = 15 px). The default palette and shadows are removed (`--color-*: initial`), so pages can only use these tokens. Apps import it after `@import "tailwindcss"`. Its `@source "./"` makes Tailwind scan the shared components. It sets **no `color-scheme`** (see "color-scheme" below). |
 | `src/i18n.tsx` | `createI18n(messages, { lang = 'sv', fallbackLang = 'en', onMissing })` returns `{ lang, t, tx, has }`. `t(key: LocaleKey, vars)` is typed through `LocaleArgs`, so vars are required exactly when the key has placeholders. `tx(key: string, vars?, fallback?)` handles keys built from data, such as ``tx(`unit.${code}`, undefined, code)``. Lookup order is lang, then en, then the key itself. `{name}` is substituted and a placeholder without a value is left as is. Also exports `I18nProvider`, `useI18n()` and `useT()`. Without a provider, components render their keys. |
 | `src/components/*` | `Button` (primary/secondary/ghost/danger, `loading`), `IconButton` (a `label` is required; a padding-free square from `buttonClass(…, 'icon')`), `Input`/`Label` (`fieldClass` is the input look without a width, for `<select>`), `SearchInput` (controlled, trims on Enter, has a clear button), `Card`, `Badge` (`level={0\|1\|2}` gives Standard/Begränsad/Hemlig in neutral/warning/danger), `Notice` (kontaktnotis) and `VisibilityGate`, `EmptyState`, `Spinner` (CSS only), `VirtualList` (TanStack Virtual), `Table`, and the layout pieces `AppShell`, `Sidebar`, `NavItem`, `PageHeader`. |
-| `src/components/` (Phase 2) | `Dialog` (modal; `absolute inset-0` over the nearest positioned ancestor, which is the tablet frame in the NUI, or `position="fixed"`; focuses the first field, gives focus back on close; Esc is left to the tablet), `Pagination` (prev / "Sida x av y" / next, hidden for one page), `Textarea`, `VirtualListbox` (keyboard-navigable windowed `role="listbox"` with `aria-activedescendant`: ↑/↓, Home/End, PageUp/PageDown, Enter or click activates, `isDisabled` rows can be selected but not activated). |
+| `src/components/` (Phase 2) | `Dialog` (modal; `absolute inset-0` over the nearest positioned ancestor, which is the tablet frame in the NUI, or `position="fixed"`; focuses the first field, gives focus back on close; Esc is left to the tablet; `dismissOnBackdrop={false}` keeps a backdrop click from closing it, used by the BOLO create/resolve forms so a stray click does not discard typed text), `Pagination` (prev / "Sida x av y" / next, hidden for one page), `Textarea`, `VirtualListbox` (keyboard-navigable windowed `role="listbox"` with `aria-activedescendant`: ↑/↓, Home/End, PageUp/PageDown, Enter or click activates, `isDisabled` rows can be selected but not activated). |
 | `src/mdtPages.ts` | Re-exports `MDT_PAGE_KEYS`, `MdtPageKey`, `MDT_PAGE_LABEL_KEYS` and `isMdtPageKey` from `@fredpd/types/mdtPages` (docs/contracts.md §C12), so the apps keep importing them from `@fredpd/ui` (see below). |
 | `src/icons.tsx` | A small stroke icon set drawn for FredPD (`aria-hidden`). |
 
@@ -229,7 +229,7 @@ react-dom 210 kB, zod 89 kB (already present for the open payload), locale files
       key on a scroll-driven re-render (stable `getItemKey`/`estimateSize`).
     - IconButton is a padding-free square (no `px-*`/`w-*`), text buttons keep their padding.
     - Badge levels, the SearchInput Enter and clear behaviour, and NavItem routing.
-- `packages/ui/test/phase2.test.tsx`: Dialog (closed, labelled modal, focus in and back, backdrop/close button),
+- `packages/ui/test/phase2.test.tsx`: Dialog (closed, labelled modal, focus in and back, backdrop/close button, `dismissOnBackdrop={false}`),
   Pagination, Textarea, VirtualListbox (window, keys, Enter/click activation, disabled rows).
 - `apps/nui/test`
   - `search`: detection chip, Enter opens the top person / vehicle / case hit, a kontaktnotis top hit shows the
@@ -291,10 +291,17 @@ react-dom 210 kB, zod 89 kB (already present for the open payload), locale files
 6. **Phase 2 locale keys.** `locales/pending/nui.json` (16 keys: `bolo.create.*` picker/refusal texts,
    `bolo.expiry.none`, `bolo.field.subject`, `case.notice.subject`, `common.comingPhase5`, `home.myOpenCases`,
    `person.field.address`, `vehicle.checkHit/checkClear`, `visibility.masked.badge`, `visibility.notice.owner`).
-   Merged (82fd2e9); the literal-key `tx()` calls are now `t()`. `tx()` remains only for data-built keys.
-7. **BOLO kontaktnotis** (bolo.md open question 1): `BoloSchema` has no `visibility`, so a notice-shaped BOLO is
-   shown as a normal row whose reason is the notice text (issuer etc. absent, so not rendered). A `visibility`
-   field would let the NUI render it with `<Notice>` like case refs.
+   Merged (82fd2e9); the literal-key `tx()` calls are now `t()` (including `vehicle.checkHit/checkClear`,
+   `bolo.create.searchPerson/searchVehicle`, and the `ISSUE_KEYS` / `STAT_LABELS` maps, now typed
+   `Record<…, LocaleKey>` so tsc catches a renamed key). `tx()` remains only for data-built keys.
+7. **BOLO kontaktnotis: known limitation, contract gap** (bolo.md open question 1). `BoloSchema` has no
+   `visibility`, and a notice BOLO arrives in the normal shape (see fredpd_bolo `test/golden/plateCheck.notice.json`:
+   level 1, plate, reason = notice text). The NUI cannot tell it apart, so today `BoloList` shows a level badge and
+   a "Häv" button for it (the server refuses the resolve with `unauthorized`), and the vehicle check result shows
+   "Träff på efterlysning" with the notice text as the reason. Nothing leaks (the server sends only what the notice
+   allows), but the row is misrepresented. Proposed contract change (docs/contracts.md §C8 + `mdt.ts`, owner of the
+   contract): optional `visibility: 'full' | 'masked' | 'notice'` on `BoloSchema`; the NUI would then render
+   notice BOLOs with `<Notice>` only, without level badge or resolve control.
 8. **Jail time** is shown as `time.duration.minutes` because the wire field is `jailMinutes`. If in-game "månader"
    are meant, switch to `charge.jailMonths`.
 9. **Esc** on the results page and in dialogs closes the tablet (§5.2 "Esc always closes" wins); the task text's
