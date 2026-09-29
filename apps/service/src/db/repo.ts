@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Every SQL statement of the service. Routes and the Discord sync call these; nothing else builds queries.
+// Every SQL statement of the service (read-only alert queries: src/db/alerts.ts). Routes and the Discord sync call
+// these; nothing else builds queries.
 // Writes that change what an officer may do or see are audited in the same transaction (fredpd_audit, §4.5).
 // Not audited per row, as in fredpd_core (docs/modules/core.md "Audit exemption"): fredpd_grant_cache and
 // fredpd_identities (caches of data audited at its source) and fredpd_sessions (login/logout are audited instead).
@@ -239,6 +240,11 @@ export async function findSession(db: DbOrTx, id: string, now: Date): Promise<Se
 
 export async function deleteSession(db: DbOrTx, id: string): Promise<void> {
   await db.delete(sessions).where(eq(sessions.id, id));
+}
+
+/** Ends every session of a user (a new login replaces them: one session per user). */
+export async function deleteSessionsOf(db: DbOrTx, discordId: string): Promise<void> {
+  await db.delete(sessions).where(eq(sessions.discordId, discordId));
 }
 
 /** Housekeeping on login/logout instead of a timer; bounded so one login never does a large delete. */

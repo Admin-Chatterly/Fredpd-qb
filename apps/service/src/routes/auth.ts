@@ -39,13 +39,15 @@ export function registerAuthRoutes(app: FastifyInstance, ctx: AppContext): void 
     if (!ctx.gateway.getMember(userId)) return loginFailed(reply, 'notMember');
 
     const now = ctx.clock.now();
-    // A new login always gets a new session id (no fixation); the one the browser had ends.
+    // A new login always gets a new session id (no fixation); the one the browser had ends, and so does every
+    // other session of this user (createSession: one session per user).
     if (request.portalSession) {
       await destroySession(ctx.db, request.portalSession.id, now);
       ctx.hub.closeSession(request.portalSession.id);
     }
     await touchIdentity(ctx.db, userId, now);
     const { token, session } = await createSession(ctx.db, userId, now);
+    ctx.hub.closeUser(userId);
     await writeAudit(ctx.db, { action: 'auth.login', actorDiscord: userId, targetType: 'discord', targetId: userId });
     reply.setCookie(SESSION_COOKIE, token, { ...cookieOptions, maxAge: SESSION_TTL_SECONDS, expires: session.expiresAt });
     return reply.redirect(`${config.PUBLIC_URL}/`);

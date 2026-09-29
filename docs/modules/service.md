@@ -1,5 +1,5 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
-# Module: fredpd_service (tasks 1.6, 1.7, 1.7b service side, API for 1.8)
+# Module: fredpd_service (tasks 1.6, 1.7, 1.7b service side, API for 1.8, 3.5 service side)
 
 Node 22 + Fastify 5 + discord.js 14 + drizzle/mysql2, one process (`apps/service`). Implements docs/contracts.md
 §C2 (grant resolution via `@fredpd/types`), §C5 (HMAC), §C6 (service endpoints, FXServer client), §C7
@@ -12,7 +12,7 @@ Node 22 + Fastify 5 + discord.js 14 + drizzle/mysql2, one process (`apps/service
 | `src/config.ts` | zod-validated env (`.env.example` lists all); short secrets and every `.env.example` placeholder refused (secrets, Discord credentials, all-zero ids, DB password); `SESSION_SECRET` ≠ `FREDPD_HMAC_SECRET` |
 | `src/app.ts` | `buildApp(deps)`: plugins, hooks, routes; deps = config, db, gateway, fx, clock, oauth?, fetch?, discordTokenHost?, log?, unitOrder? |
 | `src/main.ts` | real deps, schema check, listen, bot login; SIGINT/SIGTERM or a fatal bot error → bot, HTTP, pool |
-| `src/db/schema.ts`, `client.ts`, `repo.ts` | drizzle mirror of 001/009 tables; mysql2 `timezone: 'Z'` pool; every SQL statement |
+| `src/db/schema.ts`, `client.ts`, `repo.ts` | drizzle mirror of 001/005/009 tables (005 read only); mysql2 `timezone: 'Z'` pool; every SQL statement |
 | `src/grants.ts` | `computeGrants` = gateway member roles + DB rows → `resolveGrants` |
 | `src/discord/gateway.ts` | `DiscordGateway` / `GatewayEvents` interfaces (tests fake them) |
 | `src/discord/bot.ts` | discord.js adapter (intents Guilds + GuildMembers); per-member ordered event handling |
@@ -22,6 +22,8 @@ Node 22 + Fastify 5 + discord.js 14 + drizzle/mysql2, one process (`apps/service
 | `src/auth/session.ts`, `oauth.ts` | sessions/CSRF; Discord OAuth (`@fastify/oauth2`) behind `DiscordOAuth` |
 | `src/routes/*.ts` | auth + `/api/session`, admin, internal, upload, avatar, ws |
 | `src/ws/hub.ts`, `src/ws/events.ts` | WS fan-out per event type, socket cap; who may receive what (`LIVE_EVENT_GRANTS`), `/internal/events` payload check |
+| `src/routes/alerts.ts`, `src/db/alerts.ts` | `GET /api/alerts` (read-only drizzle over `fredpd_alerts`/`fredpd_alert_units`/`fredpd_officers`, row → `Alert`) and `GET /api/units` (§C13, task 3.5) |
+| `src/ws/units-snapshot.ts` | newest `unitsChanged` roster, in memory, for `GET /api/units` |
 | `src/avatar.ts`, `src/catalog.ts`, `src/units.ts` | avatar disk cache, admin catalog, units.json |
 | `db/migrations/009_service.sql` | `fredpd_sessions`, `fredpd_uploads` |
 | `packages/types/src/actions.ts` | shared zod schemas (session, admin, internal, upload, MDT open payload, error codes) |
@@ -44,6 +46,8 @@ Errors are always `{ error: <code>, detail? }`; codes and their locale keys are 
 | `POST /internal/events` | HMAC, loopback | `{ type, payload }` (strict); alert/unit events must match `DispatchInternalEventSchema` after restoring Lua's absent nulls (else 400 `invalid_body`), and the parsed value is what `/ws` sends; `{ ok, delivered }` |
 | `POST /upload` | session + CSRF + ≥ 1 allowed grant (multipart `file`; 403 `forbidden` without a grant, 415 if not multipart) or HMAC from loopback (JSON `{ data, citizenid?, discordId? }`) | ≤ 5 MB else 413; `file-type` sniff png/jpeg/webp else 415; `UPLOAD_DIR/<32 hex>.<ext>`, row + audit `upload.create`. Malformed/stale HMAC headers, and HMAC requests that are proxied or not from loopback, are refused (401) in `onRequest`, before the body is read |
 | `GET /avatar/:discordId` | – | PNG from disk; CDN fetched once per avatar hash; last file if the member is unknown; 404 otherwise; `CORP: cross-origin` for the NUI |
+| `GET /api/alerts?filter=open\|all&page=n` | session + live grant `mdt_page:alerts` (else 403 `forbidden`) | `AlertListOutputSchema`: 50 per page, newest first (`id DESC`); `open` = open + assigned (default), `all` = every alert; `page` 1–10000 (default 1); `mine` and other values → 400 `invalid_body`. `Cache-Control: no-store` |
+| `GET /api/units` | same | `UnitsPushSchema`: the newest valid `unitsChanged` roster FXServer posted, `{ units: [] }` before the first one. **Best effort**, see "Portal alerts". `Cache-Control: no-store`; header `x-fredpd-units-received-at` (ISO UTC) once a roster arrived |
 | `GET /ws` | session, Origin = PUBLIC_URL origin, a grant for at least one live event type (else 403) | server → client only; messages are `InternalEvent` |
 
 **Loopback only (`/internal/*`).** `requireLoopback` (onRequest, before the body and the rate limiter) answers 404
@@ -60,7 +64,9 @@ cross a network in clear text.
 
 - **Sessions.** Cookie `fredpd_sid` = 32 random bytes base64url, signed with `SESSION_SECRET` (a forged cookie
   costs no DB read); DB stores sha256(token). httpOnly, `secure` = `COOKIE_SECURE`, SameSite=Lax, Path=/, 7 days,
-  fixed expiry (no sliding). Expired rows are purged (≤ 500) on login/logout, no timer.
+  fixed expiry (no sliding). Expired rows are purged (≤ 500) on login/logout, no timer. **One session per user**:
+  `createSession` deletes every earlier row of the user and the callback closes that user's sockets
+  (`WsHub.closeUser`), so a stolen cookie does not outlive a fresh login.
 - **CSRF** is a synchroniser token of our own (not `@fastify/csrf-protection`): random per session, returned by
   `GET /api/session`, compared in constant time with `x-csrf-token` on every write that uses the session. Future
   `/api/*` writes must use `requireSession({ csrf: true })` from `src/http/guards.ts`.
@@ -78,8 +84,39 @@ cross a network in clear text.
   DB query (test: an app without a database answers 500 for 60 requests with a session cookie, then 429). Sessions
   are one per user (a new login ends the old one), so this is still per user. The raw token never enters the
   limiter's store. `trustProxy: 'loopback'` (Cloudflare Tunnel/Caddy on the same host). Higher limits: `/internal/*`
-  1200/min (FXServer bursts on restart), `/avatar` 300/min (rosters). `/upload`'s own `onRequest` runs before the
+  1200/min (FXServer bursts on restart), `/avatar` 300/min (rosters). Lower: `/upload` 10/min per portal session
+  (`UPLOAD_PORTAL_PER_MINUTE`; ≤ 50 MB/min per officer), 60/min for the loopback/game key. A per-user daily byte
+  quota is not implemented (open). Avatar CDN reads are capped while streaming (`readCapped`, 1 MB). `/upload`'s own `onRequest` runs before the
   session is loaded and uses the signed-cookie token to pick the portal path.
+- **Portal alerts (§C13, task 3.5).** Three parts:
+  - `/internal/events`: `alertCreated|alertAssigned|alertClosed|unitsChanged` must match `DispatchInternalEventSchema`
+    after `restoreNulls` (Lua cannot send null, so absent nullable keys become `null`); otherwise 400 `invalid_body`
+    and nothing is sent or stored. What `/ws` sends is the parsed value (unknown keys stripped). `playerJoined` /
+    `playerDropped` have no pinned payload yet and keep the generic path (passed through, same grant rule).
+  - `/ws` eligibility: `liveAccess(member, grants)` per event type (`LIVE_EVENT_GRANTS`, all `mdt_page:alerts`;
+    `hasGrant`, so a deny wins). Decided when the socket opens (no grant → 403, no idle socket) and **replaced on
+    every grant resolution** of that user: Discord role change/member removal/resync/admin save (`sync`
+    `onGrantsChanged`) and FXServer's `/internal/grants/:id` re-fetch. A revoked user stops receiving without
+    reconnecting. Sockets of a logged-out session are closed at logout (4401); an expired session's sockets are
+    closed on the next broadcast and never receive it.
+  - `GET /api/alerts` reads the tables with drizzle (`src/db/alerts.ts`, no writes, so nothing to audit;
+    fredpd_dispatch owns the rows). Same mapping as fredpd_dispatch's loader (`alert_store.lua`): units in take
+    order (`created_at, citizenid`), the officer's current callsign over the snapshot, name = Discord display name →
+    callsign → citizenid; coords not three finite numbers → `null`; priority outside 1–3 → 2; text capped to the
+    schema's lengths (UTF-16, no split surrogate pair); DATETIME → `YYYY-MM-DDTHH:mm:ssZ`. Each item is checked
+    with `AlertSchema`; a row that still fails (hand-edited data) is left out with a warning, `total` still counts it.
+    Unit/closer refs with a citizenid outside `CitizenIdSchema` are dropped. Grants are resolved live per request
+    (`requireGrant`, new in `src/http/guards.ts`; `requirePerm` now delegates to it). `COUNT(*)` and the page run in one
+    `READ ONLY` `REPEATABLE READ` transaction (snapshot taken at the first read, the COUNT; drizzle 0.45's
+    `withConsistentSnapshot` + `accessMode` emits invalid SQL and leaks the connection, so it is not used), so `total` and the page come from the same
+    snapshot. Because invalid rows are left out, a page can hold fewer than 50 items: the portal must derive the page
+    count from `total` (`ceil(total / 50)`) and never assume a short page is the last one.
+  - `GET /api/units` is **best effort**: it returns what FXServer last posted as `unitsChanged`, from memory. After a
+    service restart it is `{ units: [] }` until the roster next changes (fredpd_dispatch does not re-post an
+    unchanged roster), and while FXServer is down it keeps the last roster. There is deliberately no TTL: an unchanged roster is
+    never re-posted, so age alone does not mean stale. Instead every non-empty answer carries the header
+    `x-fredpd-units-received-at` (ISO UTC, when the roster arrived; absent for the empty default) so the portal can
+    show its age. The portal should load it once and then follow `unitsChanged` on `/ws`.
 - **Admin catalog** (`src/catalog.ts`, §C10/§C12). Always listed, whether or not a role uses them:
   - `mdt_page`: every key of `MDT_PAGE_KEYS`, which now live in `packages/types/src/mdtPages.ts` (`@fredpd/ui`
     re-exports them). They are sorted in nav order (search, alerts, bolos, cases, evidence, intel, charges, roster,
@@ -187,7 +224,12 @@ cross a network in clear text.
 DB tests use `fredpd_test_service` (created + migrated by `test/helpers.ts`; per-file id prefixes, parallel-safe)
 and `fredpd_test_service_sync` (sync.test.ts: a role import soft-deletes unknown roles). They skip with a warning
 when MariaDB is unreachable. `signedInject` sends from `127.0.0.1` without proxy headers unless told otherwise.
-Files: `events` (pure: live access per grant incl. deny and non-alert grants, hub per-type fan-out, socket cap,
+Files: `alerts` (own database `fredpd_test_service_alerts`, sessions at `+02:00`: pure row→Alert mapping incl.
+callsign precedence, name fallback, bad coords/priority, caps; query schema; `UnitsSnapshot`; routes: 401/403
+(no grant, deny, left guild), `AlertListOutputSchema` parse with no stripped keys, 80 open / 120 all, pages 1–3,
+newest first, closedBy/closedAt, unit order and names, UTC round trip (fixed wall time and `UTC_TIMESTAMP()`), 400
+on bad queries, grant revoked mid-session → 403 on the next request, `/api/units` empty → Lua-shaped
+`unitsChanged` restored → unchanged by an invalid event or other types, 61st request 429), `events` (pure: live access per grant incl. deny and non-alert grants, hub per-type fan-out, socket cap,
 expiry, payload check incl. the dispatch golden files, `/internal/events` 400/200), `fx-retry` (backoff, pending
 merge, 4xx not retried, redelivery on success, close), `catalog` (pure: catalog contents and order, PUT schema over the whole catalog,
 registry perms/pages, labels), `hmac`, `grants`, `admin` (incl. a PUT of every fixed catalog key; only the fixed
@@ -245,3 +287,16 @@ migration on a shared MariaDB) only gets the runner's warning and never triggers
 12. `playerJoined` / `playerDropped` (§C6 event types) have no producer and no payload schema; they are gated on
     `mdt_page:alerts` like the rest of /ws (§C13). If a roster module produces them, it should pin a payload and
     decide whether `mdt_page:roster` fits better (one line in `LIVE_EVENT_GRANTS`).
+
+## Integration requests (task 3.5)
+
+- **fredpd_dispatch**: after FXServer (re)connects to the service, or on `fredpd_dispatch` start, post the current
+  roster as `unitsChanged` even when unchanged, so `GET /api/units` is not empty after a service restart (today the
+  fingerprint suppresses an unchanged roster). Optional; the portal still gets the next change over `/ws`.
+- **Portal (apps/portal, Larm page)**: `GET /api/alerts?filter=open|all&page=n` (no `mine`; page count =
+  `ceil(total / 50)`, pages may be short), `GET /api/units` once (show the age from `x-fredpd-units-received-at`),
+  then `/ws` `alertCreated` (prepend), `alertAssigned` (replace), `alertClosed` (remove), `unitsChanged` (replace).
+  403 `forbidden` → hide the page; ws close 4401 → `portal.sessionExpired`, 4429 → do not reconnect.
+- **docs/contracts.md §C6/§C13** (contract owner): record `GET /api/alerts` (`filter` open|all only) and
+  `GET /api/units` (best-effort snapshot). No new locale keys (errors use `API_ERROR_LOCALE_KEYS`), so
+  `locales/pending/service-alerts.json` was not needed.

@@ -22,6 +22,10 @@ const MAX_BODY_BYTES = 64 * 1024;
 const MAX_SKEW_SECONDS = 60;
 const MIN_SECRET_LENGTH = 32;
 const FETCH_TIMEOUT_MS = 3000;
+const MAX_RESPONSE_BYTES = 1024 * 1024; // signedFetch never buffers more than this from the service
+// signedFetch only reaches the service's FXServer-facing routes (§C6), and only for FredPD resources.
+const FETCH_PATH_RE = /^\/(?:internal\/[A-Za-z0-9._~%/-]*|upload)(?:\?[^#\s]*)?$/;
+const FETCH_CALLER_RE = /^fredpd_[a-z0-9_]+$/;
 const TS_HEADER = 'x-fredpd-ts';
 const SIG_HEADER = 'x-fredpd-sig';
 const DISCORD_ID_RE = /^\d{1,20}$/;
@@ -331,8 +335,23 @@ function nodeFetch(url, { method, headers, body, signal }) {
     const target = new URL(url);
     const lib = target.protocol === 'https:' ? require('https') : require('http');
     const req = lib.request(target, { method, headers }, (res) => {
+      const declared = Number(res.headers && res.headers['content-length']);
+      if (declared > MAX_RESPONSE_BYTES) {
+        req.destroy();
+        reject(Object.assign(new Error('response too large'), { code: 'too_large' }));
+        return;
+      }
       const chunks = [];
-      res.on('data', (c) => chunks.push(c));
+      let size = 0;
+      res.on('data', (c) => {
+        size += c.length;
+        if (size > MAX_RESPONSE_BYTES) {
+          req.destroy();
+          reject(Object.assign(new Error('response too large'), { code: 'too_large' }));
+          return;
+        }
+        chunks.push(c);
+      });
       res.on('end', () => {
         const text = Buffer.concat(chunks).toString('utf8');
         resolve({ status: res.statusCode || 0, text: async () => text });
@@ -352,8 +371,38 @@ function nodeFetch(url, { method, headers, body, signal }) {
 }
 
 /**
+ * Reads a WHATWG fetch Response body as UTF-8 text, failing with code 'too_large' past `max` bytes (declared by
+ * Content-Length or counted while streaming), so a misbehaving service cannot fill the FXServer heap.
+ */
+async function readCapped(res, max) {
+  const len = res.headers && typeof res.headers.get === 'function' ? Number(res.headers.get('content-length')) : NaN;
+  const tooLarge = () => Object.assign(new Error('response too large'), { code: 'too_large' });
+  if (len > max) throw tooLarge();
+  if (!res.body || typeof res.body.getReader !== 'function') {
+    const text = await res.text();
+    if (Buffer.byteLength(text, 'utf8') > max) throw tooLarge();
+    return text;
+  }
+  const reader = res.body.getReader();
+  const chunks = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      try { await reader.cancel(); } catch { /* already closed */ }
+      throw tooLarge();
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks).toString('utf8');
+}
+
+/**
  * Builds signedFetch(method, path, body, cb). deps:
- *   secret, baseUrl, now() (unix seconds), fetch (global fetch or undefined), timeoutMs, log(level, msg)
+ *   secret, baseUrl, now() (unix seconds), fetch (global fetch or undefined), timeoutMs, log(level, msg),
+ *   invoker() (optional: name of the calling resource; only fredpd_* resources may sign requests)
  * cb(status, bodyString) is called exactly once; status 0 means no HTTP response (bridge disabled, invalid call,
  * timeout, network error) and the body is then {"error": "..."}.
  */
@@ -374,10 +423,18 @@ function createSignedFetch(deps) {
     const fail = (code) => done(0, JSON.stringify({ error: code }));
 
     if (!deps.secret) return fail('bridge_disabled');
+    // Any server resource can call an export; only FredPD's own may make HMAC-signed service calls. An empty
+    // invoker means a call from inside fredpd_core's own runtime.
+    const caller = typeof deps.invoker === 'function' ? deps.invoker() : null;
+    if (caller && !FETCH_CALLER_RE.test(String(caller))) {
+      deps.log('warn', `signedFetch refused for resource ${String(caller).slice(0, 64)}`);
+      return fail('forbidden');
+    }
     const m = String(method || '').toUpperCase();
     if (!['GET', 'POST', 'PUT', 'PATCH', 'DELETE'].includes(m) || typeof path !== 'string' || !path.startsWith('/')) {
       return fail('invalid_request');
     }
+    if (!FETCH_PATH_RE.test(path) || /(?:^|\/)\.\.?(?:\/|$|\?)|%2e|%2f/i.test(path)) return fail('forbidden');
 
     let rawBody = '';
     if (m !== 'GET' && body !== undefined && body !== null) {
@@ -410,13 +467,15 @@ function createSignedFetch(deps) {
 
     Promise.resolve(request)
       .then(async (res) => {
-        const text = await res.text();
+        const text = typeof deps.fetch === 'function' ? await readCapped(res, MAX_RESPONSE_BYTES) : await res.text();
         done(res.status, text);
       })
       .catch((err) => {
         const aborted = err && (err.name === 'AbortError' || err.message === 'timeout');
+        const tooLarge = err && err.code === 'too_large';
         if (!aborted) deps.log('warn', `signedFetch ${m} ${path} failed: ${err && err.message}`);
-        fail(aborted ? 'timeout' : 'network');
+        if (tooLarge && controller) controller.abort();
+        fail(aborted ? 'timeout' : tooLarge ? 'too_large' : 'network');
       })
       .finally(() => {
         clearTimeout(timer);
@@ -426,7 +485,8 @@ function createSignedFetch(deps) {
 
 /**
  * Wires the bridge to FiveM. `fivem` holds the globals (injected so the test can pass mocks):
- *   SetHttpHandler, GetConvar, GetCurrentResourceName, GetNumPlayerIndices, exports, emit, fetch, console
+ *   SetHttpHandler, GetConvar, GetCurrentResourceName, GetNumPlayerIndices, GetInvokingResource, exports, emit, fetch,
+ *   console
  */
 function createBridge(fivem) {
   const resource = fivem.GetCurrentResourceName();
@@ -454,13 +514,14 @@ function createBridge(fivem) {
   });
   fivem.SetHttpHandler(handle);
 
-  const signedFetch = createSignedFetch({ secret, baseUrl, now, fetch: fivem.fetch, log });
+  const invoker = typeof fivem.GetInvokingResource === 'function' ? () => fivem.GetInvokingResource() : undefined;
+  const signedFetch = createSignedFetch({ secret, baseUrl, now, fetch: fivem.fetch, log, invoker });
   fivem.exports('signedFetch', signedFetch);
   return { handle, signedFetch, enabled: secret !== null, baseUrl };
 }
 
 const api = {
-  MAX_BODY_BYTES, MAX_SKEW_SECONDS, MIN_SECRET_LENGTH, FETCH_TIMEOUT_MS, REJECT_LOG_INTERVAL_S, RULES_CHANGED_EVENT,
+  MAX_BODY_BYTES, MAX_RESPONSE_BYTES, MAX_SKEW_SECONDS, MIN_SECRET_LENGTH, FETCH_TIMEOUT_MS, REJECT_LOG_INTERVAL_S, RULES_CHANGED_EVENT,
   signBody, verifySignature, secretProblem, grantSetProblem, createHandler, createSignedFetch, createBridge,
 };
 
@@ -472,6 +533,7 @@ if (typeof SetHttpHandler === 'function' && typeof GetConvar === 'function') {
     GetConvar,
     GetCurrentResourceName,
     GetNumPlayerIndices: globalThis.GetNumPlayerIndices,
+    GetInvokingResource: globalThis.GetInvokingResource,
     exports,
     emit: typeof emit === 'function' ? emit : globalThis.TriggerEvent,
     fetch: typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined,

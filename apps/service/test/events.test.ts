@@ -96,6 +96,19 @@ describe('WsHub', () => {
     expect(s1.sent).toHaveLength(0);
   });
 
+  it('closeUser closes every socket of that user only', () => {
+    const hub = new WsHub(() => new Date());
+    const [a1, a2, b] = [new StubSocket(), new StubSocket(), new StubSocket()];
+    const access = liveAccess(true, set(['mdt_page:alerts']));
+    hub.add(a1, session('s1', '1'), access);
+    hub.add(a2, session('s2', '1'), access);
+    hub.add(b, session('s3', '2'), access);
+    hub.closeUser('1');
+    expect([a1.closed, a2.closed, b.closed]).toEqual([CLOSE_SESSION_ENDED, CLOSE_SESSION_ENDED, null]);
+    expect(hub.size).toBe(1);
+    expect(hub.accessOf('1').size).toBe(0);
+  });
+
   it('closes sockets of an expired session on the next broadcast', () => {
     let now = new Date('2026-09-29T12:00:00Z');
     const hub = new WsHub(() => now);

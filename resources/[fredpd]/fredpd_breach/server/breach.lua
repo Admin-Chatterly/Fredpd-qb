@@ -3,13 +3,14 @@
 --
 --   start(src, doorId)   callback fredpd:breach:start. Grant tool:ram → on duty → rate limit (1/s) and the
 --                        per-player cooldown after a breach → door id → pd_ram in the player's inventory
---                        (ox_inventory GetItemCount) → door exists and is locked (ox_doorlock getDoor) → the
+--                        (ox_inventory GetItemCount) → door exists, is not in config.denyDoors and is locked
+--                        (ox_doorlock getDoor) → the
 --                        player's ped (server-side position) within maxDistance of the door. Returns a one-time
 --                        token bound to src + door, valid from progressMs - finishSlackMs to tokenTtlMs after the
 --                        start. A new start replaces the player's previous token.
---   finish(src, token)   callback fredpd:breach:finish. The token must belong to src (another player's token is
---                        rejected and left alone), be unused, not too early (the progress bar cannot be skipped)
---                        and not expired; the token is consumed. Grant, duty, item, door locked and distance are
+--   finish(src, token)   callback fredpd:breach:finish. Per-src rate limit (finishRateMs) before the token lookup.
+--                        The token must belong to src (another player's token is rejected and left alone), be
+--                        unused, not too early (the progress bar cannot be skipped) and not expired; the token is consumed. Grant, duty, item, door locked and distance are
 --                        checked again, then exports.ox_doorlock:setDoorState(id, 0) (ox_doorlock
 --                        server/main.lua:275-314: an export call runs with source nil, so ox_doorlock's own
 --                        authorisation is skipped — FredPD's checks above are the authorisation), audit
@@ -28,9 +29,11 @@ M.cfg = {
     finishSlackMs = 500,
     tokenTtlMs = 8000,
     startRateMs = 1000,
+    finishRateMs = 250,
     cooldownMs = 10000,
     maxDistance = 3.0,
     breachEvidence = false,
+    denyDoors = {},
 }
 
 -- Filled by server/main.lua: Scene module (spawnEntries, validateTable) for config.breachEvidence.
@@ -41,6 +44,7 @@ local tokens = {}      -- [token] = { src, doorId, issuedAt, expiresAt }
 local tokenOf = {}     -- [src] = token (one live token per player)
 local lastStart = {}   -- [src] = time of the last start attempt that passed grant + duty
 local lastBreach = {}  -- [src] = time of the last successful breach
+local lastFinish = {}  -- [src] = time of the last finish attempt (rate limit, before the token lookup)
 
 local warnedItem = false
 
@@ -112,7 +116,23 @@ local function distance(a, b)
     return math.sqrt(dx * dx + dy * dy + dz * dz)
 end
 
---- Shared checks for start and finish (after grant + duty): item, door exists and is locked, distance.
+--- true when config.denyDoors excludes the door: an entry is an ox_doorlock id (number), an exact door name
+--- (string) or a Lua pattern on the name ({ pattern = '^mrpd_' }).
+function M.isDenied(doorId, name)
+    for _, d in ipairs(type(M.cfg.denyDoors) == 'table' and M.cfg.denyDoors or {}) do
+        if type(d) == 'number' and d == doorId then return true end
+        if type(name) == 'string' then
+            if type(d) == 'string' and d == name then return true end
+            if type(d) == 'table' and type(d.pattern) == 'string' then
+                local okMatch, hit = pcall(string.find, name, d.pattern)
+                if okMatch and hit then return true end
+            end
+        end
+    end
+    return false
+end
+
+--- Shared checks for start and finish (after grant + duty): item, door exists, not denied, locked, distance.
 --- @return table|nil door, string|nil code, string|nil reason
 local function checkDoor(src, doorId)
     local item = hasItem(src)
@@ -126,6 +146,7 @@ local function checkDoor(src, doorId)
         if err == 'unavailable' then return nil, 'unavailable', 'doorlock' end
         return nil, 'not_found', 'door'
     end
+    if M.isDenied(doorId, door.name) then return nil, 'validation', 'denied' end
     if door.state ~= 1 and door.state ~= true then return nil, 'validation', 'not_locked' end
     local pos = pedCoords(src)
     if not pos or distance(pos, door.coords) > M.cfg.maxDistance then return nil, 'validation', 'too_far' end
@@ -186,13 +207,15 @@ function M.finish(src, token)
     src = math.tointeger(tonumber(src))
     if not src or src < 1 then return fail('validation', 'source') end
     if type(token) ~= 'string' or #token ~= 32 or not token:match('^%x+$') then return fail('validation', 'token') end
+    local t = now()
+    if lastFinish[src] and t - lastFinish[src] < M.cfg.finishRateMs then return fail('rate_limited', 'rate') end
+    lastFinish[src] = t
     local entry = tokens[token]
     if not entry or entry.src ~= src then return fail('not_found', 'token') end
     -- One-time: consumed whatever happens next.
     tokens[token] = nil
     if tokenOf[src] == token then tokenOf[src] = nil end
 
-    local t = now()
     if t > entry.expiresAt then return fail('expired', 'token') end
     if t - entry.issuedAt < M.cfg.progressMs - M.cfg.finishSlackMs then return fail('validation', 'too_early') end
     if not hasGrant(src) then return fail('unauthorized', 'grant') end
@@ -230,10 +253,11 @@ function M.forget(src)
     dropToken(src)
     lastStart[src] = nil
     lastBreach[src] = nil
+    lastFinish[src] = nil
 end
 
 function M.reset()
-    tokens, tokenOf, lastStart, lastBreach = {}, {}, {}, {}
+    tokens, tokenOf, lastStart, lastBreach, lastFinish = {}, {}, {}, {}, {}
     warnedItem = false
 end
 

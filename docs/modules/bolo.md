@@ -154,7 +154,7 @@ hit/boloId/via — the lookup audit of §4.5; the `fredpd_plate_checks` row itse
   the `bolo` push payload, `fredpd:boloChanged(bolo, change)`, `getBolosFor` returning a plain list, the error
   `reason`s above; consider `BoloPushSchema` in mdt.ts and a `visibility` field on `BoloSchema` (open question 1).
 - **apps/service catalog**: perms `bolo.create`, `bolo.resolve` (already in §C12).
-- **locales**: merge `locales/pending/bolo.json` (10 keys) with `node scripts/merge-pending-locales.mjs`.
+- **locales**: done — `locales/pending/bolo.json` was merged into `locales/sv.json` / `en.json` (commit 82fd2e9); all `L()` keys used here exist.
 - **server.cfg.example**: `ensure fredpd_bolo` after `fredpd_core` (and after `ox_target`, `fredpd_dispatch` when used).
 - **qbx_police patch 30** (police): its requests are met — `checkPlate` takes any spelling, ignores expired rows and
   never waits; `resolveOnImpound` returns true/false and never raises; radar `fredpd:boloHit` gets a check row and the

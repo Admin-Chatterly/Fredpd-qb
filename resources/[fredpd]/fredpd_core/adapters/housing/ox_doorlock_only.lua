@@ -6,8 +6,9 @@
 --   { "properties": { "<propertyId>": { "doors": [12, "my_house_front"], "label": "Grove Street 12" } } }
 --
 -- A door is an ox_doorlock id (number) or door name (string, resolved with exports.ox_doorlock:getDoorFromName,
--- ox_doorlock server/main.lua:80-86). A property id that is not in the file but is a number is taken as an
--- ox_doorlock door id itself (exports.ox_doorlock:getDoor, :53-68). Unlocking uses
+-- ox_doorlock server/main.lua:80-86; ids are checked with exports.ox_doorlock:getDoor, :53-68). Only mapped
+-- properties resolve: an unmapped property id is never taken as a door id (a numeric property id could otherwise
+-- open an unrelated ox_doorlock door such as a station armory). Unlocking uses
 -- exports.ox_doorlock:setDoorState(id, 0) (:275-314). No ownership data exists, so getAddresses is always {}.
 -- When ox_doorlock is not started every call is the housing no-op (adapters/base.lua; one warning).
 
@@ -58,16 +59,11 @@ end
 function M.getDoorForProperty(propertyId)
     if propertyId == nil then return nil end
     local entry = mapping()[tostring(propertyId)]
+    if not entry then return nil end
     local ids = {}
-    if entry then
-        for _, d in ipairs(entry.doors) do
-            local id = resolve(d)
-            if id then ids[#ids + 1] = id end
-        end
-    else
-        local n = math.tointeger(tonumber(propertyId))
-        local id = n and n > 0 and resolve(n) or nil
-        if id then ids[1] = id end
+    for _, d in ipairs(entry.doors) do
+        local id = resolve(d)
+        if id then ids[#ids + 1] = id end
     end
     return #ids > 0 and ids or nil
 end

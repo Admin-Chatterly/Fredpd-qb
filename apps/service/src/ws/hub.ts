@@ -106,6 +106,17 @@ export class WsHub {
     }
   }
 
+  /** Close every socket of a user (a new login ended their earlier sessions). */
+  closeUser(discordId: string): void {
+    for (const c of [...this.clients]) {
+      if (c.discordId === discordId) {
+        this.clients.delete(c);
+        c.socket.close(CLOSE_SESSION_ENDED, 'logged in again');
+      }
+    }
+    this.access.delete(discordId);
+  }
+
   closeAll(): void {
     for (const c of this.clients) c.socket.close(1001, 'server shutting down');
     this.clients.clear();

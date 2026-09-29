@@ -509,7 +509,9 @@ tests['06 entities: refs validated, labels derived server-side, (type, ref) dedu
         local veh = data(S.ensureEntity(5, { type = 'vehicle', ref = 'abc 123', label = 'Min bil' }), t)
         t.eq(veh, { id = veh.id, type = 'vehicle', ref = 'ABC123', label = 'ABC123 (sultan)' })
         t.eq(data(S.ensureEntity(5, { type = 'vehicle', ref = 'NOMODEL1', label = 'x' }), t).label, 'NOMODEL1')
-        local case = data(S.ensureEntity(5, { type = 'case', ref = 'K-123-26', label = 'x' }), t)
+        -- player 5 (Span) only has the default 'notice' view of the Utredning case: answered like a missing case
+        t.eq(err(S.ensureEntity(5, { type = 'case', ref = 'K-123-26', label = 'x' })), 'not_found')
+        local case = data(S.ensureEntity(4, { type = 'case', ref = 'K-123-26', label = 'x' }), t)
         t.eq(case.label, 'K-123-26', 'case number only, never the title')
         local p1 = data(S.ensureEntity(5, { type = 'person', ref = 'SUS00002', label = 'x' }), t)
         t.eq(p1.label, 'Åsa Öberg')
@@ -520,7 +522,13 @@ tests['06 entities: refs validated, labels derived server-side, (type, ref) dedu
         MySQL.query.await("UPDATE fredpd_persons SET lastname = 'Berg' WHERE citizenid = 'SUS00002'")
         env.clear()
         t.eq(data(S.ensureEntity(5, { type = 'person', ref = 'SUS00002', label = 'x' }), t).label, 'Åsa Berg')
-        t.eq(env.auditActions(), { 'intel.entity.relabel' })
+        t.eq(env.auditActions(), { 'intel.entity.relabel', 'intel.entity.view' }, 'relabel + the lookup itself')
+        env.clear()
+        data(S.ensureEntity(4, { type = 'person', ref = 'SUS00002', label = 'x' }), t)
+        data(S.ensureEntity(4, { type = 'vehicle', ref = 'ABC123', label = 'x' }), t)
+        t.eq(env.auditActions(), { 'intel.entity.view', 'intel.entity.view' },
+            'every ensure of an existing person/vehicle is an audited lookup (§4.5)')
+        t.eq(env.audits[1].meta, { type = 'person', ref = 'SUS00002', via = 'ensure' })
         MySQL.query.await("UPDATE fredpd_persons SET lastname = 'Öberg' WHERE citizenid = 'SUS00002'")
         -- keyless: label from input, dedup by label
         local loc = data(S.ensureEntity(5, { type = 'location', label = 'Grove Street' }), t)
@@ -735,7 +743,8 @@ tests['12 reports: author from the caller, source reports only by its handler, l
         local list = data(S.listIntelReports(4, {}), t)
         t.eq(list.total, 1)
         t.eq(list.items[1].visibility, 'notice')
-        t.eq(data(S.listIntelReports(4, { sourceId = src.id, page = 2 }), t), { items = {}, total = 1, page = 2 })
+        t.eq(data(S.listIntelReports(4, { sourceId = src.id, page = 2 }), t), { items = {}, total = 0, page = 2 },
+            'source seen only as a notice: the filter matches nothing')
     end)
 end
 
@@ -753,6 +762,171 @@ tests['13 rate limits on writes and the graph; playerDropped forgets them'] = fu
         data(S.searchEntities(5, { query = 'Gäng' }), t) -- reads: the dispatcher limits them
         env.fire('playerDropped', 5)
         data(S.getGraph(5, { entityId = g.id }), t)
+    end)
+end
+
+---------------------------------------------------------------------------------------------------------------
+-- Review fixes (leaks through filters, hidden links, counts, failed writes, case numbers)
+
+tests['15 listIntelReports: the sourceId filter never attributes reports to a source the viewer cannot see'] =
+function(t)
+    withEnv(t, function(_, _, mods)
+        local S = mods.service
+        local src = data(S.createSource(2, { codename = 'Svalan', level = 2 }), t)
+        local rep = data(S.createIntelReport(2, { sourceId = src.id, body = 'Tips om lager', level = 1 }), t)
+        local other = data(S.createIntelReport(4, { body = 'Annat', level = 0 }), t)
+        -- Utredning: the source is only a notice, the report is full but without its source
+        t.eq(data(S.getSource(4, { id = src.id }), t).visibility, 'notice')
+        local got = data(S.getIntelReport(4, { id = rep.id }), t)
+        t.eq(got.visibility, 'full')
+        t.eq(got.source, nil)
+        t.eq(data(S.listIntelReports(4, { sourceId = src.id }), t), { items = {}, total = 0, page = 1 },
+            'no grouping of reports by a hidden source')
+        t.eq(err(S.listIntelReports(4, { sourceId = src.id + 100 })), 'not_found')
+        -- an analyst (source masked, report full) may filter; the answer shows the source anyway
+        local list = data(S.listIntelReports(5, { sourceId = src.id }), t)
+        t.eq(list.total, 1)
+        t.eq(list.items[1].id, rep.id)
+        t.eq(list.items[1].source, { id = src.id, codename = 'Svalan' })
+        t.ok(other.id, 'unfiltered report exists')
+        t.eq(data(S.listIntelReports(4, {}), t).total, 2, 'unfiltered list unchanged')
+    end)
+end
+
+tests['16 getEntity: a report behind a hidden link is not listed'] = function(t)
+    withEnv(t, function(_, env, mods)
+        local S = mods.service
+        env.players[11] = { cid = 'UTR00011', duty = true, tier = 1, units = { 'utredning' },
+            grants = set({ 'mdt_page:intel', 'perm:intel.read', 'unit:utredning' }) }
+        local p = data(S.ensureEntity(4, { type = 'person', ref = 'SUS00001', label = 'x' }), t)
+        local rep = data(S.createIntelReport(4, { body = 'Öppen iakttagelse', level = 0 }), t)
+        t.eq(data(S.getIntelReport(11, { id = rep.id }), t).visibility, 'full', 'the report itself is readable')
+        data(S.addLink(1, { fromId = p.id, to = { type = 'group', label = 'Hemliga gruppen' }, type = 'member_of',
+            level = 2, reportId = rep.id }), t)
+        local view = data(S.getEntity(11, { id = p.id }), t)
+        t.eq(view.links, {})
+        t.eq(view.hiddenLinks, 1)
+        t.eq(view.reports, {}, 'the hidden link is not tied to a report')
+        local cmd = data(S.getEntity(1, { id = p.id }), t)
+        t.eq(#cmd.reports, 1)
+        t.eq(cmd.reports[1].id, rep.id)
+    end)
+end
+
+tests['17 listIntelReports: a secret mission is one kontaktnotis, never a per-report count'] = function(t)
+    withEnv(t, function(_, _, mods)
+        local S = mods.service
+        local m = data(S.createMission(1, { title = 'Insats Gran', level = 2 }), t)
+        data(S.createIntelReport(1, { missionId = m.id, body = 'Rapport 1', level = 2 }), t)
+        data(S.createIntelReport(1, { missionId = m.id, body = 'Rapport 2', level = 2 }), t)
+        local list = data(S.listIntelReports(5, {}), t)
+        t.eq(list, { items = { { visibility = 'notice', contact = { displayName = 'Sara S.', unit = 'span' } } },
+            total = 1, page = 1 })
+        t.eq(data(S.listIntelReports(5, { missionId = m.id }), t), { items = {}, total = 0, page = 1 },
+            'mission seen only as a notice: its reports are not counted')
+        t.eq(err(S.listIntelReports(5, { missionId = m.id + 100 })), 'not_found')
+        t.eq(data(S.listIntelReports(1, { missionId = m.id }), t).total, 2, 'the lead sees both')
+    end)
+end
+
+tests['18 addLink: an unauthorized result writes nothing'] = function(t)
+    withEnv(t, function(_, env, mods)
+        local S = mods.service
+        local a = data(S.ensureEntity(4, { type = 'group', label = 'Grupp A' }), t)
+        local b = data(S.ensureEntity(4, { type = 'group', label = 'Grupp B' }), t)
+        for _, r in ipairs(env.rules) do
+            if r.id == 71 or r.id == 72 then r.enabled = false end
+        end
+        env.clear()
+        t.eq(err(S.addLink(4, { fromId = a.id, to = { id = b.id }, type = 'associate' })), 'unauthorized')
+        t.eq(scalar('SELECT COUNT(*) FROM fredpd_intel_links'), 0, 'no row left behind')
+        t.eq(env.auditsNamed('intel.link.create'), {}, 'no audit of a write that did not happen')
+        -- a new 'to' entity is created only after every check has passed: none here
+        t.eq(err(S.addLink(4, { fromId = a.id, to = { type = 'group', label = 'Grupp C' }, type = 'associate' })),
+            'unauthorized')
+        t.eq(scalar('SELECT COUNT(*) FROM fredpd_intel_links'), 0)
+        t.eq(scalar("SELECT COUNT(*) FROM fredpd_intel_entities WHERE label = 'Grupp C'"), 0, 'no entity written')
+        t.eq(env.auditsNamed('intel.entity.create'), {}, 'no entity audit either')
+        -- a missing report is not_found and writes nothing either
+        t.eq(err(S.addLink(4, { fromId = a.id, to = { type = 'group', label = 'Grupp D' }, type = 'associate',
+            reportId = 999 })), 'not_found')
+        t.eq(scalar("SELECT COUNT(*) FROM fredpd_intel_entities WHERE label = 'Grupp D'"), 0)
+    end)
+end
+
+tests['19 case entities: hidden unless the case view is full/masked (default rules: notice hides it too)'] =
+function(t)
+    withEnv(t, function(_, env, mods)
+        local S = mods.service
+        MySQL.query.await("DELETE FROM fredpd_cases WHERE id = 2")
+        MySQL.query.await("INSERT INTO fredpd_cases (id, case_number, title, status, level, unit, owner_citizenid) "
+            .. "VALUES (2, 'K-124-26', 'Stängt hemligt', 'closed', 2, 'utredning', 'UTR00004')")
+        local okRun, e = pcall(function()
+            -- Default rules stay on: rule 14 + hard cap 2 give the IGV a 'notice' view of the Hemlig case, which
+            -- must hide the case entity exactly like 'none' (a case notice never carries the case number).
+            local rule14
+            for _, r in ipairs(env.rules) do
+                if r.id == 14 then rule14 = r end
+            end
+            t.ok(rule14 and rule14.enabled ~= false, 'rule 14 (case notice for everyone) is on')
+            local case = data(S.ensureEntity(4, { type = 'case', ref = 'K-124-26', label = 'x' }), t, 'owner ensures')
+            -- player 12: intel.read, tier 0, not on the case
+            env.players[12] = { cid = 'IGV00012', duty = true, tier = 0, units = { 'igv' },
+                grants = set({ 'mdt_page:intel', 'perm:intel.read', 'unit:igv' }) }
+            local cv = exports.fredpd_core:canViewMany(12, { { type = 'case', id = 2, level = 2, unit = 'utredning',
+                ownerCitizenid = 'UTR00004', status = 'closed', assignees = {} } })
+            t.eq(cv[1], 'notice', 'the IGV has a case kontaktnotis, not none')
+            t.eq(err(S.ensureEntity(12, { type = 'case', ref = 'K-124-26', label = 'x' })), 'not_found',
+                'no existence probe: same answer as a missing case')
+            t.eq(err(S.ensureEntity(12, { type = 'case', ref = 'K-999-26', label = 'x' })), 'not_found')
+            local p = data(S.ensureEntity(4, { type = 'person', ref = 'SUS00001', label = 'x' }), t)
+            local link = data(S.addLink(4, { fromId = p.id, to = { id = case.id }, type = 'associate', level = 0 }), t)
+            t.eq(data(S.searchEntities(4, { query = 'K-124' }), t).items[1].id, case.id)
+            t.eq(data(S.searchEntities(3, { query = 'K-124' }), t).items, {}, 'case number not revealed by search')
+            t.eq(data(S.searchEntities(12, { query = 'K-' }), t).items, {}, 'nor by a bare prefix')
+            t.eq(err(S.getEntity(3, { id = case.id })), 'not_found', 'exactly like a missing id')
+            t.eq(data(S.getEntity(4, { id = case.id }), t).entity.label, 'K-124-26')
+            -- player 12: the level-0 link is visible by the rules, but its case end is hidden
+            local pv = data(S.getEntity(12, { id = p.id }), t)
+            t.eq(pv.links, {})
+            t.eq(pv.hiddenLinks, 1)
+            local g = data(S.getGraph(12, { entityId = p.id }), t)
+            t.eq(#g.nodes, 1, 'only the root')
+            t.eq(g.edges, {})
+            t.eq(err(S.getGraph(12, { entityId = case.id })), 'not_found')
+            t.eq(err(S.addLink(12, { fromId = p.id, to = { id = case.id }, type = 'uses', level = 0 })), 'not_found')
+            t.eq(err(S.addLink(12, { fromId = p.id, to = { type = 'case', ref = 'K-124-26', label = 'x' },
+                type = 'uses', level = 0 })), 'not_found')
+            t.eq(err(S.addLink(12, { fromId = case.id, to = { id = case.id }, type = 'uses', level = 0 })), 'not_found',
+                'from = to on a hidden case: not_found, like a missing id (no validation leak)')
+            t.eq(err(S.addLink(12, { fromId = case.id, to = { type = 'person', ref = 'bad!', label = 'x' },
+                type = 'uses', level = 0 })), 'not_found', 'hidden from + malformed to: not_found (no existence leak)')
+            t.eq(err(S.addLink(12, { fromId = 99999, to = { type = 'person', ref = 'bad!', label = 'x' },
+                type = 'uses', level = 0 })), 'not_found', 'missing from + malformed to: same answer')
+            t.eq(err(S.addLink(12, { fromId = 99999, to = { id = 99999 }, type = 'uses', level = 0 })), 'not_found')
+            local g4 = data(S.getGraph(4, { entityId = p.id }), t)
+            t.eq(#g4.nodes, 2)
+            t.eq(g4.edges[1].id, link.id)
+        end)
+        MySQL.query.await("DELETE FROM fredpd_cases WHERE id = 2")
+        if not okRun then error(e, 0) end
+    end)
+end
+
+tests['20 searchEntities: person/vehicle results are an audited lookup, one row per call'] = function(t)
+    withEnv(t, function(_, env, mods)
+        local S = mods.service
+        local p = data(S.ensureEntity(4, { type = 'person', ref = 'SUS00001', label = 'x' }), t)
+        data(S.ensureEntity(4, { type = 'group', label = 'Svartklubben' }), t)
+        env.clear()
+        t.eq(#data(S.searchEntities(3, { query = 'Sv' }), t).items, 2)
+        local rows = env.auditsNamed('intel.entity.search')
+        t.eq(#rows, 1, 'one audit row per call')
+        t.eq(rows[1].meta.entityIds, { p.id })
+        t.eq(rows[1].meta.query, 'Sv')
+        env.clear()
+        data(S.searchEntities(3, { query = 'Svart' }), t)
+        t.eq(env.auditActions(), {}, 'no person/vehicle returned: no lookup to audit')
     end)
 end
 

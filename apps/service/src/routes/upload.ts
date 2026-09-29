@@ -20,6 +20,12 @@ import { checkCsrf, hasHmacHeaders, isDirectLoopback, precheckHmacHeaders, requi
 const EXT: Record<UploadMime, string> = { 'image/png': 'png', 'image/jpeg': 'jpg', 'image/webp': 'webp' };
 /** Base64 of 5 MB plus JSON overhead; the decoded size is checked exactly afterwards. */
 const JSON_BODY_LIMIT = Math.ceil((UPLOAD_MAX_BYTES * 4) / 3) + 64 * 1024;
+/**
+ * Portal uploads per session and minute (the global limit is 60 requests; 60 x 5 MB would let one officer write
+ * 300 MB a minute). Signed FXServer uploads (and unauthenticated callers, per IP) keep 60, like the global limit: they share one loopback key for every player.
+ */
+export const UPLOAD_PORTAL_PER_MINUTE = 10;
+const UPLOAD_OTHER_PER_MINUTE = 60;
 const DATA_URI_RE = /^data:[\w.+/-]+;base64,/;
 const BASE64_RE = /^[A-Za-z0-9+/]*={0,2}$/;
 
@@ -48,6 +54,12 @@ export function registerUploadRoutes(app: FastifyInstance, ctx: AppContext): voi
     '/upload',
     {
       bodyLimit: JSON_BODY_LIMIT,
+      config: {
+        rateLimit: {
+          max: (_request: FastifyRequest, key: string) => (key.startsWith('session:') ? UPLOAD_PORTAL_PER_MINUTE : UPLOAD_OTHER_PER_MINUTE),
+          timeWindow: '1 minute',
+        },
+      },
       // Before any body (up to ~7 MB of JSON) is read, and before the rate limiter's hook: only checks that need
       // no I/O. No session and no signature -> 401; malformed or stale HMAC headers -> 401; a portal upload that
       // is not multipart -> 415.

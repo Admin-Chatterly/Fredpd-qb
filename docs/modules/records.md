@@ -43,11 +43,16 @@ UTF-8, pages/limits integers in range. `search`/`getPerson…`/`getVehicle…` a
 - **name**: terms = runs of letters/digits (ASCII alnum + letters beyond ASCII; every ASCII punctuation character,
   Latin-1/general punctuation, zero-width and curly quotes separate), max 6 terms × 32 chars. Each term becomes
   `+term*` in `MATCH (p.firstname, p.lastname) AGAINST (? IN BOOLEAN MODE)` (all required, prefix). Terms the index
-  cannot hold use `(p.lastname LIKE 'term%' OR p.firstname LIKE 'term%')` instead: shorter than
-  `@@innodb_ft_min_token_size` (read once, default 3) or, with `innodb_ft_enable_stopword` on, a stopword **or a
-  prefix of one** (InnoDB does not index `will`, `de`, `la` …, so `Wil` would miss "Will"). No term left (e.g.
-  `%_%`, `'--`) → no hits (never "everything"). Boolean operators can never reach MATCH (asserted on every sent
-  statement in the tests); all user text is a bound parameter. Order `lastname, firstname, citizenid`.
+  cannot hold must instead **start a word** anywhere in the name: `CONCAT_WS(' ', firstname, lastname) REGEXP ?`
+  with the bound pattern `(^|[^[:alnum:]])term` (regex characters escaped anyway; case-insensitive under the `_ci`
+  collation; PCRE2 treats Å/Ä/Ö as letters). This is a deliberate deviation from the task's `LIKE 'x%'` on
+  lastname/firstname: LIKE missed `Li` in "Anna-Li" and `la` in "de la Cruz", and with `firstname` unindexed the
+  OR scanned anyway. A term needs the fallback when shorter than `@@innodb_ft_min_token_size` (read once, default
+  3) or, with `innodb_ft_enable_stopword` on, when it is a stopword **or a prefix of one** (InnoDB does not index
+  `will`, `de`, `la` …, so `Wil` would miss "Will"). With at least one FULLTEXT term the REGEXP only filters the
+  rows `ft_name` found. No term left (e.g. `%_%`, `'--`) → no hits (never "everything"). Boolean operators can
+  never reach MATCH (asserted on every sent statement in the tests); all user text is a bound parameter. Order
+  `lastname, firstname, citizenid`.
 - **personId**: `personnummer IN (…)`: `YYMMDD-XXXX` also matches `19`/`20` + it, `YYYYMMDD-XXXX` also matches the
   10-digit form (index-friendly instead of core.md's `RIGHT(personnummer, 11)`; EXPLAIN `idx_personnummer`).
 - **plate**: PK lookup on `fredpd_vehicles_idx` (+ owner name from `fredpd_persons`); on a miss one
@@ -61,7 +66,7 @@ UTF-8, pages/limits integers in range. `search`/`getPerson…`/`getVehicle…` a
   Hemlig BOLO); inactive → false.
 - Never `players`/`charinfo` (asserted over every statement in the tests).
 - Measured (tests, 200 persons, `Ber` → 56 hits): EXPLAIN `key = ft_name`, server time (ANALYZE) **0.29 ms**.
-  A LIKE-only query (`Bo`) scans `fredpd_persons` because `firstname` has no B-tree index (see open questions).
+  A query of short/stopword terms only (`Bo`) scans `fredpd_persons` (REGEXP; 200 rows: well under 1 ms).
 
 ## Person / vehicle pages, home
 
@@ -69,7 +74,8 @@ UTF-8, pages/limits integers in range. `search`/`getPerson…`/`getVehicle…` a
   vehicles (≤ 50, BOLO flag each), `bolos = exports.fredpd_bolo:getBolosFor(src, 'person', cid)` (array or
   `{ ok, data }` accepted; `[]` when stopped/failing), cases via `fredpd_case_subjects` (≤ 50, open first, then
   `updated_at` desc; role = stored subject role), records = `fredpd_records` rows (≤ 100, newest first, **`revoked`
-  excluded**), title = the row's snapshot `title_sv` (§C14: history stays stable), falling back to the catalogue
+  excluded**; a record tied to a case is listed only when that case's content is visible — `full`, or `masked` at
+  level ≤ tier — so a kontaktnotis/hidden case reveals nothing through the record list), title = the row's snapshot `title_sv` (§C14: history stays stable), falling back to the catalogue
   title only when the snapshot is empty. A record's `caseNumber` is set only when that case is `full`/`masked` for
   the viewer (a kontaktnotis case never leaks its number). Subject cases and record cases go through **one**
   `canViewMany` call (fallback: `canView` per case, one warning).
@@ -81,13 +87,16 @@ UTF-8, pages/limits integers in range. `search`/`getPerson…`/`getVehicle…` a
   adapters are stubs (task 6.2), so this is null in practice today.
 - **Vehicle**: row (refresh on miss), owner `{ citizenid, name }` (name falls back to the citizenid when the mirror
   has no person row), BOLOs, cases (`subject_type = 'vehicle'`, role reported as **`vehicle`**), checks = last 20
-  `fredpd_plate_checks` rows newest first with `OfficerRef` from `fredpd_officers` (unknown officer → null). If the
+  `fredpd_plate_checks` rows newest first with `OfficerRef` from `fredpd_officers` (unknown officer → null);
+  `hit` is true only when the row's `bolo_id` BOLO is visible to the viewer (one `canViewMany` over the hit BOLOs,
+  VisRecord built like fredpd_bolo's; `notice` counts as visible, `none`/unknown bolo → plain check). If the
   table is missing (fredpd_bolo's `010` not applied) or the query fails: `[]` + one warning. A plate with no index
   row, BOLO, case or check → `not_found`; an unregistered plate with any of them gets a page without owner/model.
 - **Audit** (§4.5): `search` once per search (`targetType` = detected type, `targetId` = normalized query cut to 64
   bytes at a character boundary, meta `{ query, type, page, total, hits = ids shown }`; a notice hit is logged as
   `'notice'`); `lookup.person` / `lookup.vehicle` once per opened page (`meta.source = 'summary'`, vehicle also
-  `registered`). Rejected/not_found calls and "my cases" are not audited.
+  `registered`, and `found`). A `not_found` lookup **is** audited (`found = false`) so probing for citizenids or
+  plates leaves a trace; validation/unauthorized rejections and "my cases" are not audited.
 - **Home**: `fredpd_cases` owned by the actor UNION cases assigning the actor, open first then `updated_at` desc,
   LIMIT then canView (a `none` case — impossible with the default rules for own cases — makes the list shorter).
 
@@ -113,11 +122,11 @@ created (Phase 5), so this should not occur; the NUI restore step should map `[]
   `unit`, issuer as `issuedBy` OfficerRef or citizenid) or nil; `getBolosFor(src, kind, id)` returns `Bolo[]`
   (canView-filtered). A batch `checkPersons(cids)` would save 50 export calls per search page.
 - **NUI**: restore absent nullable keys (see contract.test.ts `restoreNulls`) before strict parsing.
-- **db owner**: consider `KEY idx_firstname (firstname)` so short first-name searches avoid a table scan.
+- **db owner**: none needed; short-term-only searches scan `fredpd_persons` (fine at RP-server sizes).
 
 ## Tests
 
-- `lua5.4 tests/lua/run.lua records_` (23 tests; DB `fredpd_test_records_lua`, reset once per run, sessions at
+- `lua5.4 tests/lua/run.lua records_` (24 tests; DB `fredpd_test_records_lua`, reset once per run, sessions at
   `+02:00`; creates `fredpd_plate_checks` with the §C12 columns when the 010 migration is not in the checkout).
   Golden files are rewritten only on change. Set `FREDPD_TEST_VERBOSE=1` to print the measured query time.
 - `pnpm exec vitest run --project resources fredpd_records` (15 tests),

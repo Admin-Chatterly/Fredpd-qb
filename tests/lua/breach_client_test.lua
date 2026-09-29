@@ -172,12 +172,14 @@ tests['every server error code has a text'] = case(nil, function(t, env)
         { 'rate_limited', 'cooldown' }, { 'validation', 'no_item' }, { 'validation', 'not_locked' },
         { 'validation', 'too_far' }, { 'validation', 'too_early' }, { 'not_found', 'door' },
         { 'not_found', 'token' }, { 'expired', 'token' }, { 'unavailable', 'doorlock' },
+        { 'validation', 'denied' },
     }
     for _, c in ipairs(codes) do
         local text = env.M.errorText({ error = c[1], reason = c[2] })
         t.ok(type(text) == 'string' and text ~= '' and not text:find('^[%w]+%.[%w.]+$'), c[1] .. '/' .. c[2] .. ' = ' .. tostring(text))
     end
     t.ok(env.M.errorText(nil) ~= 'errors.unknown')
+    t.eq(env.M.errorText({ error = 'validation', reason = 'denied' }), SV['breach.notSupported'])
 end)
 
 return tests

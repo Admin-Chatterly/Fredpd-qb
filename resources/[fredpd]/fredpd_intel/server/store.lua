@@ -584,12 +584,11 @@ function M.vehicle(plate)
     return { plate = str(r.plate), model = str(r.model) }
 end
 
---- fredpd_cases row by case number (the VisRecord fields canView needs, plus assignees): or nil.
-function M.caseByNumber(caseNumber)
-    local r = MySQL.single.await('SELECT id, case_number, status, level, unit, owner_citizenid FROM fredpd_cases '
-        .. 'WHERE case_number = ?', { caseNumber })
+local CASE_COLS = 'SELECT id, case_number, status, level, unit, owner_citizenid FROM fredpd_cases '
+
+local function rowToCase(r)
     if type(r) ~= 'table' or r.id == nil then return nil end
-    local c = {
+    return {
         id = int(r.id),
         caseNumber = str(r.case_number),
         status = str(r.status),
@@ -598,10 +597,35 @@ function M.caseByNumber(caseNumber)
         owner = str(r.owner_citizenid),
         assignees = {},
     }
-    for _, a in ipairs(query('SELECT citizenid FROM fredpd_case_assignees WHERE case_id = ?', { c.id })) do
-        c.assignees[#c.assignees + 1] = str(a.citizenid)
+end
+
+--- { [caseNumber] = case } for the given case numbers (the VisRecord fields canView needs, plus assignees): one
+--- query for the cases, one for their assignees. Unknown numbers are absent.
+function M.casesByNumbers(numbers)
+    numbers = uniqueStrings(numbers)
+    local out = {}
+    if #numbers == 0 then return out end
+    local byId, ids = {}, {}
+    for _, r in ipairs(query(CASE_COLS .. 'WHERE case_number IN (' .. marks(#numbers) .. ')', numbers)) do
+        local c = rowToCase(r)
+        if c and c.caseNumber then
+            out[c.caseNumber] = c
+            byId[c.id] = c
+            ids[#ids + 1] = c.id
+        end
     end
-    return c
+    if #ids == 0 then return out end
+    for _, a in ipairs(query('SELECT case_id, citizenid FROM fredpd_case_assignees WHERE case_id IN (' .. marks(#ids)
+        .. ')', ids)) do
+        local c = byId[int(a.case_id)]
+        if c then c.assignees[#c.assignees + 1] = str(a.citizenid) end
+    end
+    return out
+end
+
+--- fredpd_cases row by case number, or nil.
+function M.caseByNumber(caseNumber)
+    return M.casesByNumbers({ caseNumber })[caseNumber]
 end
 
 return M

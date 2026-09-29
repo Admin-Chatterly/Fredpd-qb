@@ -1,7 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- fredpd_records search export (task 2.3 server side) against a real MariaDB: input validation and grant re-check,
 -- FULLTEXT name search on 200 seeded persons (expected hits, order, pagination, EXPLAIN key and ANALYZE time
--- < 20 ms), LIKE fallback for short/stopword terms, hostile query strings, personnummer, plates (incl. the
+-- < 20 ms), word-start REGEXP fallback for short/stopword terms, hostile query strings, personnummer, plates (incl. the
 -- refreshPlate miss path), case numbers shaped by canView, BOLO flags, one audit row per search, golden JSON.
 -- Harness: tests/lua/records_env_test.lua. Run: lua5.4 tests/lua/run.lua records_
 local H = require('records_env_test')
@@ -153,7 +153,7 @@ tests['03 200 persons: "Ber" finds every word starting with ber, sorted, paginat
     end)
 end
 
-tests['04 several terms, short terms and stopwords (LIKE fallback), Swedish letters'] = function(t)
+tests['04 several terms, short terms and stopwords (REGEXP fallback), Swedish letters'] = function(t)
     H.with(t, function(_, env, mods)
         H.seedPeople()
         local function names(q)
@@ -166,12 +166,12 @@ tests['04 several terms, short terms and stopwords (LIKE fallback), Swedish lett
         t.eq(names('Anna Berg'), { 'Anna Berg', 'Anna Berglund', 'Anna Bergström' }, 'both terms required')
         t.eq(names('berg anna'), { 'Anna Berg', 'Anna Berglund', 'Anna Bergström' }, 'order and case do not matter')
         local _, bo = names('Bo')
-        t.eq(bo, 20, '"Bo" (< min token size) found through LIKE')
-        t.eq(names('Bo Berg'), { 'Bo Berg', 'Bo Berglund', 'Bo Bergström' }, 'LIKE and FULLTEXT combined')
+        t.eq(bo, 20, '"Bo" (< min token size) found through REGEXP')
+        t.eq(names('Bo Berg'), { 'Bo Berg', 'Bo Berglund', 'Bo Bergström' }, 'REGEXP and FULLTEXT combined')
         local _, will = names('Will')
-        t.eq(will, 20, 'stopword "will" through LIKE')
+        t.eq(will, 20, 'stopword "will" through REGEXP')
         local _, wil = names('Wil')
-        t.eq(wil, 20, 'prefix of a stopword through LIKE')
+        t.eq(wil, 20, 'prefix of a stopword through REGEXP')
         t.eq(({ names('De Geer') })[2], 10, 'stopword "de" + "geer"')
         local _, li = names('Li')
         t.eq(li, 20, '"Li" matches Li and Lindberg (prefix)')
@@ -181,10 +181,35 @@ tests['04 several terms, short terms and stopwords (LIKE fallback), Swedish lett
         t.eq(({ names('Berg-Anna') })[1], { 'Anna Berg', 'Anna Berglund', 'Anna Bergström' }, 'hyphen splits terms')
         local sent = lastSql(env, 'MATCH')
         t.eq(sent.params[1], '+Berg* +Anna*')
-        -- LIKE statements escape nothing they do not need to and bind every term
+        -- short/stopword terms are a bound word-start REGEXP on the whole name, never interpolated
         names('Bo')
-        local like = lastSql(env, 'LIKE')
-        t.eq(like.params, { 'Bo%', 'Bo%' })
+        local re = lastSql(env, 'REGEXP')
+        t.eq(re.params, { '(^|[^[:alnum:]])Bo' })
+        t.ok(not re.sql:find('Bo', 1, true), 'term only as a parameter')
+        t.eq(({ names('bo') })[2], 20, 'REGEXP is case-insensitive under the _ci collation')
+    end)
+end
+
+tests['04b word-start REGEXP: inside hyphenated/multi-word names, letters beyond ASCII, not mid-word'] = function(t)
+    H.with(t, function(_, env, mods)
+        H.persons({
+            { 'RP901', 'Anna-Li', 'Ek', nil, nil, 1, nil },
+            { 'RP902', 'Carlos', 'de la Cruz', nil, nil, 0, nil },
+            { 'RP903', 'Åsa', 'Öst', nil, nil, 1, nil },
+            { 'RP904', 'Olivia', 'Kalix', nil, nil, 1, nil },
+        })
+        local function ids(q)
+            local r = search(mods, 1, { query = q })
+            t.eq(r.ok, true, q)
+            return cids(r.data.hits)
+        end
+        t.eq(ids('Li'), { 'RP901' }, 'second part of a hyphenated first name; not Olivia/Kalix (mid-word)')
+        t.eq(ids('la'), { 'RP902' }, 'stopword inside a multi-word last name')
+        t.eq(ids('ås'), { 'RP903' }, 'lower-case Swedish letter matches Å')
+        t.eq(ids('Ös'), { 'RP903' })
+        t.eq(ids('Li Ek'), { 'RP901' }, 'two short terms, both required')
+        t.eq(ids('Cruz la'), { 'RP902' }, 'FULLTEXT term + REGEXP filter')
+        t.eq(ids('ix'), {}, 'no mid-word match')
     end)
 end
 
@@ -247,7 +272,9 @@ tests['06 terms(): word splitting and caps'] = function(t)
         t.eq(#S.terms(('x'):rep(40))[1], 32, 'terms cut to 32 characters')
         t.eq(S.terms('×÷«»–—“”'), {})
         t.eq(S.terms('Ber\255g'), { 'Ber', 'g' }, 'invalid UTF-8 bytes separate words')
-        t.eq(S.likePrefix('a%b_c\\'), 'a\\%b\\_c\\\\%')
+        t.eq(S.wordStartPattern('Bo'), '(^|[^[:alnum:]])Bo')
+        t.eq(S.wordStartPattern('Åsa'), '(^|[^[:alnum:]])Åsa', 'letters beyond ASCII stay literal')
+        t.eq(S.wordStartPattern('a.b*'), '(^|[^[:alnum:]])a\\.b\\*', 'regex characters escaped (defence in depth)')
         local C = mods['server.common']
         t.eq(C.cutBytes('abc', 64), 'abc')
         t.eq(C.cutBytes(('ö'):rep(40), 64), ('ö'):rep(32))

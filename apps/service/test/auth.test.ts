@@ -92,6 +92,16 @@ describe.skipIf(!database)('Discord OAuth login and session (DB)', () => {
     expect(res.json()).toEqual({ user: null, csrfToken: null });
   });
 
+  it('a new login (from another browser) ends every earlier session of the user', async () => {
+    const first = cookieFrom((await t.app.inject({ method: 'GET', url: `/auth/discord/callback?code=good-${member}` })).headers['set-cookie']);
+    const second = cookieFrom((await t.app.inject({ method: 'GET', url: `/auth/discord/callback?code=good-${member}` })).headers['set-cookie']);
+    expect(await rows(database!, 'SELECT id FROM fredpd_sessions WHERE discord_id = ?', [member])).toHaveLength(1);
+    const old = await t.app.inject({ method: 'GET', url: '/api/session', headers: { cookie: first.header } });
+    expect(old.json()).toEqual({ user: null, csrfToken: null });
+    const cur = await t.app.inject({ method: 'GET', url: '/api/session', headers: { cookie: second.header } });
+    expect(SessionResponseSchema.parse(cur.json()).user?.discordId).toBe(member);
+  });
+
   it('an expired session is not accepted', async () => {
     const res = await t.app.inject({ method: 'GET', url: `/auth/discord/callback?code=good-${member}` });
     const { header } = cookieFrom(res.headers['set-cookie']);

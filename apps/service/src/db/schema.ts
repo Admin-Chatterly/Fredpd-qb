@@ -1,10 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // drizzle-orm view of the fredpd_* tables the service uses. The SQL in db/migrations is the source of truth
-// (001_core.sql, 009_service.sql); this file only mirrors it, and test/schema.test.ts compares every column here
+// (001_core.sql, 005_dispatch.sql, 009_service.sql); this file only mirrors it, and test/schema.test.ts compares every column here
 // with information_schema. Never generate migrations from this file (drizzle-kit is not used for DDL).
 import { sql } from 'drizzle-orm';
 import {
-  bigint, boolean, char, customType, datetime, index, int, mysqlEnum, mysqlTable, smallint, uniqueIndex, varchar,
+  bigint, boolean, char, customType, datetime, index, int, mysqlEnum, mysqlTable, primaryKey, smallint, text, tinyint,
+  uniqueIndex, varchar,
 } from 'drizzle-orm/mysql-core';
 import { GRANT_TYPES } from '@fredpd/types/grants';
 
@@ -121,6 +122,40 @@ export const officers = mysqlTable(
   (t) => [uniqueIndex('uq_discord_citizen').on(t.discordId, t.citizenid), uniqueIndex('uq_unit_callsign').on(t.unit, t.callsign)],
 );
 
+// 005_dispatch.sql (read only: fredpd_dispatch owns every write; GET /api/alerts reads them) ------------------
+
+export const alerts = mysqlTable(
+  'fredpd_alerts',
+  {
+    id: int('id', { unsigned: true }).autoincrement().notNull().primaryKey(),
+    code: varchar('code', { length: 16 }).notNull(),
+    title: varchar('title', { length: 160 }).notNull(),
+    description: text('description'),
+    coords: jsonText<unknown>('coords'),
+    street: varchar('street', { length: 128 }),
+    priority: tinyint('priority', { unsigned: true }).notNull().default(2),
+    source: varchar('source', { length: 32 }).notNull().default('ps-dispatch'),
+    meta: jsonText<unknown>('meta'),
+    status: mysqlEnum('status', ['open', 'assigned', 'closed']).notNull().default('open'),
+    closedBy: varchar('closed_by', { length: 50 }),
+    closedAt: utc('closed_at'),
+    updatedAt: updatedAt(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('idx_status_created').on(t.status, t.createdAt)],
+);
+
+export const alertUnits = mysqlTable(
+  'fredpd_alert_units',
+  {
+    alertId: int('alert_id', { unsigned: true }).notNull(),
+    citizenid: varchar('citizenid', { length: 50 }).notNull(),
+    callsign: varchar('callsign', { length: 16 }),
+    createdAt: createdAt(),
+  },
+  (t) => [primaryKey({ columns: [t.alertId, t.citizenid] }), index('idx_citizenid').on(t.citizenid)],
+);
+
 // 009_service.sql ----------------------------------------------------------------------------------------------
 
 export const sessions = mysqlTable(
@@ -156,4 +191,4 @@ export const uploads = mysqlTable(
   ],
 );
 
-export const schema = { roles, roleGrants, identities, grantCache, audit, units, officers, sessions, uploads };
+export const schema = { roles, roleGrants, identities, grantCache, audit, units, officers, alerts, alertUnits, sessions, uploads };

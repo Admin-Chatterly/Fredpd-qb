@@ -54,10 +54,10 @@ export function unitLabel(i18n: Pick<I18n, 'tx'>, code: string): string {
  * Owner line of a kontaktnotis from its contact (CaseRef notice): "Bo Carlsson (Spaning)", the name or the unit
  * alone, or null (the Notice then says "Kontakta ledningen").
  */
-export function noticeOwner(i18n: Pick<I18n, 'tx'>, contact: { displayName?: string | null; unit?: string | null }): string | null {
+export function noticeOwner(i18n: Pick<I18n, 't' | 'tx'>, contact: { displayName?: string | null; unit?: string | null }): string | null {
   const name = contact.displayName || null;
   const unit = contact.unit ? unitLabel(i18n, contact.unit) : null;
-  if (name && unit) return i18n.tx('visibility.notice.owner', { name, unit }, `${name} (${unit})`);
+  if (name && unit) return i18n.t('visibility.notice.owner', { name, unit });
   return name ?? unit;
 }
 

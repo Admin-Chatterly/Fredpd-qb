@@ -32,6 +32,13 @@ return {
     tokenTtlMs = 8000,
     startRateMs = 1000,                     -- one start attempt per player per second
     cooldownMs = 10000,                     -- after a successful breach, per player
+    finishRateMs = 250,                     -- finish attempts per player: at most 4 per second
+
+    -- ox_doorlock doors that can never be breached (checked on the server at start and finish). An entry is a door
+    -- id (number), an exact door name (string) or a Lua pattern on the name ({ pattern = '^mrpd_' }). Empty = every
+    -- ox_doorlock door can be breached, including the station's own cell/armory/evidence doors; list those here.
+    -- Example: denyDoors = { 'mrpd_armory', { pattern = '^mrpd_evidence' }, 57 },
+    denyDoors = {},
 
     -- Max distance (metres) between the player's ped (server-side position) and the door's ox_doorlock coords, at
     -- start and again at finish. ox_target shows the option within targetDistance.

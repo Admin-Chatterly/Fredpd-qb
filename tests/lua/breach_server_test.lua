@@ -269,6 +269,7 @@ tests['finish: a token works once'] = case(nil, function(t, env)
     env.now = env.now + 4000
     t.ok(finish(env, 1, r.data.token).ok)
     env.doors[12].state = 1
+    env.now = env.now + 300
     t.eq(finish(env, 1, r.data.token), { ok = false, error = 'not_found', reason = 'token' })
     t.eq(#env.setStates, 1)
 end)
@@ -305,8 +306,45 @@ tests['finish: a new start replaces the old token'] = case(nil, function(t, env)
     t.ok(r1.data.token ~= r2.data.token)
     env.now = env.now + 4000
     t.eq(finish(env, 1, r1.data.token), { ok = false, error = 'not_found', reason = 'token' })
+    env.now = env.now + 300
     t.ok(finish(env, 1, r2.data.token).ok)
 end)
+
+tests['finish: per-player rate limit (4/s) before the token lookup; the token is not consumed'] = case(nil,
+    function(t, env)
+        local r = start(env, 1, 12)
+        env.now = env.now + 4000
+        t.eq(finish(env, 1, ('0'):rep(32)), { ok = false, error = 'not_found', reason = 'token' })
+        t.eq(finish(env, 1, r.data.token), { ok = false, error = 'rate_limited', reason = 'rate' })
+        t.eq(finish(env, 2, ('1'):rep(32)), { ok = false, error = 'not_found', reason = 'token' },
+            'another player is not limited')
+        env.now = env.now + 250
+        t.ok(finish(env, 1, r.data.token).ok, 'token still valid after the rate-limited attempt')
+        t.eq(#env.setStates, 1)
+    end)
+
+tests['denyDoors: listed ids, names and name patterns cannot be breached (start and finish)'] = case(nil,
+    function(t, env)
+        env.doors[20] = { id = 20, name = 'mrpd_armory', state = 1, coords = DOOR_POS }
+        env.doors[21] = { id = 21, name = 'mrpd_evidence_2', state = 1, coords = DOOR_POS }
+        env.breach.configure({ denyDoors = { 12, 'mrpd_armory', { pattern = '^mrpd_evidence' }, { pattern = '[' } } })
+        for _, id in ipairs({ 12, 20, 21 }) do
+            env.now = env.now + 1000
+            t.eq(start(env, 1, id), { ok = false, error = 'validation', reason = 'denied' }, tostring(id))
+        end
+        t.eq(#env.setStates, 0)
+        -- A door added to the list between start and finish is refused at finish too.
+        env.breach.configure({ denyDoors = {} })
+        env.doors[22] = { id = 22, name = 'house_front', state = 1, coords = DOOR_POS }
+        env.now = env.now + 1000
+        local r = start(env, 1, 22)
+        t.ok(r.ok, 'unlisted door')
+        env.breach.configure({ denyDoors = { 'house_front' } })
+        env.now = env.now + 4000
+        t.eq(finish(env, 1, r.data.token), { ok = false, error = 'validation', reason = 'denied' })
+        t.eq(#env.setStates, 0)
+        env.breach.configure({ denyDoors = {} })
+    end)
 
 tests['finish: re-checks grant, duty, item, lock state and distance'] = case(nil, function(t, env)
     local steps = {

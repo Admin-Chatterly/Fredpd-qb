@@ -34,6 +34,8 @@ function M.start()
         tokenTtlMs = Config.tokenTtlMs,
         startRateMs = Config.startRateMs,
         cooldownMs = Config.cooldownMs,
+        finishRateMs = Config.finishRateMs,
+        denyDoors = Config.denyDoors,
         maxDistance = Config.maxDistance,
         breachEvidence = Config.breachEvidence,
     })

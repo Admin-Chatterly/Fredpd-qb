@@ -112,7 +112,12 @@ warning).
 - `/officer`: `displayName` is trimmed and limited to 100 **characters** (code points, like `utf8.len` in Lua and
   the `VARCHAR(100)` utf8mb4 column); a `false` from `setOfficerIdentity` is a 400 `invalid_body`, like `/grants`.
 - `signedFetch(method, path, body, cb)`: `cb(status, bodyString)` exactly once; status 0 = no HTTP response, body
-  `{"error":"timeout"|"network"|"invalid_request"|"invalid_body"|"bridge_disabled"}`. One overall 3 s deadline
+  `{"error":"timeout"|"network"|"invalid_request"|"invalid_body"|"bridge_disabled"|"forbidden"|"too_large"}`.
+  `forbidden`: the calling resource (`GetInvokingResource()`, empty = fredpd_core itself) is not `fredpd_*`, or the
+  path is not `/internal/...` or `/upload` (dot segments and `%2e`/`%2f` refused), so other server resources cannot
+  make signed service calls through the export (review fix; a resource that can read the convar is out of scope).
+  `too_large`: the response passed 1 MiB (`MAX_RESPONSE_BYTES`, by Content-Length or counted while reading, on both
+  transports). UNVERIFIED in FXServer: that `GetInvokingResource()` in a JS export names a Lua caller. One overall 3 s deadline
   (timer + AbortController) for both transports: global `fetch` (hence `node_version '22'`) and the `node:http(s)`
   fallback, which is aborted by the same signal (not a socket idle timeout, so a trickling peer cannot hold it).
 - The file is structured as pure factories (`createHandler`, `createSignedFetch`, `createBridge`) plus a few lines

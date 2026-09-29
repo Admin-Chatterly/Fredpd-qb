@@ -21,6 +21,34 @@ export interface AvatarCacheOptions {
 
 const ID_RE = /^\d{1,20}$/;
 const KEY_RE = /^[a-z0-9_]{1,40}$/;
+const DEFAULT_MAX_BYTES = 1024 * 1024;
+
+/**
+ * The response body, refusing more than `max` bytes: by Content-Length before reading, then by a running count while
+ * streaming (the stream is cancelled at once), so the limit bounds memory and not only what is kept.
+ */
+export async function readCapped(res: Response, max: number): Promise<Buffer> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) {
+    await res.body?.cancel().catch(() => {});
+    throw new Error(`unexpected size ${declared}`);
+  }
+  if (!res.body) return Buffer.alloc(0);
+  const reader = res.body.getReader();
+  const chunks: Buffer[] = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > max) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`unexpected size > ${max}`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks, size);
+}
 
 export class AvatarCache {
   private readonly inflight = new Map<string, Promise<Buffer | null>>();
@@ -52,8 +80,8 @@ export class AvatarCache {
     try {
       const res = await this.doFetch(url, { signal: AbortSignal.timeout(this.opts.timeoutMs ?? 5000) });
       if (!res.ok) throw new Error(`CDN answered ${res.status}`);
-      const buf = Buffer.from(await res.arrayBuffer());
-      if (buf.length === 0 || buf.length > (this.opts.maxBytes ?? 1024 * 1024)) throw new Error(`unexpected size ${buf.length}`);
+      const buf = await readCapped(res, this.opts.maxBytes ?? DEFAULT_MAX_BYTES);
+      if (buf.length === 0) throw new Error('unexpected size 0');
       const type = await fileTypeFromBuffer(buf);
       if (type?.mime !== 'image/png') throw new Error(`not a PNG (${type?.mime ?? 'unknown'})`);
       await mkdir(this.opts.dir, { recursive: true });

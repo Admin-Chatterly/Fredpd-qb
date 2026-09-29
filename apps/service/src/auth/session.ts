@@ -5,7 +5,7 @@
 // x-csrf-token header on every write and compared in constant time (synchroniser token; SameSite=Lax on top).
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Db } from '../db/client';
-import { deleteSession, findSession, insertSession, purgeExpiredSessions } from '../db/repo';
+import { deleteSession, deleteSessionsOf, findSession, insertSession, purgeExpiredSessions } from '../db/repo';
 import type { SessionRow } from '../db/repo';
 
 export const SESSION_COOKIE = 'fredpd_sid';
@@ -24,6 +24,10 @@ export function hashToken(token: string): string {
 
 const TOKEN_RE = /^[A-Za-z0-9_-]{43}$/;
 
+/**
+ * A new session for a user. Sessions are one per user: every earlier session of this user ends here (so a stolen
+ * cookie does not outlive a fresh login, and one user has one rate-limit budget). The caller closes their sockets.
+ */
 export async function createSession(db: Db, discordId: string, now: Date): Promise<{ token: string; session: SessionInfo }> {
   const token = newToken();
   const session: SessionInfo = {
@@ -35,6 +39,7 @@ export async function createSession(db: Db, discordId: string, now: Date): Promi
     expiresAt: new Date(Math.floor(now.getTime() / 1000) * 1000 + SESSION_TTL_SECONDS * 1000),
   };
   await purgeExpiredSessions(db, now);
+  await deleteSessionsOf(db, discordId);
   await insertSession(db, session);
   return { token, session };
 }

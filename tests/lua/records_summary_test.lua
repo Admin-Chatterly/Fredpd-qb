@@ -231,20 +231,31 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- Vehicle
 
+--- BOLOs behind the hits: 1 live level 0 (visible), 2 live level 2 in 'ledning' (overridden to none for viewer 1;
+--- a kontaktnotis BOLO would still show the hit, as notice reveals existence),
+--- 3 resolved level 0 (visible, closed). Checks 1..25 on ABC123 (minute = i); every 5th is a hit: 25 -> BOLO 1,
+--- 20 -> BOLO 2 (hidden: reads as a plain check), 15 -> BOLO 3, 10 -> no bolo_id (unknown: no hit), 5 -> BOLO 1.
 local function seedChecks()
+    H.insert('fredpd_bolos', { 'kind', 'plate', 'reason', 'level', 'unit', 'issued_by', 'active' }, {
+        { 'vehicle', 'ABC123', 'Efterlyst för rån', 0, 'utredning', 'REC10002', 1 },
+        { 'vehicle', 'ABC123', 'Spaning', 2, 'ledning', 'REC10003', 1 },
+        { 'vehicle', 'ABC123', 'Gammal', 0, 'igv', 'REC10001', 0 },
+    })
+    local hitBolo = { [25] = 1, [20] = 2, [15] = 3, [5] = 1 }
     local rows = {}
     for i = 1, 25 do
-        rows[#rows + 1] = { 'ABC123', i % 2 == 0 and 'REC10001' or 'GHOST01', i % 5 == 0 and 1 or 0,
+        rows[#rows + 1] = { 'ABC123', i % 2 == 0 and 'REC10001' or 'GHOST01', i % 5 == 0 and 1 or 0, hitBolo[i],
             ('2026-09-10 10:%02d:00'):format(i) }
     end
-    rows[#rows + 1] = { 'XYZ98A', 'REC10001', 0, '2026-09-11 10:00:00' }
-    H.insert('fredpd_plate_checks', { 'plate', 'officer_citizenid', 'hit', 'created_at' }, rows)
+    rows[#rows + 1] = { 'XYZ98A', 'REC10001', 0, nil, '2026-09-11 10:00:00' }
+    H.insert('fredpd_plate_checks', { 'plate', 'officer_citizenid', 'hit', 'bolo_id', 'created_at' }, rows)
 end
 
 tests['06 vehicle: owner, BOLOs, cases as role vehicle, 20 newest checks with OfficerRef'] = function(t)
     H.with(t, function(_, env, mods)
         seedWorld(env)
         seedChecks()
+        env.visOverride['bolo:2'] = 'none'
         local r = vehicle(mods, 1, { plate = 'abc 123' })
         t.eq(r.ok, true)
         local d = r.data
@@ -263,11 +274,21 @@ tests['06 vehicle: owner, BOLOs, cases as role vehicle, 20 newest checks with Of
         t.eq(d.checks[2], { checkedAt = '2026-09-10T10:24:00Z', hit = false,
             officer = { citizenid = 'REC10001', displayName = 'Anna Patrull', callsign = 'IGV-07', unit = 'igv' } })
         t.eq(d.checks[20].checkedAt, '2026-09-10T10:06:00Z')
+        local hits = {}
+        for _, c in ipairs(d.checks) do if c.hit then hits[#hits + 1] = c.checkedAt:sub(15, 16) end end
+        t.eq(hits, { '25', '15' }, 'hits on visible BOLOs only (20: hidden level-2 BOLO, 10: no bolo_id)')
+        t.eq(env.calls.canViewMany >= 1, true)
+        env.visOverride['bolo:2'] = nil
+        local lead = vehicle(mods, 3, { plate = 'ABC123' }).data
+        hits = {}
+        for _, c in ipairs(lead.checks) do if c.hit then hits[#hits + 1] = c.checkedAt:sub(15, 16) end end
+        t.eq(hits, { '25', '20', '15' }, 'without the override the level-2 BOLO hit shows')
+        table.remove(env.audits)
         for _, c in ipairs(d.checks) do t.ok(c.checkedAt:match(H.ISO), 'ISO UTC') end
         local audits = env.named('lookup.vehicle')
         t.eq(#audits, 1)
         t.eq(audits[1].targetId, 'ABC123')
-        t.eq(audits[1].meta, { source = 'summary', registered = true })
+        t.eq(audits[1].meta, { source = 'summary', found = true, registered = true })
         H.golden(t, 'vehicle.summary', d)
     end)
 end
@@ -286,7 +307,10 @@ tests['07 vehicle: unregistered with a BOLO, unknown plate, validation, refresh'
         t.eq(env.named('lookup.vehicle')[1].meta.registered, false)
         H.golden(t, 'vehicle.unregistered', u.data)
         t.eq(vehicle(mods, 1, { plate = 'NOPE99' }), { ok = false, error = 'not_found' })
-        t.eq(#env.named('lookup.vehicle'), 1, 'not_found is not audited')
+        local probes = env.named('lookup.vehicle')
+        t.eq(#probes, 2, 'not_found is audited too (probing leaves a trace)')
+        t.eq(probes[2].targetId, 'NOPE99')
+        t.eq(probes[2].meta, { source = 'summary', found = false, registered = false })
         -- player_vehicles only (qbx stub): refreshed into the mirror and shown with its owner id
         local klm = vehicle(mods, 1, { plate = 'KLM 34E' })
         t.eq(klm.data.vehicle, { plate = 'KLM34E', model = 'blista' })

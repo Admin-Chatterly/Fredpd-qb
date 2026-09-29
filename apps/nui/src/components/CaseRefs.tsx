@@ -28,7 +28,7 @@ type VisibleCaseRef = Exclude<CaseRef, { visibility: 'notice' }>;
 
 /** Number, title (when present), role, status and badges of a full/masked ref, as plain content (no link). */
 export function CaseRefSummary({ caseRef }: { caseRef: VisibleCaseRef }) {
-  const { t, tx } = useI18n();
+  const { t } = useI18n();
   const hasTitle = caseRef.title !== null && caseRef.title !== undefined && caseRef.title !== '';
   return (
     <span data-case-visibility={caseRef.visibility} className="flex min-w-0 flex-1 items-center gap-3">
@@ -36,7 +36,7 @@ export function CaseRefSummary({ caseRef }: { caseRef: VisibleCaseRef }) {
       <span className="min-w-0 flex-1 truncate text-sm text-fg">{hasTitle ? caseRef.title : null}</span>
       {caseRef.role !== null && caseRef.role !== undefined && <span className="shrink-0 text-xs text-muted">{t(CASE_ROLE_KEYS[caseRef.role])}</span>}
       <Badge tone={caseRef.status === 'open' ? 'accent' : 'neutral'}>{t(STATUS_KEYS[caseRef.status])}</Badge>
-      {caseRef.visibility === 'masked' && <Badge tone="warning">{tx('visibility.masked.badge')}</Badge>}
+      {caseRef.visibility === 'masked' && <Badge tone="warning">{t('visibility.masked.badge')}</Badge>}
       {caseRef.level > 0 && <Badge level={caseRef.level} />}
     </span>
   );

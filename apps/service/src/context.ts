@@ -13,6 +13,7 @@ import type { FxRetry } from './fx-retry';
 import type { GrantDeps } from './grants';
 import type { Logger } from './log';
 import type { WsHub } from './ws/hub';
+import type { UnitsSnapshot } from './ws/units-snapshot';
 
 /**
  * Work that runs after the response (officer name push on join). Tracked so shutdown and tests can wait for it
@@ -47,6 +48,8 @@ export interface AppContext {
   /** Redelivers grant changes FXServer missed (src/fx-retry.ts). */
   fxRetry: FxRetry;
   hub: WsHub;
+  /** Newest `unitsChanged` roster for GET /api/units (best effort, in memory). */
+  liveUnits: UnitsSnapshot;
   avatars: AvatarCache;
   background: BackgroundTasks;
   unitOrder: string[];

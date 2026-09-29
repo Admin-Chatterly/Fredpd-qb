@@ -228,6 +228,51 @@ local function linkViews(src, links)
     return out
 end
 
+--- Case entities the viewer may not know about: { [entityId] = true } for every 'case' entity in `entities` (a list
+--- or an id map) whose fredpd_cases row is gone or whose case view is not visible ('none' or 'notice': a case
+--- kontaktnotis never carries the case number, as in fredpd_records' caserefs). Two queries + one canViewMany, and
+--- none at all without case entities.
+local function hiddenCases(actor, entities)
+    local list = {}
+    for _, e in pairs(entities) do
+        if e and e.type == 'case' then list[#list + 1] = e end
+    end
+    local hidden = {}
+    if #list == 0 then return hidden end
+    local numbers = {}
+    for i, e in ipairs(list) do numbers[i] = e.ref end
+    local cases = Store.casesByNumbers(numbers)
+    local records, keys = {}, {}
+    for num, c in pairs(cases) do
+        records[#records + 1] = Access.caseRecord(c)
+        keys[#keys + 1] = num
+    end
+    local caseView = {}
+    for i, v in ipairs(views(actor.src, records)) do caseView[keys[i]] = v end
+    for _, e in ipairs(list) do
+        if not e.ref or not Access.visible(caseView[e.ref]) then hidden[e.id] = true end
+    end
+    return hidden
+end
+
+--- Links whose other end is a hidden case count as hidden: sets lviews[i] = 'none' in place (one entity query for
+--- the ends of the visible links, plus hiddenCases).
+local function hideCaseLinks(actor, links, lviews)
+    local ends = {}
+    for i, l in ipairs(links) do
+        if Access.visible(lviews[i]) then
+            ends[#ends + 1] = l.fromId
+            ends[#ends + 1] = l.toId
+        end
+    end
+    if #ends == 0 then return end
+    local hidden = hiddenCases(actor, Store.entitiesByIds(ends))
+    if next(hidden) == nil then return end
+    for i, l in ipairs(links) do
+        if hidden[l.fromId] or hidden[l.toId] then lviews[i] = 'none' end
+    end
+end
+
 ---------------------------------------------------------------------------------------------------------------
 -- Wire shapes
 
@@ -324,6 +369,7 @@ local function reportsOut(actor, reports, rviews, mviews, missions, via, noReadA
     for i, v in ipairs(views(actor.src, sourceList)) do sviews[sourceKeys[i]] = v end
     local links = Store.linksOfReports(fullIds)
     local lviews = linkViews(actor.src, links)
+    hideCaseLinks(actor, links, lviews)
     local byReport = {}
     do
         local visibleLinks, visibleViews = {}, {}
@@ -503,12 +549,42 @@ end)
 -- Intel reports
 
 M.listIntelReports = action('listIntelReports', M.GRANT.read, nil, function(actor, input)
+    local empty = ok({ items = {}, total = 0, page = input.page })
+    -- A filter is itself a question about the filtered record: the source must be visible (full/masked) and the
+    -- mission visible, else grouping reports by source (or counting a secret insats's reports) would reveal what
+    -- the source/mission views hide. 'none' is not_found; 'notice' an empty page.
+    if input.sourceId then
+        local s = Store.sourceById(input.sourceId)
+        if not s then return fail('not_found') end
+        local sview = sourceView(actor, s)
+        if sview == 'none' then return fail('not_found') end
+        if not Access.visible(sview) then return empty end
+    end
+    if input.missionId then
+        local m, mview = loadMission(actor, input.missionId)
+        if not m or mview == 'none' then return fail('not_found') end
+        if not Access.visible(mview) then return empty end
+    end
     local rows = Store.reportsNewest({ sourceId = input.sourceId, missionId = input.missionId }, M.LIST_SCAN)
     local missions, members = reportContext(rows)
     local rviews, mviews = reportViews(actor.src, rows, missions, members)
-    local visible = {}
-    for i = 1, #rows do
-        if rviews[i] ~= 'none' then visible[#visible + 1] = i end
+    -- Notice-only reports collapse to one entry per contact (a mission's lead + unit, a standalone report's author):
+    -- a kontaktnotis says "ask them", never how many reports there are or when they were filed.
+    local visible, noticeSeen = {}, {}
+    for i, r in ipairs(rows) do
+        local v = rviews[i]
+        if input.sourceId and v ~= 'full' then
+            -- skip: only a full report shows its `source`, so only those may be matched by the source filter
+        elseif v == 'notice' then
+            local m = r.missionId and missions[r.missionId] or nil
+            local key = m and ('m\0' .. tostring(m.lead) .. '\0' .. tostring(m.unit)) or ('a\0' .. tostring(r.author))
+            if not noticeSeen[key] then
+                noticeSeen[key] = true
+                visible[#visible + 1] = i
+            end
+        elseif v ~= 'none' then
+            visible[#visible + 1] = i
+        end
     end
     local pageIdx, total = Access.page(visible, input.page, M.PAGE_SIZE)
     -- bodies only for the page (the scan reads metadata)
@@ -586,14 +662,12 @@ function M.keyedRef(actor, entityType, ref)
         if not v then return nil, nil, 'not_found' end
         return v.plate, truncate(v.model and (v.plate .. ' (' .. v.model .. ')') or v.plate, 128)
     end
-    -- case: must exist and be visible to the actor at all (label = case number only, never the title)
+    -- case: must exist and be visible (full/masked) to the actor; a 'notice' view answers not_found exactly like a
+    -- missing case, so a case number cannot be probed (label = case number only, never the title)
     local c = Store.caseByNumber(norm)
     if not c then return nil, nil, 'not_found' end
-    local view = views(actor.src, { {
-        type = 'case', id = c.id, level = c.level, status = c.status, unit = c.unit, ownerCitizenid = c.owner,
-        assignees = c.assignees,
-    } })[1]
-    if view == 'none' then return nil, nil, 'not_found' end
+    local view = views(actor.src, { Access.caseRecord(c) })[1]
+    if not Access.visible(view) then return nil, nil, 'not_found' end
     return c.caseNumber, c.caseNumber
 end
 
@@ -609,19 +683,37 @@ function M.resolveEntity(actor, spec)
     if not e then return nil, 'unavailable' end
     if created then
         audit(actor.src, 'intel.entity.create', 'intel_entity', e.id, { type = e.type, ref = e.ref })
-    elseif Input.KEYED[spec.type] and e.label ~= label then
-        if Store.relabel(e.id, label) then
-            audit(actor.src, 'intel.entity.relabel', 'intel_entity', e.id, { from = e.label, to = label })
+    elseif Input.KEYED[spec.type] then
+        if e.label ~= label then
+            if Store.relabel(e.id, label) then
+                audit(actor.src, 'intel.entity.relabel', 'intel_entity', e.id, { from = e.label, to = label })
+            end
+            e.label = label
         end
-        e.label = label
+        -- ensuring an existing person/vehicle is a lookup by citizenid/plate returning the name/model (§4.5)
+        if e.type == 'person' or e.type == 'vehicle' then
+            audit(actor.src, 'intel.entity.view', 'intel_entity', e.id, { type = e.type, ref = e.ref, via = 'ensure' })
+        end
     end
     return e
 end
 
-M.searchEntities = action('searchEntities', M.GRANT.page, nil, function(_, input)
-    local items = {}
-    for i, e in ipairs(Store.searchEntities(Input.likePrefix(input.query), input.type, Store.SEARCH_LIMIT)) do
-        items[i] = entityOut(e)
+M.searchEntities = action('searchEntities', M.GRANT.page, nil, function(actor, input)
+    -- over-fetch so hidden case entities (case view 'none') do not shrink the page much
+    local rows = Store.searchEntities(Input.likePrefix(input.query), input.type, Store.SEARCH_LIMIT * 2)
+    local hidden = hiddenCases(actor, rows)
+    local items, looked = {}, {}
+    for _, e in ipairs(rows) do
+        if #items >= Store.SEARCH_LIMIT then break end
+        if not hidden[e.id] then
+            items[#items + 1] = entityOut(e)
+            if e.type == 'person' or e.type == 'vehicle' then looked[#looked + 1] = e.id end
+        end
+    end
+    -- a name/plate prefix returning citizenids/plates is a person/vehicle lookup (§4.5): one audit row per call
+    if #looked > 0 then
+        audit(actor.src, 'intel.entity.search', 'intel_entity', nil,
+            { query = input.query, type = input.type, entityIds = looked })
     end
     return ok({ items = items })
 end)
@@ -664,15 +756,17 @@ end
 
 M.getEntity = action('getEntity', M.GRANT.page, nil, function(actor, input)
     local e = Store.entityById(input.id)
-    if not e then return fail('not_found') end
+    if not e or hiddenCases(actor, { e })[e.id] then return fail('not_found') end
     local links, capped = Store.linksTouching({ e.id }, Store.SCAN_CAP)
     local lviews = linkViews(actor.src, links)
+    hideCaseLinks(actor, links, lviews)
     local shown = shapeLinks(links, lviews)
     local total = capped and Store.countLinksTouching(e.id) or #links
-    -- Reports behind the links (every link, hidden ones too): listed when the viewer may read them.
+    -- Reports behind the VISIBLE links only: a hidden link must not be tied to a report (hiddenLinks is a bare
+    -- count). Each report is then listed when the viewer may read it.
     local reports, seen = {}, {}
-    for _, l in ipairs(links) do
-        if l.report and not seen[l.report.id] then
+    for i, l in ipairs(links) do
+        if Access.visible(lviews[i]) and l.report and not seen[l.report.id] then
             seen[l.report.id] = true
             reports[#reports + 1] = l.report
         end
@@ -725,50 +819,66 @@ end
 
 M.addLink = action('addLink', M.GRANT.read, 'write', function(actor, input)
     if not levelAllowed(actor, input.level) then return fail('validation') end
+    -- Read-only checks first: nothing (not even a new 'to' entity) is written by a call that ends in an error.
     local from = Store.entityById(input.fromId)
-    if not from then return fail('not_found') end
-    local to, err
+    -- A hidden 'from' answers exactly like a missing one, before 'to' is even looked at: no later check
+    -- (e.g. keyedRef's 'validation' for a malformed 'to') can reveal that the id exists.
+    if not from or hiddenCases(actor, { from })[from.id] then return fail('not_found') end
+    local to
     if input.to.id then
         to = Store.entityById(input.to.id)
-        if not to then return fail('not_found') end
+        if not to or hiddenCases(actor, { to })[to.id] then return fail('not_found') end
     else
-        to, err = M.resolveEntity(actor, input.to)
-        if not to then return fail(err) end
+        local ref, label = input.to.ref, input.to.label
+        if Input.KEYED[input.to.type] then
+            local err
+            ref, label, err = M.keyedRef(actor, input.to.type, input.to.ref)
+            if not ref then return fail(err) end
+        end
+        to = Store.findEntity(input.to.type, ref, label) -- nil: created below, once every check has passed
     end
-    if from.id == to.id then return fail('validation') end
+    local hidden = hiddenCases(actor, { from, to })
+    if hidden[from.id] or (to and hidden[to.id]) then return fail('not_found') end
+    if to and from.id == to.id then return fail('validation') end
+    -- The would-be link, decided before anything is written: a call that ends 'unauthorized' writes nothing.
+    local candidate = { createdBy = actor.citizenid, level = input.level }
     if input.reportId then
-        local r, view = loadReport(actor, input.reportId)
+        local r, view, _, missions = loadReport(actor, input.reportId)
         if not r or view == 'none' then return fail('not_found') end
         if not Access.visible(view) then return fail('unauthorized') end
+        candidate.report = { id = r.id, author = r.author, level = r.level, status = r.status,
+            missionId = r.missionId, sourceId = r.sourceId }
+        local m = r.missionId and missions[r.missionId] or nil
+        if m then
+            candidate.mission = { id = m.id, title = m.title, level = m.level, status = m.status, unit = m.unit,
+                lead = m.lead }
+        end
     end
+    if not Access.visible(linkViews(actor.src, { candidate })[1]) then return fail('unauthorized') end
+    if not to then
+        local err
+        to, err = M.resolveEntity(actor, input.to)
+        if not to then return fail(err) end
+        if from.id == to.id then return fail('validation') end
+    end
+    -- An identical stored link comes back when the actor may see it; otherwise the actor's own one is stored.
     local existing = Store.findSameLink(from.id, to.id, input.type, input.reportId)
-    local id = existing
-    if not id then
-        id = Store.insertLink({
-            fromId = from.id, toId = to.id, type = input.type, confidence = input.confidence,
-            reportId = input.reportId, createdBy = actor.citizenid, level = input.level,
-        })
-        audit(actor.src, 'intel.link.create', 'intel_link', id, {
-            fromId = from.id, toId = to.id, type = input.type, level = input.level, reportId = input.reportId,
-        })
+    if existing then
+        local link = Store.linkById(existing)
+        local view = link and linkViews(actor.src, { link })[1]
+        if link and Access.visible(view) then return ok(shapeLinks({ link }, { view })[1]) end
     end
+    local id = Store.insertLink({
+        fromId = from.id, toId = to.id, type = input.type, confidence = input.confidence,
+        reportId = input.reportId, createdBy = actor.citizenid, level = input.level,
+    })
+    audit(actor.src, 'intel.link.create', 'intel_link', id, {
+        fromId = from.id, toId = to.id, type = input.type, level = input.level, reportId = input.reportId,
+    })
     local link = Store.linkById(id)
     local view = linkViews(actor.src, { link })[1]
-    if not Access.visible(view) then
-        -- an identical link the actor cannot see: store the actor's own one instead
-        if existing then
-            id = Store.insertLink({
-                fromId = from.id, toId = to.id, type = input.type, confidence = input.confidence,
-                reportId = input.reportId, createdBy = actor.citizenid, level = input.level,
-            })
-            audit(actor.src, 'intel.link.create', 'intel_link', id, {
-                fromId = from.id, toId = to.id, type = input.type, level = input.level, reportId = input.reportId,
-            })
-            link = Store.linkById(id)
-            view = linkViews(actor.src, { link })[1]
-        end
-        if not Access.visible(view) then return fail('unauthorized') end
-    end
+    -- The candidate check above makes this 'visible'; masked is the floor (full/masked are both shown).
+    if not Access.visible(view) then view = 'masked' end
     return ok(shapeLinks({ link }, { view })[1])
 end)
 
@@ -776,11 +886,14 @@ end)
 -- Graph
 
 --- BFS from the root over the links the viewer may see, to `depth` (1 or 2), at most GRAPH_NODE_CAP nodes. Per
---- level: one link query for the whole frontier (+ one members query for the canView records, one canViewMany);
---- entities are loaded once at the end. Newest links first, so the cap keeps the most recent neighbours.
+--- level: one link query for the whole frontier (+ one members query for the canView records, one canViewMany) and
+--- one entity query for the new ends (case entities the viewer may not know about, case view 'none', are dropped
+--- with their links: + two case queries and one canViewMany, only when case entities are reached). Newest links
+--- first, so the cap keeps the most recent neighbours. nil when the root is missing or a hidden case.
 function M.buildGraph(actor, rootId, depth)
     local root = Store.entityById(rootId)
-    if not root then return nil end
+    if not root or hiddenCases(actor, { root })[root.id] then return nil end
+    local entities = { [root.id] = root }
     local inGraph, order = { [root.id] = true }, { root.id }
     local edges, edgeSeen = {}, {}
     local truncated = false
@@ -790,9 +903,22 @@ function M.buildGraph(actor, rootId, depth)
         local links, capped = Store.linksTouching(frontier, M.GRAPH_LINK_SCAN)
         if capped then truncated = true end
         local lviews = linkViews(actor.src, links)
+        -- entities of the new ends (one query), minus hidden cases
+        local newIds = {}
+        for i, l in ipairs(links) do
+            if Access.visible(lviews[i]) then
+                if not entities[l.fromId] then newIds[#newIds + 1] = l.fromId end
+                if not entities[l.toId] then newIds[#newIds + 1] = l.toId end
+            end
+        end
+        local loaded = Store.entitiesByIds(newIds)
+        local hidden = hiddenCases(actor, loaded)
+        for id, e in pairs(loaded) do
+            if not hidden[id] then entities[id] = e end
+        end
         local nextFrontier = {}
         for i, l in ipairs(links) do
-            if Access.visible(lviews[i]) and not edgeSeen[l.id] then
+            if Access.visible(lviews[i]) and not edgeSeen[l.id] and entities[l.fromId] and entities[l.toId] then
                 for _, id in ipairs({ l.fromId, l.toId }) do
                     if not inGraph[id] then
                         if #order < M.GRAPH_NODE_CAP then
@@ -813,13 +939,10 @@ function M.buildGraph(actor, rootId, depth)
         end
         frontier = nextFrontier
     end
-    local entities = Store.entitiesByIds(order)
     local nodes = {}
     for _, id in ipairs(order) do
         local e = entities[id]
-        if e then
-            nodes[#nodes + 1] = { id = e.id, type = e.type, ref = e.ref, label = e.label, root = e.id == root.id }
-        end
+        nodes[#nodes + 1] = { id = e.id, type = e.type, ref = e.ref, label = e.label, root = e.id == root.id }
     end
     return { nodes = nodes, edges = edges, truncated = truncated }
 end

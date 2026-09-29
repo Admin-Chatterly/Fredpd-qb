@@ -32,6 +32,7 @@ import { checkHmacBeforeParse } from './http/guards';
 import { createLogger } from './log';
 import type { Logger } from './log';
 import { registerAdminRoutes } from './routes/admin';
+import { registerAlertRoutes } from './routes/alerts';
 import { registerAuthRoutes } from './routes/auth';
 import { registerAvatarRoutes } from './routes/avatar';
 import { registerInternalRoutes } from './routes/internal';
@@ -40,6 +41,7 @@ import { registerWsRoutes } from './routes/ws';
 import { loadUnitCodes } from './units';
 import { liveAccess } from './ws/events';
 import { WsHub } from './ws/hub';
+import { UnitsSnapshot } from './ws/units-snapshot';
 
 export interface AppDeps {
   config: Config;
@@ -153,6 +155,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
     sync,
     fxRetry,
     hub,
+    liveUnits: new UnitsSnapshot(),
     avatars: new AvatarCache({ dir: join(resolve(config.UPLOAD_DIR), 'avatars'), log, fetch: deps.fetch }),
     background: new BackgroundTasks(log),
     unitOrder,
@@ -180,6 +183,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
 
   registerAuthRoutes(app, ctx);
   registerAdminRoutes(app, ctx);
+  registerAlertRoutes(app, ctx);
   registerInternalRoutes(app, ctx);
   registerUploadRoutes(app, ctx);
   registerAvatarRoutes(app, ctx);

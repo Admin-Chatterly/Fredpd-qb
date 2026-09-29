@@ -97,8 +97,8 @@ export function Facts({ facts, className }: { facts: readonly (Fact | null | fal
  * because disabled buttons get no pointer events (and so no native title tooltip).
  */
 export function ComingSoonButton({ children, icon, variant = 'secondary' }: { children: ReactNode; icon?: ReactNode; variant?: ButtonProps['variant'] }) {
-  const { tx } = useI18n();
-  const hint = tx('common.comingPhase5');
+  const { t } = useI18n();
+  const hint = t('common.comingPhase5');
   return (
     <span title={hint} data-coming-soon className="inline-flex">
       <Button variant={variant} icon={icon} disabled aria-description={hint}>

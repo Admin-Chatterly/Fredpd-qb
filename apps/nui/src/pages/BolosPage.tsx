@@ -33,7 +33,7 @@ export function BolosPage() {
     { id: 'kind', header: t('bolo.field.kind'), cell: (b) => t(b.kind === 'person' ? 'bolo.kind.person' : 'bolo.kind.vehicle'), className: 'whitespace-nowrap text-muted' },
     {
       id: 'subject',
-      header: i18n.tx('bolo.field.subject'),
+      header: i18n.t('bolo.field.subject'),
       cell: (b) => {
         const path = boloSubjectPath(b);
         return path ? (

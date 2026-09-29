@@ -22,7 +22,7 @@ server-only export `sceneEvidence(kind, coords, suspectSrc)`, kinds = `SceneKind
 | `fredpd_core/adapters/housing/none.lua`, `qbx_properties.lua` | + `getAddress` helper; qbx_properties stays a stub (no API) |
 | `patches/ox_inventory.30-breach-items.patch` | item `pd_ram` (after patches 10 and 20) |
 | `locales/pending/breach.json` | 5 new keys |
-| `tests/lua/breach_server_test.lua`, `breach_client_test.lua`, `housing_adapter_test.lua` | 31 + 7 + 8 tests |
+| `tests/lua/breach_server_test.lua`, `breach_client_test.lua`, `housing_adapter_test.lua` | 33 + 7 + 8 tests |
 
 ## Breach flow
 
@@ -33,20 +33,28 @@ server-only export `sceneEvidence(kind, coords, suspectSrc)`, kinds = `SceneKind
    `ox_inventory:GetItemCount('pd_ram') > 0`. All hints.
 2. **Server `fredpd:breach:start(doorId)`**: `local src = source` → grant `tool:ram` → on duty → rate limit (1/s) and
    cooldown (10 s after a successful breach) → door id integer 1..1e6 → `ox_inventory:GetItemCount(src, 'pd_ram') > 0`
-   → `ox_doorlock:getDoor(id)` exists and `state == 1` → `#(GetEntityCoords(GetPlayerPed(src)) - door.coords) <= 3.0`.
+   → `ox_doorlock:getDoor(id)` exists, is not in `config.denyDoors` (→ `denied`) and `state == 1` → `#(GetEntityCoords(GetPlayerPed(src)) - door.coords) <= 3.0`.
    Returns `{ ok, data = { token (32 hex), doorId, durationMs = 4000 } }`. One live token per player (a new start
    replaces it); expired tokens are pruned on each start (no timer).
 3. **Client**: `lib.progressBar` 4 s, `canCancel`, movement/combat disabled, `prop` = `config.ramModel` (ox_lib
    attaches it only while the bar runs and deletes it afterwards, `ox_lib resource/interface/client/progress.lua:58-67,
    121-158, 220, 310-313`), `anim` = first candidate whose dict exists and whose clip has a duration.
-4. **Server `fredpd:breach:finish(token)`**: token must be 32 hex, exist and belong to `src` (another player's token →
+4. **Server `fredpd:breach:finish(token)`**: token must be 32 hex; per-player rate limit (`finishRateMs` 250 ms, i.e.
+   4/s, before the token lookup; a rate-limited attempt does not consume the token); token must exist and belong to `src` (another player's token →
    `not_found`, left untouched); consumed; `> 8 s` → `expired`; `< progressMs - 500 ms` → `too_early` (the bar cannot be
-   skipped); grant, duty, item, locked, distance again → `exports.ox_doorlock:setDoorState(id, 0)` → audit
+   skipped); grant, duty, item, deny list, locked, distance again → `exports.ox_doorlock:setDoorState(id, 0)` → audit
    `breach.door` (target `door`/id, meta `{ doorId, name, coords }`) → optional `config.breachEvidence`.
 
 Error codes (`{ ok = false, error, reason }`): `unauthorized` (grant/off_duty), `rate_limited` (rate/cooldown),
-`validation` (door/no_item/not_locked/too_far/too_early/token), `not_found` (door/token), `expired`, `unavailable`.
-The client maps each to Swedish text (`breach.*`, `errors.*`).
+`validation` (door/denied/no_item/not_locked/too_far/too_early/token), `not_found` (door/token), `expired`, `unavailable`.
+The client maps each to Swedish text (`breach.*`, `errors.*`; `denied` → `breach.notSupported`).
+
+**Deny list.** By default every ox_doorlock door can be breached, including the station's own cell, armory and
+evidence doors (a `tool:ram` holder could force them). `config.denyDoors` lists doors that can never be breached: an
+ox_doorlock id (number), an exact door name (string) or a Lua pattern on the name (`{ pattern = '^mrpd_evidence' }`).
+It is checked on the server at start and again at finish. It is empty by default because door names are
+server-specific; server owners should add their station's secure doors. The client still shows the option on a
+denied door (the list is not used as a client hint); selecting it answers "Dörren kan inte forceras."
 
 **Item missing.** `Breach.checkItem()` at start: `exports.ox_inventory:Items('pd_ram') == nil` → one warning; starts
 then answer `no_item` (GetItemCount returns 0 for unknown items, `modules/inventory/server.lua:2324-2326`).
@@ -106,7 +114,8 @@ adapter: `getAddress(citizenid)` → first label or nil (a plain field, not part
   are used.
 - **ox_doorlock-only**: `adapters/housing/ox_doorlock_only.json` =
   `{ "properties": { "<propertyId>": { "doors": [12, "door_name"], "label": "…" } } }` (ids or ox_doorlock names);
-  an unlisted numeric property id is taken as an ox_doorlock door id. No ownership → `getAddresses` = `{}`.
+  only mapped properties resolve (an unmapped id, even a numeric one, gives `nil`; it is never used as a door id,
+  so a property id cannot open an unrelated door such as a station armory). No ownership → `getAddresses` = `{}`.
 - **qbx_properties**: no exports (deps-verification §11) → stays a stub; use ox_doorlock-only with a mapping.
 - Not started → no-op + one warning (base.lua).
 
@@ -168,7 +177,11 @@ Result: **placeholder kept** (`ramModel = 'prop_tool_shovel'`). Rami can stream 
 3. At a locked ox_doorlock door (e.g. a MRPD cell door): target it → "Forcera dörr" is shown.
 4. Select it: 4 s progress bar with a prop in hand and an animation; the door unlocks; "Dörren är forcerad."
 5. Portal/DB: `fredpd_audit` has `breach.door` with the door id and coords.
-6. Remove the grant (or go off duty): the option disappears; forcing via console event is refused.
+6. Remove the grant: the option disappears. Go off duty instead (grant kept): the option may still show (duty is
+   checked on the server only); selecting it gives "Du är inte i tjänst" and the door stays locked.
 7. From a small server-side test resource (exports cannot be called from the console): `exports.fredpd_breach:sceneEvidence('burglary', GetEntityCoords(GetPlayerPed(<id>)), <id>)`
-   → as a Tekniker with `forensic_kit`, a fingerprint can be collected at that spot; audit `breach.scene`.
+   → as a Tekniker with `forensic_kit`, a fingerprint can be collected at that spot; audit `breach.scene`. The
+   burglary fingerprint has chance 80: if none spawned (the result's `spawned` list has no `fingerprint`), repeat the
+   call more than 5 m away (the cooldown is per 5 m / 60 s), or set its chance to 100 in
+   `config/scene_evidence.lua` for the test.
 8. Run the same call again at once → `rate_limited` (cooldown).

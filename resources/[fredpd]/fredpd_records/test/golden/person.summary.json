@@ -28,12 +28,6 @@
       "visibility": "masked"
     },
     {
-      "contact": {
-        "unit": "ledning"
-      },
-      "visibility": "notice"
-    },
-    {
       "caseNumber": "K-4-26",
       "id": 4,
       "level": 0,
@@ -43,20 +37,6 @@
       "visibility": "full"
     },
     {
-      "contact": {
-        "displayName": "Olle Utredare",
-        "unit": "utredning"
-      },
-      "visibility": "notice"
-    },
-    {
-      "contact": {
-        "displayName": "Olle Utredare",
-        "unit": "utredning"
-      },
-      "visibility": "notice"
-    },
-    {
       "caseNumber": "K-2-26",
       "id": 2,
       "level": 0,
@@ -64,6 +44,26 @@
       "status": "closed",
       "title": "Stöld av moped",
       "visibility": "masked"
+    },
+    {
+      "contact": {
+        "unit": "ledning"
+      },
+      "visibility": "notice"
+    },
+    {
+      "contact": {
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "visibility": "notice"
+    },
+    {
+      "contact": {
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "visibility": "notice"
     }
   ],
   "person": {
@@ -86,14 +86,6 @@
       "title": "Misshandel"
     },
     {
-      "chargeCode": "BRB-004",
-      "createdAt": "2026-09-03T12:00:00Z",
-      "fine": 1500,
-      "id": 2,
-      "jailMinutes": 0,
-      "title": "Ringa misshandel"
-    },
-    {
       "chargeCode": "BRB-001",
       "createdAt": "2026-09-02T12:00:00Z",
       "fine": 0,
@@ -107,14 +99,6 @@
       "createdAt": "2026-08-01T12:00:00Z",
       "fine": 2000,
       "id": 5,
-      "jailMinutes": 0,
-      "title": "Misshandel"
-    },
-    {
-      "chargeCode": "BRB-005",
-      "createdAt": "2026-07-01T12:00:00Z",
-      "fine": 2500,
-      "id": 6,
       "jailMinutes": 0,
       "title": "Misshandel"
     }

@@ -54,7 +54,7 @@ function Records({ records }: { records: readonly RecordRow[] }) {
 }
 
 export function PersonView({ data }: { data: PersonSummary }) {
-  const { t, tx } = useI18n();
+  const { t } = useI18n();
   const { grants } = useSession();
   const canCreate = usePerm(PERMS.boloCreate);
   const canResolve = usePerm(PERMS.boloResolve);
@@ -103,7 +103,7 @@ export function PersonView({ data }: { data: PersonSummary }) {
             { label: t('person.field.birthdate'), value: person.birthdate },
             { label: t('person.field.gender'), value: t(GENDER_KEYS[person.gender]) },
             { label: t('person.field.phone'), value: person.phone },
-            { label: tx('person.field.address'), value: data.address },
+            { label: t('person.field.address'), value: data.address },
           ]}
         />
       </Card>

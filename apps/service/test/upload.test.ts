@@ -10,6 +10,7 @@ import { UploadResponseSchema } from '@fredpd/types/actions';
 import { HMAC_SIG_HEADER, HMAC_TS_HEADER, signBody } from '@fredpd/types/hmac';
 import { cleanup, GUILD_ID, HMAC_SECRET, ids, loginAs, makeApp, multipartBody, PNG_1X1, rows, seedRole, setupTestDb, signedInject, testConfig } from './helpers';
 import type { TestApp } from './helpers';
+import { UPLOAD_PORTAL_PER_MINUTE } from '../src/routes/upload';
 
 const PREFIX = '903';
 const database = await setupTestDb('upload.test');
@@ -146,5 +147,19 @@ describe.skipIf(!database)('POST /upload (DB)', () => {
     PNG_1X1.copy(big);
     const tooBig = await signedInject(t, { method: 'POST', url: '/upload', body: { data: big.toString('base64') } });
     expect(tooBig.statusCode).toBe(413);
+  });
+
+  it('a portal session gets at most UPLOAD_PORTAL_PER_MINUTE uploads a minute (429 after)', async () => {
+    const officer = nextId();
+    t.gateway.addMember({ id: officer, roleIds: [GUILD_ID, polisRole] });
+    const own = await loginAs(t, database!, officer);
+    const codes: number[] = [];
+    for (let i = 0; i <= UPLOAD_PORTAL_PER_MINUTE; i++) {
+      const { payload, contentType } = await multipartBody('file', PNG_1X1, 'a.png', 'image/png');
+      const res = await t.app.inject({ method: 'POST', url: '/upload', payload, headers: { 'content-type': contentType, cookie: own.cookie, 'x-csrf-token': own.csrf } });
+      codes.push(res.statusCode);
+    }
+    expect(codes.slice(0, UPLOAD_PORTAL_PER_MINUTE).every((c) => c === 200)).toBe(true);
+    expect(codes[UPLOAD_PORTAL_PER_MINUTE]).toBe(429);
   });
 });

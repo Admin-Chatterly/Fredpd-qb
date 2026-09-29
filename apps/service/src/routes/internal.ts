@@ -14,6 +14,7 @@ import { computeGrants, GatewayNotReadyError } from '../grants';
 import { HttpError, parseOr400 } from '../http/errors';
 import { requireHmac, requireLoopback } from '../http/guards';
 import { checkInternalEvent, liveAccess } from '../ws/events';
+import type { UnitsPush } from '../ws/units-snapshot';
 
 /** FXServer is one trusted caller that may burst (a restart re-fetches every online player); HMAC gates it. */
 const INTERNAL_RATE = { max: 1200, timeWindow: '1 minute' };
@@ -59,6 +60,8 @@ export function registerInternalRoutes(app: FastifyInstance, ctx: AppContext): v
   app.post('/internal/events', opts, async (request) => {
     const checked = checkInternalEvent(parseOr400(InternalEventSchema, request.body));
     if (!checked.ok) throw new HttpError(400, 'invalid_body', checked.detail);
+    // Kept for GET /api/units (only a payload that passed UnitsPushSchema above gets here).
+    if (checked.event.type === 'unitsChanged') ctx.liveUnits.set(checked.event.payload as UnitsPush, ctx.clock.now());
     return { ok: true as const, delivered: ctx.hub.broadcast(checked.event) };
   });
 }

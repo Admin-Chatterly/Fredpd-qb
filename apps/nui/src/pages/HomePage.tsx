@@ -119,7 +119,7 @@ function Roster({ roster }: { roster: HomeOutput['roster'] }) {
 }
 
 function Block({ block, data }: { block: HomeBlock; data: HomeOutput | undefined }) {
-  const { t, tx } = useI18n();
+  const { t } = useI18n();
   if (!data) {
     return (
       <div className="flex justify-center py-6">
@@ -131,7 +131,7 @@ function Block({ block, data }: { block: HomeBlock; data: HomeOutput | undefined
     case 'recentBolos':
       return <BoloList bolos={data.recentBolos} showSubject empty={t('bolo.none')} />;
     case 'myCases':
-      return <CaseRefList refs={data.myCases} subject={tx('case.notice.subject')} empty={t('case.none')} />;
+      return <CaseRefList refs={data.myCases} subject={t('case.notice.subject')} empty={t('case.none')} />;
     case 'roster':
       return <Roster roster={data.roster} />;
   }

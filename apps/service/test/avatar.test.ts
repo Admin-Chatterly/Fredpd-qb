@@ -7,6 +7,7 @@ import { join } from 'node:path';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { GUILD_ID, makeApp, PNG_1X1, testConfig } from './helpers';
 import type { TestApp } from './helpers';
+import { readCapped } from '../src/avatar';
 
 const HASH_A = 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
 const HASH_B = 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb';
@@ -79,5 +80,21 @@ describe('GET /avatar/:discordId', () => {
     } finally {
       cdnBody = PNG_1X1;
     }
+  });
+});
+
+describe('readCapped', () => {
+  it('returns the body under the cap and refuses a larger one by header or by count', async () => {
+    expect((await readCapped(new Response('abc'), 10)).toString()).toBe('abc');
+    await expect(readCapped(new Response('abc', { headers: { 'content-length': '11' } }), 10)).rejects.toThrow(/unexpected size/);
+    let pulled = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pulled += 1;
+        controller.enqueue(new Uint8Array(4));
+      },
+    });
+    await expect(readCapped(new Response(endless), 10)).rejects.toThrow(/unexpected size/);
+    expect(pulled).toBeLessThan(10);
   });
 });

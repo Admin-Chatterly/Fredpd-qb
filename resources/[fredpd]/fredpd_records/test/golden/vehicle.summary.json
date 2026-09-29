@@ -70,7 +70,7 @@
     },
     {
       "checkedAt": "2026-09-10T10:20:00Z",
-      "hit": true,
+      "hit": false,
       "officer": {
         "callsign": "IGV-07",
         "citizenid": "REC10001",
@@ -140,7 +140,7 @@
     },
     {
       "checkedAt": "2026-09-10T10:10:00Z",
-      "hit": true,
+      "hit": false,
       "officer": {
         "callsign": "IGV-07",
         "citizenid": "REC10001",

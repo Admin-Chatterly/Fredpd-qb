@@ -2,7 +2,7 @@
 // preHandler guards: portal session (+ CSRF on writes), perm checks from live grants, and HMAC for /internal/*.
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { hasGrant } from '@fredpd/types/grants';
-import type { GrantSet } from '@fredpd/types/grants';
+import type { GrantSet, GrantType } from '@fredpd/types/grants';
 import { CSRF_HEADER } from '@fredpd/types/actions';
 import { HMAC_SIG_HEADER, HMAC_TS_HEADER, verifySignature } from '@fredpd/types/hmac';
 import { csrfMatches } from '../auth/session';
@@ -43,14 +43,20 @@ export async function sessionGrants(ctx: AppContext, session: SessionInfo): Prom
 }
 
 /**
- * Requires `perm:<key>` in the user's live grants, else 403 (docs/contracts.md §C10). Intel routes must answer 404
- * instead (IMPLEMENTATION.md §5.9); they get their own guard when they are built.
+ * Requires `<type>:<key>` in the user's live grants (resolved per request, never cached with the session), else 403.
+ * A user who left the guild has no grants. Intel routes must answer 404 instead (IMPLEMENTATION.md §5.9); they get
+ * their own guard when they are built.
  */
-export function requirePerm(ctx: AppContext, key: string): Guard {
+export function requireGrant(ctx: AppContext, type: GrantType, key: string): Guard {
   return async (request) => {
     const { member, grants } = await sessionGrants(ctx, sessionOf(request));
-    if (!member || !hasGrant(grants, 'perm', key)) throw new HttpError(403, 'forbidden');
+    if (!member || !hasGrant(grants, type, key)) throw new HttpError(403, 'forbidden');
   };
+}
+
+/** Requires `perm:<key>` (docs/contracts.md §C10); see requireGrant. */
+export function requirePerm(ctx: AppContext, key: string): Guard {
+  return requireGrant(ctx, 'perm', key);
 }
 
 /**

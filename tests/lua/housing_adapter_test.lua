@@ -1,8 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Housing adapters (task 6.2, docs/modules/breach.md "Housing adapter"): ps-housing (doors from its getMainDoor
 -- export, unlock through ox_doorlock, addresses from its `properties` table — the SQL runs against MariaDB when it
--- is reachable, database fredpd_test_breach_housing), ox_doorlock-only (property → door mapping, numeric fallback),
--- the no-op + one warning when the backing resource is not started, and getAddress on every housing adapter.
+-- is reachable, database fredpd_test_breach_housing), ox_doorlock-only (property → door mapping only; no numeric
+-- fallback), the no-op + one warning when the backing resource is not started, and getAddress on every housing adapter.
 -- Run: lua5.4 tests/lua/run.lua housing_adapter
 local Base = require('adapters.base')
 local shim = require('mysql_shim')
@@ -179,7 +179,7 @@ local DOORS = {
     [40] = { id = 40, name = 'loose_door', state = 1 },
 }
 
-tests['ox_doorlock-only: mapping by id and by door name; numeric fallback; unmapped → nil'] = function(t)
+tests['ox_doorlock-only: mapping by id and by door name; unmapped (even numeric) → nil'] = function(t)
     local world = { states = { ox_doorlock = 'started' }, doors = DOORS }
     with(world, function()
         local a = fresh('adapters.housing.ox_doorlock_only')
@@ -190,10 +190,12 @@ tests['ox_doorlock-only: mapping by id and by door name; numeric fallback; unmap
         } })
         t.eq(a.getDoorForProperty('grove'), { 12, 13 })
         t.eq(a.getDoorForProperty(7), { 40 }, 'mapped numeric id uses the mapping')
-        t.eq(a.getDoorForProperty(12), { 12 }, 'unmapped numeric id = ox_doorlock door id')
+        t.eq(a.getDoorForProperty(12), nil, 'unmapped numeric id is not taken as a door id')
+        t.eq(a.unlock(12, 1), false)
         t.eq(a.getDoorForProperty(99), nil)
         t.eq(a.getDoorForProperty('bad'), nil, 'entries without valid doors are dropped')
         t.eq(a.getDoorForProperty('nope'), nil)
+        t.eq(world.setStates, {}, 'nothing unlocked for unmapped ids')
         t.eq(a.unlock('grove', 1), true)
         t.eq(world.setStates, { { 12, 0 }, { 13, 0 } })
         t.eq(a.unlock('nope', 1), false)

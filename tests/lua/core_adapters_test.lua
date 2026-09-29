@@ -38,13 +38,25 @@ tests['every kind has a none adapter and every stub file loads'] = function(t)
         t.eq(none.kind, kind)
         t.eq(none.name, 'none')
     end
-    for _, spec in ipairs({ { 'housing', 'ps-housing' }, { 'housing', 'qbx_properties' }, { 'housing', 'ox_doorlock-only' },
-        { 'garage', 'qbx_garages' }, { 'prison', 'qbx_prison' }, { 'prison', 'qbx_police-jail' } }) do
+    for _, spec in ipairs({ { 'housing', 'qbx_properties' }, { 'garage', 'qbx_garages' }, { 'prison', 'qbx_prison' },
+        { 'prison', 'qbx_police-jail' } }) do
         local a = require(Loader.moduleName(spec[1], spec[2]))
         t.eq(a.kind, spec[1])
         t.eq(a.name, spec[2])
         t.eq(a.stub, true)
         t.ok(type(a.resource) == 'string')
+    end
+end
+
+tests['the implemented housing adapters load as real adapters'] = function(t)
+    for _, name in ipairs({ 'ps-housing', 'ox_doorlock-only' }) do
+        local a = require(Loader.moduleName('housing', name))
+        t.eq(a.kind, 'housing')
+        t.eq(a.name, name)
+        t.ok(a.stub ~= true, name .. ' is not a stub')
+        t.ok(type(a.resource) == 'string')
+        t.ok(type(a.getDoorForProperty) == 'function', name .. '.getDoorForProperty')
+        t.ok(type(a.unlock) == 'function', name .. '.unlock')
     end
 end
 
@@ -69,7 +81,9 @@ tests['the default config loads its adapters; missing resources warn once each']
     end)
     t.eq(#log.warns, 1, table.concat(log.warns, ' | '))
     t.ok(log.warns[1]:find('ps-housing', 1, true))
-    t.eq(#log.debugs, 3, 'stub notices are debug level')
+    -- Only qbx_garages is still a stub in the default config (ps-housing is real, prison is 'none').
+    t.eq(#log.debugs, 1, 'stub notices are debug level')
+    t.ok(log.debugs[1]:find('qbx_garages', 1, true), log.debugs[1])
 end
 
 tests['qbx_prison and qbx_police-jail are opt-in only and say why at every start'] = function(t)

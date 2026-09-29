@@ -35,7 +35,7 @@ function M.errorText(res)
     if e == 'validation' and r == 'no_item' then return L('breach.noItem') end
     if e == 'validation' and r == 'not_locked' then return L('breach.notLocked') end
     if e == 'validation' and r == 'too_far' then return L('breach.tooFar') end
-    if e == 'not_found' and r == 'door' then return L('breach.notSupported') end
+    if (e == 'not_found' and r == 'door') or (e == 'validation' and r == 'denied') then return L('breach.notSupported') end
     if e == 'expired' or (e == 'not_found' and r == 'token') or r == 'too_early' then return L('breach.expired') end
     return L('errors.unknown')
 end

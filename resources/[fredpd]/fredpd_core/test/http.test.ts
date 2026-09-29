@@ -34,13 +34,14 @@ type SignedFetch = (method: string, path: string, body: unknown, cb: (status: nu
 interface HandlerDeps { secret: string | null; now(): number; callLua: Fn; emitEvent?: Fn; playerCount(): number; log(level: string, msg: string): void }
 interface HttpApi {
   MAX_BODY_BYTES: number;
+  MAX_RESPONSE_BYTES: number;
   REJECT_LOG_INTERVAL_S: number;
   RULES_CHANGED_EVENT: string;
   secretProblem(secret: unknown): string | null;
   signBody(secret: string, ts: string | number, rawBody: string): string;
   verifySignature(o: { secret: string; ts: string; sig: string; rawBody: string; nowSeconds: number }): VerifyResult;
   createHandler(deps: HandlerDeps): Handler;
-  createSignedFetch(deps: { secret: string | null; baseUrl: string; now(): number; fetch?: Fn; timeoutMs?: number; log(level: string, msg: string): void }): SignedFetch;
+  createSignedFetch(deps: { secret: string | null; baseUrl: string; now(): number; fetch?: Fn; timeoutMs?: number; log(level: string, msg: string): void; invoker?: () => string | null }): SignedFetch;
 }
 
 interface Loaded {
@@ -587,6 +588,41 @@ describe('http.js signedFetch', () => {
     expect(await call(must(loaded.registered.signedFetch), 'TRACE', '/x', null)).toEqual([0, '{"error":"invalid_request"}']);
     expect(await call(must(loaded.registered.signedFetch), 'GET', 'http://evil/x', null)).toEqual([0, '{"error":"invalid_request"}']);
     expect(calls).toHaveLength(0);
+  });
+
+  it('only fredpd_* resources may sign requests', async () => {
+    const { api } = load();
+    let caller: string | null = 'evil_resource';
+    const fetch = vi.fn(() => ok(200, '{}'));
+    const sf = api.createSignedFetch({ secret: SECRET, baseUrl: 'http://127.0.0.1:1', now: nowSeconds, fetch: fetch as Fn, log: () => {}, invoker: () => caller });
+    expect(await call(sf as unknown as Fn, 'POST', '/internal/events', {})).toEqual([0, '{"error":"forbidden"}']);
+    expect(fetch).not.toHaveBeenCalled();
+    caller = 'fredpd_dispatch';
+    expect(await call(sf as unknown as Fn, 'POST', '/internal/events', {})).toEqual([200, '{}']);
+    caller = null; // fredpd_core's own runtime
+    expect(await call(sf as unknown as Fn, 'GET', '/internal/ping', null)).toEqual([200, '{}']);
+  });
+
+  it('only the /internal/ and /upload service paths can be signed', async () => {
+    const { calls, loaded } = withFetch(() => ok(200, '{}'));
+    const sf = must(loaded.registered.signedFetch);
+    for (const path of ['/auth/me', '/api/officers', '/internal/../auth/me', '/internal/%2e%2e/api', '/internalx', '/upload/../api']) {
+      expect(await call(sf, 'GET', path, null), path).toEqual([0, '{"error":"forbidden"}']);
+    }
+    expect(calls).toHaveLength(0);
+    expect(await call(sf, 'POST', '/upload', {})).toEqual([200, '{}']);
+    expect(await call(sf, 'GET', '/internal/grants/123?x=1', null)).toEqual([200, '{}']);
+  });
+
+  it('a response larger than MAX_RESPONSE_BYTES fails with too_large', async () => {
+    const { loaded } = withFetch(() => ok(200, 'x'.repeat(loaded.api.MAX_RESPONSE_BYTES + 1)));
+    expect(await call(must(loaded.registered.signedFetch), 'GET', '/internal/ping', null)).toEqual([0, '{"error":"too_large"}']);
+    const big = new Response('y'.repeat(10), { headers: { 'content-length': String(loaded.api.MAX_RESPONSE_BYTES + 1) } });
+    const sf = loaded.api.createSignedFetch({ secret: SECRET, baseUrl: 'http://127.0.0.1:1', now: nowSeconds, fetch: (() => Promise.resolve(big)) as Fn, log: () => {} });
+    expect(await call(sf as unknown as Fn, 'GET', '/internal/ping', null)).toEqual([0, '{"error":"too_large"}']);
+    const streamed = new Response('z'.repeat(loaded.api.MAX_RESPONSE_BYTES + 10));
+    const sf2 = loaded.api.createSignedFetch({ secret: SECRET, baseUrl: 'http://127.0.0.1:1', now: nowSeconds, fetch: (() => Promise.resolve(streamed)) as Fn, log: () => {} });
+    expect(await call(sf2 as unknown as Fn, 'GET', '/internal/ping', null)).toEqual([0, '{"error":"too_large"}']);
   });
 
   it('timeout aborts the request and calls back once', async () => {

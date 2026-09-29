@@ -153,8 +153,8 @@ function SubjectPicker({ kind, onPick }: { kind: BoloKind; onPick: (subject: Bol
 
 function createErrorText(err: MdtClientError, subject: string, i18n: ReturnType<typeof useI18n>, errorText: (e: unknown) => string): string {
   if (err.reason === 'duplicate') return i18n.t('bolo.create.duplicate', { subject });
-  if (err.reason === 'level') return i18n.tx('bolo.create.levelTooHigh');
-  if (err.code === 'not_found') return i18n.tx('bolo.create.subjectNotFound');
+  if (err.reason === 'level') return i18n.t('bolo.create.levelTooHigh');
+  if (err.code === 'not_found') return i18n.t('bolo.create.subjectNotFound');
   return errorText(err);
 }
 
@@ -247,7 +247,7 @@ export function BoloCreateDialog({ onClose, kind: initialKind, subject: initialS
                 {form.subject.label}
               </span>
               <Button size="sm" variant="ghost" onClick={() => update({ subject: null })}>
-                {tx('bolo.create.changeSubject')}
+                {t('bolo.create.changeSubject')}
               </Button>
             </div>
           ) : (
@@ -290,7 +290,7 @@ export function BoloCreateDialog({ onClose, kind: initialKind, subject: initialS
               value={form.expiresInHours ?? ''}
               onChange={(e) => update({ expiresInHours: e.target.value === '' ? null : Number(e.target.value) })}
             >
-              <option value="">{tx('bolo.expiry.none')}</option>
+              <option value="">{t('bolo.expiry.none')}</option>
               {BOLO_EXPIRY_HOURS.map((hours) => (
                 <option key={hours} value={hours}>
                   {fmtHours(i18n, hours)}

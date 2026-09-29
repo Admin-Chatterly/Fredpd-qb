@@ -83,6 +83,15 @@ function M.reportRecord(r, mission, members)
     }
 end
 
+--- A fredpd_cases row (store.casesByNumbers) as a case VisRecord (§C3). Case entities are only shown to viewers
+--- whose case view is not 'none' (their label is the case number).
+function M.caseRecord(c)
+    return {
+        type = 'case', id = c.id, level = level(c.level), status = c.status, unit = c.unit,
+        ownerCitizenid = c.owner, assignees = c.assignees or {},
+    }
+end
+
 --- Effective level of a link: max(link level, report level).
 function M.linkLevel(link)
     local l = level(link.level)
