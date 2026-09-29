@@ -5,15 +5,16 @@
 // file implements the same algorithm on mysql2, and packages/types/test/migrations.test.ts checks that both
 // produce the same fredpd_migrations rows and the same schema.
 //
-// Usage: node scripts/migrate.mjs [--url mysql://user:pass@host:3306/db] [--seed] [--status] [--allow-non-utc]
-//   --url            connection URL (default: env FREDPD_DB_URL)
-//   --seed           also apply db/seed/*.sql that are new or changed since they were last applied
-//   --status         print the state of every migration and seed instead of applying anything
-//   --allow-non-utc  only warn (instead of failing) when the server's default time zone is not UTC
+// Usage: node scripts/migrate.mjs [--url mysql://user:pass@host:3306/db] [--seed] [--status]
+//   --url     connection URL (default: env FREDPD_DB_URL)
+//   --seed    also apply db/seed/*.sql that are new or changed since they were last applied
+//   --status  print the state of every migration and seed instead of applying anything
+//
+// Time zones: none needed. Every timestamp default is (UTC_TIMESTAMP()) and every write uses UTC_TIMESTAMP()
+// (docs/contracts.md §C7), so the runner works whatever the server's or the session's time zone is, and never
+// changes either.
 //
 // Algorithm (shared with db.lua):
-//   0. fail unless the server's default time zone is UTC (docs/contracts.md §C7; oxmysql sessions use it), then
-//      write in a UTC session whatever zone a caller-supplied connection had (restored afterwards);
 //   1. create fredpd_migrations if missing (MIGRATIONS_TABLE_DDL, identical to the statement in 001_core.sql);
 //   2. read db/migrations/NNN_*.sql in byte order; checksum = sha256 hex of the file bytes after dropping a
 //      UTF-8 BOM and turning CRLF into LF (so a Windows checkout hashes like a Linux one);
@@ -42,21 +43,10 @@ export const LOCK_NAME = 'fredpd_migrate';
 export const MIGRATIONS_TABLE_DDL = `CREATE TABLE IF NOT EXISTS fredpd_migrations (
   id VARCHAR(64) NOT NULL,
   checksum CHAR(64) NOT NULL,
-  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  applied_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci`;
-
-/**
- * Time zone probe; keep identical to M.TIME_ZONE_SQL in db.lua (judged by timeZoneProblem). The two
- * UNIX_TIMESTAMP skews (0 under UTC) catch zones that equal UTC only in winter, such as Europe/London; the
- * literals are 2026-01-15 and 2026-07-15 12:00:00 UTC as Unix time.
- */
-export const TIME_ZONE_SQL =
-  'SELECT @@session.time_zone AS tz, @@system_time_zone AS system_tz, ' +
-  'TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), NOW()) AS now_offset, ' +
-  "CAST(UNIX_TIMESTAMP('2026-01-15 12:00:00') - 1768478400 AS SIGNED) AS jan_skew, " +
-  "CAST(UNIX_TIMESTAMP('2026-07-15 12:00:00') - 1784116800 AS SIGNED) AS jul_skew";
 
 const TABLE_EXISTS_SQL =
   'SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?';
@@ -65,7 +55,7 @@ const RECORD_MIGRATION_SQL = 'INSERT INTO fredpd_migrations (id, checksum) VALUE
 const RECORDED_CHECKSUM_SQL = 'SELECT checksum FROM fredpd_migrations WHERE id = ?';
 const RECORD_SEED_SQL =
   'INSERT INTO fredpd_migrations (id, checksum) VALUES (?, ?) ' +
-  'ON DUPLICATE KEY UPDATE checksum = VALUES(checksum), applied_at = CURRENT_TIMESTAMP';
+  'ON DUPLICATE KEY UPDATE checksum = VALUES(checksum), applied_at = UTC_TIMESTAMP()';
 
 // ---------------------------------------------------------------------------------------------------------------
 // Pure parts (mirrored in db.lua)
@@ -225,43 +215,6 @@ export function splitStatements(source) {
   return out;
 }
 
-/** Signed minutes for messages: 120 -> '+120', -60 -> '-60', null -> '?'. */
-function signed(minutes) {
-  if (minutes === null || Number.isNaN(minutes)) return '?';
-  return `${minutes >= 0 ? '+' : ''}${minutes}`;
-}
-
-/** Number or null (a missing or non-numeric field). */
-function num(v) {
-  if (v === null || v === undefined || v === '') return null;
-  const n = Number(v);
-  return Number.isNaN(n) ? null : n;
-}
-
-/**
- * Judge a TIME_ZONE_SQL row: null when sessions with that zone store UTC all year, else the error text (the
- * same text as M.timeZoneProblem in db.lua).
- * @param {Record<string, unknown> | null | undefined} row
- * @returns {string | null}
- */
-export function timeZoneProblem(row) {
-  const r = row ?? {};
-  const now = num(r.now_offset);
-  const jan = num(r.jan_skew);
-  const jul = num(r.jul_skew);
-  if (now === 0 && jan === 0 && jul === 0) return null;
-  // A skew is (local reading - UTC) in seconds, i.e. minus the UTC offset.
-  const janOff = jan === null ? null : Math.floor(-jan / 60);
-  const julOff = jul === null ? null : Math.floor(-jul / 60);
-  const text = (v) => (v === null || v === undefined ? 'nil' : String(v));
-  return (
-    `MariaDB sessions do not use UTC (time_zone=${text(r.tz)}, system_time_zone=${text(r.system_tz)}; ` +
-    `UTC offset now ${signed(now)} min, January ${signed(janOff)}, July ${signed(julOff)}). ` +
-    'docs/contracts.md §C7 requires every DATETIME DEFAULT CURRENT_TIMESTAMP in UTC. ' +
-    "Set default-time-zone='+00:00' under [mysqld] in my.ini (my.cnf on Linux) and restart MariaDB; see docs/modules/db.md."
-  );
-}
-
 /**
  * List `*.sql` files of a directory matching `re`, sorted by byte order (as db.lua sorts index.json).
  * @param {string} dir
@@ -305,30 +258,15 @@ async function loadMysql() {
 }
 
 /**
- * Open a mysql2/promise connection for a `mysql://user:pass@host:port/db` URL, session time zone UTC.
+ * Open a mysql2/promise connection for a `mysql://user:pass@host:port/db` URL. The session keeps the server's
+ * default time zone (FredPD SQL never depends on it); `timezone: 'Z'` makes mysql2 read DATETIME values into Dates
+ * as UTC and write Dates as UTC text, which is what FredPD stores.
  * @param {string} url
  */
 export async function connect(url) {
   if (!url) throw new Error('no database URL: pass --url or set FREDPD_DB_URL');
   const mysql = await loadMysql();
-  const conn = await mysql.createConnection({ uri: url, charset: 'utf8mb4', timezone: 'Z', multipleStatements: false });
-  await conn.query("SET time_zone = '+00:00'");
-  return conn;
-}
-
-/**
- * Time zone problem of the server's *default* zone (what new sessions, and so oxmysql on FXServer, get), or null.
- * connect() sets this session to UTC, so the check switches to the default and restores the session afterwards.
- */
-async function defaultTimeZoneProblem(conn) {
-  const [[session]] = await conn.query('SELECT @@session.time_zone AS tz');
-  await conn.query('SET time_zone = DEFAULT');
-  try {
-    const [[row]] = await conn.query(TIME_ZONE_SQL);
-    return timeZoneProblem(row);
-  } finally {
-    await conn.query('SET time_zone = ?', [session.tz]);
-  }
+  return mysql.createConnection({ uri: url, charset: 'utf8mb4', timezone: 'Z', multipleStatements: false });
 }
 
 /**
@@ -385,20 +323,6 @@ function statementError(id, st, err) {
   return e;
 }
 
-/**
- * Run fn with the session in UTC, so CURRENT_TIMESTAMP defaults (applied_at, seeded created_at) are UTC even on a
- * caller-supplied connection in another zone; the caller's zone is restored afterwards (best effort, like the lock).
- */
-async function inUtcSession(conn, fn) {
-  const [[session]] = await conn.query('SELECT @@session.time_zone AS tz');
-  await conn.query("SET time_zone = '+00:00'");
-  try {
-    return await fn();
-  } finally {
-    await conn.query('SET time_zone = ?', [session.tz]).catch(() => {});
-  }
-}
-
 async function withConnection(opts, fn) {
   const own = !opts.connection;
   const conn = opts.connection ?? (await connect(opts.url ?? process.env.FREDPD_DB_URL));
@@ -410,24 +334,20 @@ async function withConnection(opts, fn) {
 }
 
 /**
- * Apply pending migrations (and, with `seed`, new or changed seeds). Fails before anything runs when the server's
- * default time zone is not UTC (unless `allowNonUtc`, which only logs a warning) or an applied migration drifted.
+ * Apply pending migrations (and, with `seed`, new or changed seeds). Fails before anything runs when an applied
+ * migration drifted. Any server or session time zone is fine (docs/contracts.md §C7); a caller-supplied
+ * `connection` is used as it is.
  * @param {{ url?: string, connection?: object, migrationsDir?: string, seedDir?: string, seed?: boolean,
- *           allowNonUtc?: boolean, log?: (msg: string) => void }} [opts]
+ *           log?: (msg: string) => void }} [opts]
  * @returns {Promise<{ applied: string[], seeded: string[], skipped: string[] }>}
  */
 export async function migrate(opts = {}) {
-  const { migrationsDir = MIGRATIONS_DIR, seedDir = SEED_DIR, seed = false, allowNonUtc = false, log = console.log } = opts;
+  const { migrationsDir = MIGRATIONS_DIR, seedDir = SEED_DIR, seed = false, log = console.log } = opts;
   return withConnection(opts, async (conn) => {
     const [[lock]] = await conn.query('SELECT GET_LOCK(?, 60) AS ok', [LOCK_NAME]);
     if (Number(lock.ok) !== 1) throw new Error('could not acquire the migration lock (another runner is busy)');
     try {
-      const problem = await defaultTimeZoneProblem(conn);
-      if (problem) {
-        if (!allowNonUtc) throw new Error(problem);
-        log(`[migrate] WARNING: ${problem}`);
-      }
-      return await inUtcSession(conn, () => applyAll(conn, { migrationsDir, seedDir, seed, log }));
+      return await applyAll(conn, { migrationsDir, seedDir, seed, log });
     } finally {
       // Never let a failed release (e.g. a dropped connection) hide the original error; the server frees the
       // lock when the session ends anyway.
@@ -436,7 +356,7 @@ export async function migrate(opts = {}) {
   });
 }
 
-/** Steps 1-5 of the algorithm on a locked UTC session. */
+/** Steps 1-5 of the algorithm on a locked session. */
 async function applyAll(conn, { migrationsDir, seedDir, seed, log }) {
   await conn.query(MIGRATIONS_TABLE_DDL);
   const applied = await readApplied(conn);
@@ -531,11 +451,10 @@ export async function status(opts = {}) {
 // CLI
 
 function parseArgs(argv) {
-  const args = { url: process.env.FREDPD_DB_URL, seed: false, status: false, allowNonUtc: false };
+  const args = { url: process.env.FREDPD_DB_URL, seed: false, status: false };
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i];
     if (a === '--seed') args.seed = true;
-    else if (a === '--allow-non-utc') args.allowNonUtc = true;
     else if (a === '--status') args.status = true;
     else if (a === '--url') args.url = argv[++i];
     else if (a.startsWith('--url=')) args.url = a.slice('--url='.length);
@@ -555,7 +474,7 @@ async function main() {
     if (rows.some((r) => r.state === 'changed' && !r.id.startsWith(SEED_ID_PREFIX))) process.exitCode = 1;
     return;
   }
-  await migrate({ url: args.url, seed: args.seed, allowNonUtc: args.allowNonUtc });
+  await migrate({ url: args.url, seed: args.seed });
 }
 
 /**

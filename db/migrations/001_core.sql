@@ -5,7 +5,9 @@
 -- File rules (docs/contracts.md §C7, docs/modules/db.md): statements end with `;` at end of line, every table is
 -- CREATE TABLE IF NOT EXISTS, InnoDB, utf8mb4 / utf8mb4_swedish_ci, with created_at. No procedures, triggers or
 -- DELIMITER. Never edit this file once it has been applied anywhere (the runners reject a changed checksum); add a
--- new NNN_*.sql instead. Identifier conventions: citizenid VARCHAR(50) (as qbx_core players.citizenid), Discord
+-- new NNN_*.sql instead. Times are UTC DATETIME whatever the server/session time zone: defaults are
+-- (UTC_TIMESTAMP()), never CURRENT_TIMESTAMP/NOW(), and there is no ON UPDATE: every writer sets
+-- updated_at = UTC_TIMESTAMP() itself. Identifier conventions: citizenid VARCHAR(50) (as qbx_core players.citizenid), Discord
 -- snowflakes VARCHAR(20), unit codes VARCHAR(32) (config/units.json), levels 0 standard / 1 begränsad / 2 hemlig.
 
 -- Bookkeeping: one row per applied migration (id = file name) and per applied seed (id = 'seed/<file name>').
@@ -15,8 +17,8 @@
 CREATE TABLE IF NOT EXISTS fredpd_migrations (
   id VARCHAR(64) NOT NULL,
   checksum CHAR(64) NOT NULL,
-  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  applied_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci;
 
@@ -30,8 +32,8 @@ CREATE TABLE IF NOT EXISTS fredpd_roles (
   colour INT UNSIGNED NOT NULL DEFAULT 0 COMMENT 'Discord role colour as 0xRRGGBB',
   position INT NOT NULL DEFAULT 0,
   deleted TINYINT(1) NOT NULL DEFAULT 0,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (discord_role_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci;
 
@@ -43,7 +45,7 @@ CREATE TABLE IF NOT EXISTS fredpd_role_grants (
   grant_type ENUM('weapon','vehicle','armory','tool','mdt_page','intel_tier','unit','perm') NOT NULL,
   grant_key VARCHAR(64) NOT NULL,
   effect ENUM('allow','deny') NOT NULL DEFAULT 'allow',
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id),
   UNIQUE KEY uq_role_grant (discord_role_id, grant_type, grant_key),
   CONSTRAINT fk_role_grants_role FOREIGN KEY (discord_role_id) REFERENCES fredpd_roles (discord_role_id)
@@ -59,7 +61,7 @@ CREATE TABLE IF NOT EXISTS fredpd_identities (
   license VARCHAR(64) NULL,
   last_citizenid VARCHAR(50) NULL,
   last_seen DATETIME NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (discord_id),
   KEY idx_license (license),
   KEY idx_last_citizenid (last_citizenid)
@@ -70,7 +72,7 @@ CREATE TABLE IF NOT EXISTS fredpd_grant_cache (
   discord_id VARCHAR(20) NOT NULL,
   grants JSON NOT NULL,
   computed_at DATETIME NOT NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (discord_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci;
 
@@ -85,7 +87,7 @@ CREATE TABLE IF NOT EXISTS fredpd_audit (
   target_type VARCHAR(32) NULL,
   target_id VARCHAR(64) NULL,
   meta JSON NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id),
   KEY idx_target (target_type, target_id),
   KEY idx_actor_created (actor_citizenid, created_at),
@@ -103,8 +105,8 @@ CREATE TABLE IF NOT EXISTS fredpd_audit_archive (
   target_type VARCHAR(32) NULL,
   target_id VARCHAR(64) NULL,
   meta JSON NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  archived_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  archived_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id),
   KEY idx_target (target_type, target_id),
   KEY idx_actor_created (actor_citizenid, created_at),
@@ -121,8 +123,8 @@ CREATE TABLE IF NOT EXISTS fredpd_units (
   home VARCHAR(32) NULL COMMENT 'Hem page variant',
   sort_order SMALLINT NOT NULL DEFAULT 0 COMMENT 'primary-unit order (IMPLEMENTATION.md §4.9)',
   active TINYINT(1) NOT NULL DEFAULT 1,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (code)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci;
 
@@ -139,8 +141,8 @@ CREATE TABLE IF NOT EXISTS fredpd_officers (
   callsign VARCHAR(16) NULL COMMENT 'formats.json callsign, e.g. IGV-07',
   unit VARCHAR(32) NULL COMMENT 'primary unit code',
   rank_role_id VARCHAR(20) NULL COMMENT 'Discord role holding perm:rank:<key>',
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (citizenid),
   UNIQUE KEY uq_discord_citizen (discord_id, citizenid),
   UNIQUE KEY uq_unit_callsign (unit, callsign)
@@ -159,8 +161,8 @@ CREATE TABLE IF NOT EXISTS fredpd_visibility_rules (
   result ENUM('full','masked','notice','none') NOT NULL,
   priority INT NOT NULL DEFAULT 0,
   enabled TINYINT(1) NOT NULL DEFAULT 1,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci;
 
@@ -173,7 +175,7 @@ CREATE TABLE IF NOT EXISTS fredpd_sequences (
   seq_type VARCHAR(32) NOT NULL,
   year SMALLINT UNSIGNED NOT NULL,
   value INT UNSIGNED NOT NULL DEFAULT 0,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (seq_type, year)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci;

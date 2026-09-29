@@ -33,8 +33,8 @@ local M = {}
 M.MIGRATIONS_TABLE_DDL = [[CREATE TABLE IF NOT EXISTS fredpd_migrations (
   id VARCHAR(64) NOT NULL,
   checksum CHAR(64) NOT NULL,
-  applied_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  applied_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci]]
 
@@ -43,18 +43,10 @@ M.MIGRATION_PATTERN = '^%d%d%d_.+%.sql$'
 M.SEED_PATTERN = '^[^.].*%.sql$'
 
 --- Atomic {{seq}} allocation (fredpd_sequences, 001_core.sql). The statement's insert id is the new value:
---- LAST_INSERT_ID(expr) sets it both on first insert and on the duplicate-key update.
+--- LAST_INSERT_ID(expr) sets it both on first insert and on the duplicate-key update. updated_at is set here
+--- because FredPD tables have no ON UPDATE clause (docs/contracts.md §C7: UTC_TIMESTAMP(), never NOW()).
 M.NEXT_SEQ_SQL = 'INSERT INTO fredpd_sequences (seq_type, year, value) VALUES (?, ?, LAST_INSERT_ID(1)) '
-    .. 'ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)'
-
---- Time zone probe (keep identical to TIME_ZONE_SQL in scripts/migrate.mjs). docs/contracts.md §C7 wants every
---- `DATETIME DEFAULT CURRENT_TIMESTAMP` in UTC, and oxmysql sessions use the server's default zone, so the zone
---- must be UTC now and all year: the two UNIX_TIMESTAMP skews (0 under UTC) catch zones such as Europe/London
---- that equal UTC only in winter. The literals are 2026-01-15 and 2026-07-15 12:00:00 UTC as Unix time.
-M.TIME_ZONE_SQL = 'SELECT @@session.time_zone AS tz, @@system_time_zone AS system_tz, '
-    .. 'TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), NOW()) AS now_offset, '
-    .. "CAST(UNIX_TIMESTAMP('2026-01-15 12:00:00') - 1768478400 AS SIGNED) AS jan_skew, "
-    .. "CAST(UNIX_TIMESTAMP('2026-07-15 12:00:00') - 1784116800 AS SIGNED) AS jul_skew"
+    .. 'ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1), updated_at = UTC_TIMESTAMP()'
 
 local TABLE_EXISTS_SQL =
     'SELECT COUNT(*) AS n FROM information_schema.tables WHERE table_schema = DATABASE() AND table_name = ?'
@@ -63,7 +55,7 @@ local TABLE_EXISTS_SQL =
 local RECORD_MIGRATION_SQL = 'INSERT INTO fredpd_migrations (id, checksum) VALUES (?, ?) ON DUPLICATE KEY UPDATE id = id'
 local RECORDED_CHECKSUM_SQL = 'SELECT checksum FROM fredpd_migrations WHERE id = ?'
 local RECORD_SEED_SQL = 'INSERT INTO fredpd_migrations (id, checksum) VALUES (?, ?) '
-    .. 'ON DUPLICATE KEY UPDATE checksum = VALUES(checksum), applied_at = CURRENT_TIMESTAMP'
+    .. 'ON DUPLICATE KEY UPDATE checksum = VALUES(checksum), applied_at = UTC_TIMESTAMP()'
 
 ---------------------------------------------------------------------------------------------------------------
 -- Pure parts (mirrored in scripts/migrate.mjs)
@@ -217,31 +209,6 @@ function M.splitStatements(source)
     return out
 end
 
---- Signed minutes for messages: 120 -> '+120', -60 -> '-60', nil -> '?'.
-local function signed(minutes)
-    if minutes == nil then return '?' end
-    minutes = math.tointeger(minutes) or minutes
-    return ('%s%d'):format(minutes >= 0 and '+' or '', minutes)
-end
-
---- Judge a TIME_ZONE_SQL row: nil when sessions with that zone store UTC all year, else the error text (the same
---- text as timeZoneProblem() in scripts/migrate.mjs).
----@param row table?
----@return string?
-function M.timeZoneProblem(row)
-    row = row or {}
-    local now = tonumber(row.now_offset or '')
-    local jan, jul = tonumber(row.jan_skew or ''), tonumber(row.jul_skew or '')
-    if now == 0 and jan == 0 and jul == 0 then return nil end
-    -- A skew is (local reading - UTC) in seconds, i.e. minus the UTC offset.
-    local janOff, julOff = jan and -jan // 60, jul and -jul // 60
-    return ('MariaDB sessions do not use UTC (time_zone=%s, system_time_zone=%s; UTC offset now %s min, January %s, '
-        .. "July %s). docs/contracts.md §C7 requires every DATETIME DEFAULT CURRENT_TIMESTAMP in UTC. Set "
-        .. "default-time-zone='+00:00' under [mysqld] in my.ini (my.cnf on Linux) and restart MariaDB; see "
-        .. 'docs/modules/db.md.'):format(tostring(row.tz), tostring(row.system_tz), signed(now), signed(janOff),
-        signed(julOff))
-end
-
 ---------------------------------------------------------------------------------------------------------------
 -- Thin oxmysql wrappers (must run inside a thread/coroutine, like every oxmysql .await call)
 
@@ -343,22 +310,15 @@ local function statementError(id, st, err)
 end
 
 --- Apply pending migrations, then (unless opts.seed == false) new or changed seeds.
---- Raises on any failure, including (checked before anything runs) a database whose sessions do not use UTC unless
---- opts.allowNonUtc (then only a warning is logged), and a checksum mismatch for an applied migration.
----@param opts { seed: boolean?, allowNonUtc: boolean?, log: fun(msg: string)?, resource: string? }?
+--- Raises on any failure, including (checked before anything runs) a checksum mismatch for an applied migration.
+--- Works in any MariaDB time zone: every timestamp default is (UTC_TIMESTAMP()) (docs/contracts.md §C7).
+---@param opts { seed: boolean?, log: fun(msg: string)?, resource: string? }?
 ---@return { applied: string[], seeded: string[], skipped: string[] }
 function M.migrate(opts)
     opts = opts or {}
     local log = opts.log or function(msg) print(('[fredpd_core:db] %s'):format(msg)) end
     local resource = opts.resource or GetCurrentResourceName()
     local result = { applied = {}, seeded = {}, skipped = {} }
-
-    -- oxmysql never sets a session time zone, so this reads the server default every FredPD write will use.
-    local problem = M.timeZoneProblem(MySQL.single.await(M.TIME_ZONE_SQL))
-    if problem then
-        if not opts.allowNonUtc then error(problem, 0) end
-        log(('WARNING: %s'):format(problem))
-    end
 
     MySQL.query.await(M.MIGRATIONS_TABLE_DDL)
     local applied = {}

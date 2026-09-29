@@ -15,8 +15,8 @@ CREATE TABLE IF NOT EXISTS fredpd_alerts (
   status ENUM('open','assigned','closed') NOT NULL DEFAULT 'open',
   closed_by VARCHAR(50) NULL,
   closed_at DATETIME NULL,
-  updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id),
   KEY idx_status_created (status, created_at)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci;
@@ -26,7 +26,7 @@ CREATE TABLE IF NOT EXISTS fredpd_alert_units (
   alert_id INT UNSIGNED NOT NULL,
   citizenid VARCHAR(50) NOT NULL,
   callsign VARCHAR(16) NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (alert_id, citizenid),
   KEY idx_citizenid (citizenid),
   CONSTRAINT fk_alert_units_alert FOREIGN KEY (alert_id) REFERENCES fredpd_alerts (id) ON DELETE CASCADE

@@ -33,11 +33,14 @@ M.SELECT_SQL = 'SELECT citizenid, discord_id, display_name, avatar_url, callsign
 -- INSERT IGNORE reports 1 only for an inserted row and 0 for a duplicate, with or without FOUND_ROWS.
 M.INSERT_ROW_SQL = 'INSERT IGNORE INTO fredpd_officers (citizenid, discord_id, display_name) VALUES (?, ?, ?)'
 -- The condition makes affectedRows mean "changed" under FOUND_ROWS too (discord_id is NOT NULL).
-M.RELINK_SQL = 'UPDATE fredpd_officers SET discord_id = ? WHERE citizenid = ? AND discord_id <> ?'
+-- updated_at is set by every writer (no ON UPDATE clause; UTC_TIMESTAMP(), docs/contracts.md §C7).
+M.RELINK_SQL = 'UPDATE fredpd_officers SET discord_id = ?, updated_at = UTC_TIMESTAMP() '
+    .. 'WHERE citizenid = ? AND discord_id <> ?'
 -- Runs after INSERT_ROW_SQL, so the row exists. An existing callsign is never overwritten (callsign IS NULL). If the
 -- candidate was taken meanwhile, uq_unit_callsign makes the UPDATE fail and ensureCallsign retries with a fresh list;
 -- the result is read back with loadOne, so affectedRows is not needed here either.
-M.CALLSIGN_SQL = 'UPDATE fredpd_officers SET unit = ?, callsign = ? WHERE citizenid = ? AND callsign IS NULL'
+M.CALLSIGN_SQL = 'UPDATE fredpd_officers SET unit = ?, callsign = ?, updated_at = UTC_TIMESTAMP() '
+    .. 'WHERE citizenid = ? AND callsign IS NULL'
 
 ---------------------------------------------------------------------------------------------------------------
 -- Pure helpers (tests/lua/core_officers_test.lua)
@@ -268,7 +271,8 @@ function M.ensureCallsign(src)
     return callsign
 end
 
---- config/units.json -> fredpd_units (codes missing from the config are deactivated, never deleted).
+--- config/units.json -> fredpd_units (codes missing from the config are deactivated, never deleted). updated_at
+--- moves only for rows whose values changed.
 function M.syncUnits(unitsConfig)
     local rows, codes = {}, {}
     for i, u in ipairs(type(unitsConfig) == 'table' and unitsConfig.units or {}) do
@@ -283,10 +287,10 @@ function M.syncUnits(unitsConfig)
     if #rows == 0 then return 0 end
     local sql, params = Core.buildInsert('fredpd_units',
         { 'code', 'callsign_prefix', 'label_key', 'home', 'sort_order', 'active' }, rows,
-        { 'callsign_prefix', 'label_key', 'home', 'sort_order', 'active' })
+        { 'callsign_prefix', 'label_key', 'home', 'sort_order', 'active' }, 'updated_at')
     MySQL.update.await(sql, params)
-    MySQL.update.await('UPDATE fredpd_units SET active = 0 WHERE code NOT IN (' .. ('?, '):rep(#codes):sub(1, -3) .. ')',
-        codes)
+    MySQL.update.await('UPDATE fredpd_units SET active = 0, updated_at = UTC_TIMESTAMP() WHERE active = 1 AND code NOT IN ('
+        .. ('?, '):rep(#codes):sub(1, -3) .. ')', codes)
     return #rows
 end
 

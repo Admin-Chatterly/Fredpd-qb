@@ -9,6 +9,7 @@
 local Core = require 'server.core'
 local Perms = require 'server.perms'
 local Locale = require 'shared.locale'
+local Time = require 'shared.time'
 
 local M = {}
 
@@ -104,9 +105,10 @@ function M.archiveOlderThan(days, batch, src)
     days = math.tointeger(tonumber(days))
     if not days or days < 1 then error('days must be a positive integer', 0) end
     batch = math.tointeger(batch) or M.ARCHIVE_BATCH
-    -- NOW() matches the session clock that filled created_at (DEFAULT CURRENT_TIMESTAMP).
+    -- created_at is UTC (DEFAULT (UTC_TIMESTAMP()), docs/contracts.md §C7), so the cutoff is too, whatever the
+    -- session time zone is. Read as text: oxmysql would turn a DATETIME into host-local epoch milliseconds.
     local cutoff = MySQL.scalar.await(
-        "SELECT DATE_FORMAT(NOW() - INTERVAL ? DAY, '%Y-%m-%d %H:%i:%s')", { days })
+        "SELECT DATE_FORMAT(UTC_TIMESTAMP() - INTERVAL ? DAY, '%Y-%m-%d %H:%i:%s')", { days })
     if type(cutoff) ~= 'string' then error('could not compute the cutoff', 0) end
 
     local moved = 0
@@ -131,7 +133,7 @@ function M.archiveOlderThan(days, batch, src)
         if not ok then error(('archive transaction failed after %d rows'):format(moved), 0) end
         moved = moved + n
     end
-    M.audit(src or 0, 'audit.archive', 'audit', nil, { days = days, moved = moved, cutoff = cutoff })
+    M.audit(src or 0, 'audit.archive', 'audit', nil, { days = days, moved = moved, cutoff = Time.toIsoUtc(cutoff) })
     return moved
 end
 

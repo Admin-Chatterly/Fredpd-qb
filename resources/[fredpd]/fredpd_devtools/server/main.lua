@@ -2,7 +2,8 @@
 -- fredpd_devtools: development commands (IMPLEMENTATION.md §5.10). DEV ONLY: never `ensure` this resource on the
 -- production server. Every command is ACE-restricted to group.admin through ox_lib (lib.addCommand `restricted`) and
 -- also works from the server console. Database writes go through fredpd_core exports, which audit them.
---   /fredpd_selftest            grants + canView + format fixtures in game (fixtures/ is copied by scripts/build.mjs)
+--   /fredpd_selftest            grants + canView + format fixtures + UTC timestamps in game (fixtures/ is copied by
+--                               scripts/build.mjs)
 --   /fredpd_backfill            rebuild fredpd_persons / fredpd_vehicles_idx from players / player_vehicles
 --   /fredpd_seed [n]            n fake persons (citizenid DEV#####) with vehicles, default 200
 --   /fredpd_fakeunits [n] [s]   n fake units + a test alert every 5 s for s seconds (n = 0 stops), default 20 / 60
@@ -12,6 +13,7 @@ local Grants = require '@fredpd_core.shared.grants'
 local CanView = require '@fredpd_core.shared.canview'
 local Format = require '@fredpd_core.shared.format'
 local Regex = require '@fredpd_core.shared.regex'
+local Time = require '@fredpd_core.shared.time'
 local Selftest = require 'server.selftest'
 local Seed = require 'server.seed'
 local FakeUnits = require 'server.fakeunits'
@@ -43,13 +45,22 @@ lib.addCommand('fredpd_selftest', { help = L('dev.command.selftest'), restricted
             return
         end
     end
-    local result = Selftest.run(fixtures, { Grants = Grants, CanView = CanView, Format = Format, Regex = Regex })
-    for _, s in ipairs(result.suites) do
-        print(('[fredpd_selftest] %s: %d/%d'):format(s.name, s.passed, s.total))
-        for _, failure in ipairs(s.failures) do print('[fredpd_selftest]   FAIL ' .. failure) end
-    end
-    reply(src, result.failed == 0 and 'success' or 'error',
-        L('dev.selftest.result', { passed = result.passed, total = result.total, failed = result.failed }))
+    CreateThread(function() -- one-shot: the UTC probe awaits the database
+        -- DATETIME is read as text (Time.isoSelect): oxmysql would convert it to host-local epoch milliseconds.
+        local okProbe, probe = pcall(MySQL.single.await, 'SELECT @@session.time_zone AS tz, '
+            .. Time.isoSelect('x.u', 'utc') .. ' FROM (SELECT UTC_TIMESTAMP() AS u) x')
+        if not okProbe or type(probe) ~= 'table' then
+            probe = { tz = '?', utc = ('query failed: %s'):format(tostring(probe)) }
+        end
+        local result = Selftest.run(fixtures,
+            { Grants = Grants, CanView = CanView, Format = Format, Regex = Regex, Time = Time }, probe)
+        for _, s in ipairs(result.suites) do
+            print(('[fredpd_selftest] %s: %d/%d'):format(s.name, s.passed, s.total))
+            for _, failure in ipairs(s.failures) do print('[fredpd_selftest]   FAIL ' .. failure) end
+        end
+        reply(src, result.failed == 0 and 'success' or 'error',
+            L('dev.selftest.result', { passed = result.passed, total = result.total, failed = result.failed }))
+    end)
 end)
 
 lib.addCommand('fredpd_backfill', { help = L('dev.command.backfill'), restricted = ADMIN }, function(source)

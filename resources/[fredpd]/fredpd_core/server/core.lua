@@ -142,11 +142,17 @@ end
 
 --- Multi-row `INSERT ... ON DUPLICATE KEY UPDATE` (or INSERT IGNORE when `update` is nil) over `rows` (tables keyed
 --- by column name). Returns sql, params.
+---
+--- `touch` names the table's updated_at column. FredPD tables have no ON UPDATE clause (UTC, docs/contracts.md §C7),
+--- so the upsert sets it itself, and like ON UPDATE only when an `update` column really changes (byte comparison):
+--- the assignment comes first, while the columns still hold their old values (MariaDB assigns left to right).
+--- A new row gets the column default, (UTC_TIMESTAMP()).
 --- @param tbl string table name (trusted)
 --- @param columns string[] column names (trusted)
 --- @param rows table[]
 --- @param update string[]|nil columns to overwrite on a duplicate key; nil = INSERT IGNORE
-function M.buildInsert(tbl, columns, rows, update)
+--- @param touch string|nil updated_at column to maintain on a duplicate key (trusted)
+function M.buildInsert(tbl, columns, rows, update, touch)
     local params, tuples = {}, {}
     for r, row in ipairs(rows) do
         local values = {}
@@ -157,8 +163,14 @@ function M.buildInsert(tbl, columns, rows, update)
     local head = update and 'INSERT INTO' or 'INSERT IGNORE INTO'
     local sql = ('%s %s (%s) VALUES %s'):format(head, tbl, table.concat(columns, ', '), table.concat(tuples, ', '))
     if update and #update > 0 then
-        local sets = {}
-        for i, col in ipairs(update) do sets[i] = ('%s = VALUES(%s)'):format(col, col) end
+        local sets, same = {}, {}
+        for i, col in ipairs(update) do
+            same[i] = ('BINARY %s <=> BINARY VALUES(%s)'):format(col, col)
+        end
+        if touch then
+            sets[1] = ('%s = IF(%s, %s, UTC_TIMESTAMP())'):format(touch, table.concat(same, ' AND '), touch)
+        end
+        for _, col in ipairs(update) do sets[#sets + 1] = ('%s = VALUES(%s)'):format(col, col) end
         sql = sql .. ' ON DUPLICATE KEY UPDATE ' .. table.concat(sets, ', ')
     end
     return sql, params

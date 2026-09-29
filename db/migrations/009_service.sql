@@ -14,7 +14,7 @@ CREATE TABLE IF NOT EXISTS fredpd_sessions (
   citizenid VARCHAR(50) NULL,
   csrf_token VARCHAR(64) NOT NULL,
   expires_at DATETIME NOT NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id),
   KEY idx_discord (discord_id),
   KEY idx_expires (expires_at)
@@ -32,7 +32,7 @@ CREATE TABLE IF NOT EXISTS fredpd_uploads (
   source ENUM('portal','game') NOT NULL,
   uploader_discord VARCHAR(20) NULL,
   uploader_citizenid VARCHAR(50) NULL,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (id),
   UNIQUE KEY uq_file_name (file_name),
   KEY idx_uploader_discord (uploader_discord, created_at),

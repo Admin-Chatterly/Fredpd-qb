@@ -1,7 +1,8 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- /fredpd_selftest runner: the shared fixtures (packages/types/test/fixtures/*.fixtures.json, copied into
 -- fredpd_devtools/fixtures/ by scripts/build.mjs) run against fredpd_core's shared Lua modules inside FXServer, with
--- the same rules as tests/lua/{grants,canview,format,regex}_test.lua. Pure: the modules and decoded fixtures are
+-- the same rules as tests/lua/{grants,canview,format,regex}_test.lua, plus a UTC timestamp check (shared/time.lua
+-- and, in game, MariaDB's UTC_TIMESTAMP() read through oxmysql). Pure: the modules and decoded fixtures are
 -- passed in, so tests/lua/core_selftest_test.lua runs it outside FiveM too.
 
 local M = {}
@@ -184,14 +185,46 @@ function M.format(fixtures, Format, Regex)
     return s
 end
 
---- Run every suite. fixtures = { grants, canView, format } (decoded JSON), mods = { Grants, CanView, Format, Regex }.
+--- UTC timestamps (fredpd_core/shared/time.lua, docs/contracts.md §C7/§C12). `probe` is the oxmysql row of
+--- `SELECT @@session.time_zone AS tz, <Time.isoSelect of UTC_TIMESTAMP()> AS utc` read in game (nil outside FiveM):
+--- the DATE_FORMAT text must come back as a string (not oxmysql's host-local epoch number) and match the Lua clock
+--- in UTC within a minute, whatever the MariaDB session zone (probe.tz) is.
+function M.time(Time, probe, now)
+    local s = suite('time')
+    check(s, 'isoSelect fragment', function()
+        local got = Time.isoSelect('b.created_at', 'createdAt')
+        return got == "DATE_FORMAT(b.created_at, '%Y-%m-%dT%H:%i:%sZ') AS createdAt", got
+    end)
+    check(s, 'toIsoUtc DATETIME text', function()
+        local got = Time.toIsoUtc('2026-09-29 12:00:00')
+        return got == '2026-09-29T12:00:00Z', got
+    end)
+    check(s, 'nowIso is UTC', function()
+        local got = Time.nowIso(M.NOW)
+        return got == '2026-09-29T12:00:00Z', got
+    end)
+    if probe ~= nil then
+        check(s, ('database UTC_TIMESTAMP() (session time_zone %s)'):format(tostring(probe.tz)), function()
+            if type(probe.utc) ~= 'string' then
+                return false, ('expected an ISO string from isoSelect, got %s %s'):format(type(probe.utc), show(probe.utc))
+            end
+            local lag = (now or os.time()) - (Time.toEpoch(probe.utc) or 0)
+            return math.abs(lag) <= 60, ('database UTC %s is %d s off the FXServer UTC clock'):format(probe.utc, lag)
+        end)
+    end
+    return s
+end
+
+--- Run every suite. fixtures = { grants, canView, format } (decoded JSON), mods = { Grants, CanView, Format, Regex,
+--- Time? }; with mods.Time a fourth suite checks UTC timestamps (`probe`: see M.time).
 --- @return table { suites = { suite... }, passed, total, failed }
-function M.run(fixtures, mods)
+function M.run(fixtures, mods, probe)
     local suites = {
         M.grants(fixtures.grants, mods.Grants),
         M.canView(fixtures.canView, mods.CanView, mods.Grants),
         M.format(fixtures.format, mods.Format, mods.Regex),
     }
+    if mods.Time then suites[#suites + 1] = M.time(mods.Time, probe) end
     local passed, total = 0, 0
     for _, s in ipairs(suites) do
         passed, total = passed + s.passed, total + s.total

@@ -59,6 +59,16 @@ tests['buildInsert: multi-row upsert with NULLs'] = function(t)
     t.eq(params, { 1, 'x', 2, 'y' })
 end
 
+tests['buildInsert: touch maintains updated_at only on a real change (no ON UPDATE, UTC)'] = function(t)
+    local sql, params = Core.buildInsert('t', { 'id', 'a', 'b' }, { { id = 1, a = 'x', b = 'y' } }, { 'a', 'b' }, 'updated_at')
+    t.eq(sql, 'INSERT INTO t (id, a, b) VALUES (?, ?, ?) ON DUPLICATE KEY UPDATE '
+        .. 'updated_at = IF(BINARY a <=> BINARY VALUES(a) AND BINARY b <=> BINARY VALUES(b), updated_at, UTC_TIMESTAMP()), '
+        .. 'a = VALUES(a), b = VALUES(b)')
+    t.eq(params, { 1, 'x', 'y' })
+    local ignore = Core.buildInsert('t', { 'id' }, { { id = 1 } }, nil, 'updated_at')
+    t.eq(ignore, 'INSERT IGNORE INTO t (id) VALUES (?)', 'INSERT IGNORE never touches existing rows')
+end
+
 tests['buildInsert: INSERT IGNORE without update columns'] = function(t)
     local sql, params = Core.buildInsert('t', { 'id' }, { { id = 'DEV1' } })
     t.eq(sql, 'INSERT IGNORE INTO t (id) VALUES (?)')

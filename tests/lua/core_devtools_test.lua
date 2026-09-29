@@ -7,6 +7,7 @@ local Grants = require('shared.grants')
 local CanView = require('shared.canview')
 local Format = require('shared.format')
 local Regex = require('shared.regex')
+local Time = require('shared.time')
 local Mirror = require('server.mirror')
 
 local DEVTOOLS = 'resources/[fredpd]/fredpd_devtools/server/'
@@ -27,6 +28,22 @@ local function fixtures()
 end
 
 local MODS = { Grants = Grants, CanView = CanView, Format = Format, Regex = Regex }
+
+tests['selftest: UTC time suite (pure checks, and the oxmysql probe when given)'] = function(t)
+    local now = os.time()
+    local mods = { Grants = Grants, CanView = CanView, Format = Format, Regex = Regex, Time = Time }
+    local good = Selftest.run(fixtures(), mods, { tz = '+02:00', utc = Time.nowIso(now) })
+    t.eq(#good.suites, 4)
+    t.eq(good.suites[4].name, 'time')
+    t.eq(good.suites[4].failures, {})
+    t.eq(good.suites[4].total, 4)
+    t.eq(Selftest.run(fixtures(), mods).suites[4].total, 3, 'no probe outside FiveM')
+
+    local epoch = Selftest.time(Time, { tz = 'SYSTEM', utc = 1790683200000 }, now)
+    t.ok(epoch.failures[1]:find('expected an ISO string from isoSelect, got number', 1, true), epoch.failures[1])
+    local skewed = Selftest.time(Time, { tz = 'SYSTEM', utc = Time.nowIso(now - 7200) }, now)
+    t.ok(skewed.failures[1]:find('7200 s off the FXServer UTC clock', 1, true), skewed.failures[1])
+end
 
 tests['selftest: every shared fixture passes in the in-game runner'] = function(t)
     local result = Selftest.run(fixtures(), MODS)

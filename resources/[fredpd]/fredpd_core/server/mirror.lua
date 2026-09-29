@@ -167,11 +167,12 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- Writes (await; call from a thread)
 
+-- Both mirrors have updated_at: an upsert moves it only for rows whose values changed (Core.buildInsert `touch`).
 local function writeBatches(tbl, columns, rows, update)
     local written = 0
     for first = 1, #rows, M.BATCH do
         local chunk = table.move(rows, first, math.min(first + M.BATCH - 1, #rows), 1, {})
-        local sql, params = Core.buildInsert(tbl, columns, chunk, update)
+        local sql, params = Core.buildInsert(tbl, columns, chunk, update, update and 'updated_at' or nil)
         local affected = MySQL.update.await(sql, params)
         written = written + (update and #chunk or (tonumber(affected) or 0))
     end

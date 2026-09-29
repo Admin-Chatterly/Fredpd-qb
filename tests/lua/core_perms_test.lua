@@ -133,8 +133,10 @@ end
 tests['isoToDatetime and cacheUpsert'] = function(t)
     t.eq(Perms.isoToDatetime('2026-09-29T12:00:00.000Z'), '2026-09-29 12:00:00')
     t.eq(Perms.isoToDatetime('2026-09-29T12:00:00Z'), '2026-09-29 12:00:00')
-    t.eq(Perms.isoToDatetime('2026-09-29T12:00:00+02:00'), nil, 'offsets are not assumed to be UTC')
+    t.eq(Perms.isoToDatetime('2026-09-29T12:00:00+02:00'), '2026-09-29 10:00:00', 'an offset is converted to UTC')
     t.eq(Perms.isoToDatetime('1970-01-01'), nil)
+    t.eq(Perms.isoToDatetime('2026-09-29 12:00:00'), nil, 'computedAt must be ISO (with a T)')
+    t.eq(Perms.isoToDatetime(nil), nil)
     local set = Perms.validateSet(copy(SET))
     local sql, params = Perms.cacheUpsert('42', set)
     t.ok(sql:find('VALUES (?, ?, ?)', 1, true), sql)
@@ -142,7 +144,7 @@ tests['isoToDatetime and cacheUpsert'] = function(t)
     t.eq(params[3], '2026-09-29 12:00:00')
     set.computedAt = 'garbage'
     sql, params = Perms.cacheUpsert('42', set)
-    t.ok(sql:find('VALUES (?, ?, NOW())', 1, true), sql)
+    t.ok(sql:find('VALUES (?, ?, UTC_TIMESTAMP())', 1, true), sql)
     t.eq(#params, 2)
 end
 

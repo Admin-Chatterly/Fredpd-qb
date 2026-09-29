@@ -10,8 +10,8 @@ CREATE TABLE IF NOT EXISTS fredpd_tablets (
   revoked_at DATETIME NULL,
   revoke_reason VARCHAR(255) NULL,
   issued_by VARCHAR(50) NULL,
-  issued_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  issued_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
+  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),
   PRIMARY KEY (serial),
   KEY idx_owner (owner_citizenid)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci;

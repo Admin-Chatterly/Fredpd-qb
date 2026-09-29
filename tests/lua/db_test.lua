@@ -19,11 +19,6 @@ local function listSeeds()
     return db.sortNames(shim.listSql(SEED_DIR, db.SEED_PATTERN), db.SEED_PATTERN)
 end
 
--- TIME_ZONE_SQL rows as MariaDB returns them (also fed to migrate.mjs in migrations.test.ts).
-local TZ_UTC = { tz = 'SYSTEM', system_tz = 'UTC', now_offset = 0, jan_skew = 0, jul_skew = 0 }
-local TZ_STOCKHOLM = { tz = 'SYSTEM', system_tz = 'CEST', now_offset = 120, jan_skew = -3600, jul_skew = -7200 }
-local TZ_LONDON_WINTER = { tz = 'Europe/London', system_tz = 'UTC', now_offset = 0, jan_skew = 0, jul_skew = -3600 }
-
 local function expectError(fn, needle)
     local ok, err = pcall(fn)
     if ok then error('expected an error containing ' .. needle, 2) end
@@ -49,6 +44,7 @@ local function withDb(fn, t)
     shim.install({ database = LUA_DB })
     local okc, err = pcall(fn, t)
     MySQL, LoadResourceFile, GetCurrentResourceName = saved[1], saved[2], saved[3]
+    shim.sessionTimeZone = nil
     if not okc then error(err, 0) end
     return true
 end
@@ -193,9 +189,28 @@ tests['migrations follow the table conventions'] = function(t)
                     t.ok(tbl, name .. ': CREATE TABLE without IF NOT EXISTS')
                     t.ok(tbl:find('^fredpd_'), tbl .. ': not a fredpd_ table')
                     t.ok(st.sql:find('ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci$'), tbl .. ': engine/charset')
-                    t.ok(st.sql:find('\n  created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP', 1, true), tbl .. ': created_at')
+                    t.ok(st.sql:find('\n  created_at DATETIME NOT NULL DEFAULT (UTC_TIMESTAMP()),', 1, true), tbl .. ': created_at')
                 end
             end
+        end
+    end
+end
+
+tests['migrations and seeds never use the session clock (docs/contracts.md §C7)'] = function(t)
+    -- Every file, including other modules' (009+): times are UTC whatever the MariaDB time zone is.
+    local files = {}
+    for _, name in ipairs(listMigrations()) do files[#files + 1] = MIGRATION_DIR .. '/' .. name end
+    for _, name in ipairs(listSeeds()) do files[#files + 1] = SEED_DIR .. '/' .. name end
+    for _, path in ipairs(files) do
+        for _, st in ipairs(db.splitStatements(t.readFile(path))) do
+            local upper = st.sql:upper()
+            for _, bad in ipairs({ 'CURRENT_TIMESTAMP', 'NOW()', 'LOCALTIME', 'SYSDATE(', 'CURDATE(', 'CURTIME(' }) do
+                t.ok(not upper:find(bad, 1, true), ('%s line %d: uses %s (write UTC_TIMESTAMP())'):format(path, st.line, bad))
+            end
+            t.ok(not upper:find('ON UPDATE%s+UTC') and not upper:find('ON UPDATE%s+CURRENT'),
+                ('%s line %d: ON UPDATE timestamp (writers set updated_at themselves)'):format(path, st.line))
+            -- A default must be the parenthesised expression; a bare UTC_TIMESTAMP() default is a syntax error.
+            t.ok(not upper:find('DEFAULT%s+UTC_TIMESTAMP'), ('%s line %d: DEFAULT UTC_TIMESTAMP() needs parentheses'):format(path, st.line))
         end
     end
 end
@@ -211,19 +226,6 @@ tests['no ? in migration or seed statements (oxmysql would bind it to NULL)'] = 
             t.ok(not st.sql:find('?', 1, true), ('%s line %d: statement contains ?'):format(path, st.line))
         end
     end
-end
-
-tests['timeZoneProblem accepts only UTC all year'] = function(t)
-    t.eq(db.timeZoneProblem(TZ_UTC), nil)
-    t.eq(db.timeZoneProblem({ tz = '+00:00', system_tz = 'CEST', now_offset = '0', jan_skew = '0', jul_skew = '0' }), nil,
-        'strings from a driver are fine')
-    local msg = db.timeZoneProblem(TZ_STOCKHOLM)
-    t.eq(msg, 'MariaDB sessions do not use UTC (time_zone=SYSTEM, system_time_zone=CEST; UTC offset now +120 min, '
-        .. "January +60, July +120). docs/contracts.md §C7 requires every DATETIME DEFAULT CURRENT_TIMESTAMP in UTC. "
-        .. "Set default-time-zone='+00:00' under [mysqld] in my.ini (my.cnf on Linux) and restart MariaDB; see "
-        .. 'docs/modules/db.md.')
-    t.ok(db.timeZoneProblem(TZ_LONDON_WINTER):find('now +0 min, January +0, July +60', 1, true), 'UTC only in winter')
-    t.ok(db.timeZoneProblem(nil):find('time_zone=nil, system_time_zone=nil; UTC offset now ? min', 1, true), 'no row')
 end
 
 tests['MIGRATIONS_TABLE_DDL equals the statement in 001_core.sql'] = function(t)
@@ -242,7 +244,7 @@ end
 
 tests['migrate: missing migrations/index.json is a clear error'] = function()
     local saved = { MySQL, LoadResourceFile }
-    MySQL = { query = { await = function() return {} end }, single = { await = function() return TZ_UTC end } }
+    MySQL = { query = { await = function() return {} end } }
     LoadResourceFile = function() return nil end
     local ok, err = pcall(db.migrate, { resource = 'fredpd_core', log = quiet })
     MySQL, LoadResourceFile = saved[1], saved[2]
@@ -252,25 +254,27 @@ end
 ---------------------------------------------------------------------------------------------------------------
 -- migrate() against MariaDB (fredpd_test_db_lua)
 
-tests['db: a non-UTC session fails before anything runs (allowNonUtc only warns)'] = function(t)
+tests['db: a +02:00 session migrates and every default is UTC'] = function(t)
     withDb(function()
         shim.resetDatabase(LUA_DB, false)
-        shim.sessionTimeZone = '+02:00' -- a server whose default zone is not UTC, as oxmysql would see it
-        local okRun, err = pcall(function()
-            local msg = expectError(function() db.migrate({ log = quiet }) end, "default-time-zone='+00:00'")
-            t.ok(msg:find('time_zone=+02:00', 1, true), msg)
-            t.eq(MySQL.scalar.await("SELECT COUNT(*) FROM information_schema.tables WHERE table_schema = DATABASE()"), 0,
-                'nothing created')
-
-            local logged = {}
-            local r = db.migrate({ log = function(m) logged[#logged + 1] = m end, seed = false, allowNonUtc = true })
-            t.eq(r.applied, listMigrations())
-            t.ok(logged[1]:find('^WARNING: MariaDB sessions do not use UTC'), logged[1])
-        end)
-        shim.sessionTimeZone = nil
-        if not okRun then error(err, 0) end
-        t.eq(db.timeZoneProblem(MySQL.single.await(db.TIME_ZONE_SQL)), nil,
-            "the test server's default zone must be UTC (docs/modules/db.md)")
+        -- A server whose default zone is not UTC (Windows MariaDB: SYSTEM = Europe/Stockholm), as oxmysql sees it.
+        shim.sessionTimeZone = '+02:00'
+        t.eq(MySQL.scalar.await('SELECT @@session.time_zone'), '+02:00')
+        t.eq(MySQL.scalar.await('SELECT TIMESTAMPDIFF(MINUTE, UTC_TIMESTAMP(), NOW())'), 120)
+        local r = db.migrate({ log = quiet })
+        t.eq(r.applied, listMigrations())
+        -- applied_at/created_at of the bookkeeping rows and created_at of a seeded row are UTC, not session time.
+        local skew = MySQL.single.await('SELECT MAX(ABS(TIMESTAMPDIFF(SECOND, applied_at, UTC_TIMESTAMP()))) AS applied, '
+            .. 'MAX(ABS(TIMESTAMPDIFF(SECOND, created_at, UTC_TIMESTAMP()))) AS created FROM fredpd_migrations')
+        t.ok(skew.applied <= 60 and skew.created <= 60, 'fredpd_migrations skew ' .. json.encode(skew))
+        t.ok(MySQL.scalar.await('SELECT MAX(ABS(TIMESTAMPDIFF(SECOND, created_at, UTC_TIMESTAMP()))) FROM fredpd_charges')
+            <= 60, 'seeded created_at is UTC')
+        -- A seed re-apply refreshes applied_at in UTC too.
+        MySQL.update.await("UPDATE fredpd_migrations SET checksum = REPEAT('0', 64), applied_at = '2000-01-01 00:00:00' "
+            .. "WHERE id = 'seed/charges_sv.sql'")
+        t.eq(db.migrate({ log = quiet }).seeded, { 'seed/charges_sv.sql' })
+        t.ok(MySQL.scalar.await("SELECT ABS(TIMESTAMPDIFF(SECOND, applied_at, UTC_TIMESTAMP())) FROM fredpd_migrations "
+            .. "WHERE id = 'seed/charges_sv.sql'") <= 60, 'seed applied_at is UTC')
     end, t)
 end
 
@@ -370,6 +374,7 @@ tests['db: seeds load the charge catalogue and default rules'] = function(t)
 
         -- A changed seed is re-applied (idempotently), not an error; admin edits to `active` survive.
         MySQL.update.await("UPDATE fredpd_charges SET active = 0, fine = 1 WHERE code = 'BRB-001'")
+        MySQL.update.await("UPDATE fredpd_charges SET updated_at = '2000-01-01 00:00:00'")
         MySQL.update.await("UPDATE fredpd_migrations SET checksum = REPEAT('0', 64) WHERE id = 'seed/charges_sv.sql'")
         local r = db.migrate({ log = quiet })
         t.eq(r.applied, {})
@@ -377,6 +382,10 @@ tests['db: seeds load the charge catalogue and default rules'] = function(t)
         local row = MySQL.single.await("SELECT active, fine FROM fredpd_charges WHERE code = 'BRB-001'")
         t.eq(row, { active = 0, fine = 0 })
         t.eq(MySQL.scalar.await('SELECT COUNT(*) FROM fredpd_charges'), charges)
+        -- updated_at moves only for the row whose values the seed changed (no ON UPDATE clause, §C7).
+        t.eq(MySQL.scalar.await("SELECT COUNT(*) FROM fredpd_charges WHERE updated_at > '2000-01-01 00:00:00'"), 1)
+        t.ok(MySQL.scalar.await("SELECT ABS(TIMESTAMPDIFF(SECOND, updated_at, UTC_TIMESTAMP())) FROM fredpd_charges "
+            .. "WHERE code = 'BRB-001'") <= 60, 'changed row: updated_at = UTC now')
     end, t)
 end
 
@@ -429,6 +438,10 @@ tests['db: nextSeq counts per type and year'] = function(t)
         t.eq(db.nextSeq('caseNumber', 2026), 3)
         t.eq(db.nextSeq('other', 0), 1)
         t.eq(db.scalar('SELECT value FROM fredpd_sequences WHERE seq_type = ? AND year = ?', { 'caseNumber', 2026 }), 3)
+        db.update("UPDATE fredpd_sequences SET updated_at = '2000-01-01 00:00:00'")
+        t.eq(db.nextSeq('other', 0), 2)
+        t.ok(db.scalar("SELECT ABS(TIMESTAMPDIFF(SECOND, updated_at, UTC_TIMESTAMP())) FROM fredpd_sequences "
+            .. "WHERE seq_type = 'other'") <= 60, 'nextSeq sets updated_at in UTC')
     end, t)
 end
 

@@ -12,7 +12,7 @@
 -- Codes are permanent: never renumber or reuse one (fredpd_records references them). Retire a charge by setting
 -- active = 0 in the admin UI; this seed never touches `active`.
 -- Idempotent: applied by the migration runners when new or changed (tracked as seed/charges_sv.sql in
--- fredpd_migrations); existing codes are updated in place.
+-- fredpd_migrations); existing codes are updated in place, and their updated_at moves only when a value changed.
 
 INSERT INTO fredpd_charges (code, category, title_sv, law_ref, class, fine, jail_min) VALUES
   -- Brottsbalken: liv och hälsa, frihet och frid
@@ -154,6 +154,11 @@ INSERT INTO fredpd_charges (code, category, title_sv, law_ref, class, fine, jail
   ('OVR-007', 'other', 'Grov smuggling', 'Lag (2000:1225) om straff för smuggling 5 §', 'fängelse', 15000, 20),
   ('OVR-008', 'other', 'Jaktbrott', 'Jaktlagen (1987:259) 43 §', 'bot', 5000, 0)
 ON DUPLICATE KEY UPDATE
+  -- updated_at first, while the columns still hold their old values (assignments run left to right): it moves only
+  -- when a value really changes, like the ON UPDATE clause that UTC tables cannot have (docs/contracts.md §C7).
+  updated_at = IF(BINARY category <=> BINARY VALUES(category) AND BINARY title_sv <=> BINARY VALUES(title_sv)
+    AND BINARY law_ref <=> BINARY VALUES(law_ref) AND BINARY class <=> BINARY VALUES(class)
+    AND fine <=> VALUES(fine) AND jail_min <=> VALUES(jail_min), updated_at, UTC_TIMESTAMP()),
   category = VALUES(category),
   title_sv = VALUES(title_sv),
   law_ref = VALUES(law_ref),

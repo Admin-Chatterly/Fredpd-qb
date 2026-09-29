@@ -10,7 +10,7 @@
 --   * transaction.await runs all queries in one session between START TRANSACTION and COMMIT; the client stops at
 --     the first error and the server rolls the transaction back when the session ends;
 --   * like oxmysql, sessions keep the server's default time zone. Set M.sessionTimeZone (e.g. '+02:00') to
---     simulate a server whose default is not UTC.
+--     simulate a server whose default is not UTC (FredPD must not care: docs/contracts.md §C7).
 -- Connection: host/port/user/password from env FREDPD_TEST_DB_URL (docs/contracts.md §C7 default), database from
 -- M.database (default fredpd_test_db_lua). LoadResourceFile(resource, 'migrations/...') serves db/migrations and
 -- db/seed with generated index.json files, like scripts/build.mjs lays them out in the resource.
@@ -20,7 +20,6 @@
 --                                   [--migrations-dir=<dir>]   (instead of db/migrations; an error goes to stderr, exit 1)
 --   lua5.4 tests/lua/mysql_shim.lua split <file.sql> ...                                -> one JSON object
 --   lua5.4 tests/lua/mysql_shim.lua consts                                              -> db.lua SQL constants
---   lua5.4 tests/lua/mysql_shim.lua tzproblem '<json array of TIME_ZONE_SQL rows>'      -> db.timeZoneProblem each
 local M = {}
 
 local IS_WINDOWS = package.config:sub(1, 1) == '\\'
@@ -369,16 +368,7 @@ local function cli(args)
     local cmd = args[1]
     if cmd == 'consts' then
         local db = require('server.db')
-        print(json.encode({ migrationsTableDdl = db.MIGRATIONS_TABLE_DDL, nextSeqSql = db.NEXT_SEQ_SQL,
-            timeZoneSql = db.TIME_ZONE_SQL }))
-        return 0
-    elseif cmd == 'tzproblem' then
-        local db = require('server.db')
-        local out = {}
-        for k, row in ipairs(json.decode(assert(args[2], 'usage: tzproblem <json array>'))) do
-            out[k] = { problem = db.timeZoneProblem(row) }
-        end
-        print(json.encode(out))
+        print(json.encode({ migrationsTableDdl = db.MIGRATIONS_TABLE_DDL, nextSeqSql = db.NEXT_SEQ_SQL }))
         return 0
     elseif cmd == 'split' then
         local db = require('server.db')
@@ -414,7 +404,7 @@ local function cli(args)
         print('RESULT ' .. json.encode(result))
         return 0
     end
-    io.stderr:write('usage: lua5.4 tests/lua/mysql_shim.lua consts | tzproblem <json> | split <file>... | migrate <database> [--reset] [--stub] [--no-seed] [--migrations-dir=<dir>]\n')
+    io.stderr:write('usage: lua5.4 tests/lua/mysql_shim.lua consts | split <file>... | migrate <database> [--reset] [--stub] [--no-seed] [--migrations-dir=<dir>]\n')
     return 64
 end
 

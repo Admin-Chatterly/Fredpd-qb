@@ -2,8 +2,10 @@
 -- fredpd_core runtime against a real MariaDB (through tests/lua/mysql_shim.lua, which runs server/db.lua's
 -- migrations and fakes oxmysql): search-mirror backfill/refresh/seed (task 1.4), grant cache round trip, identities,
 -- visibility rules from the seed, audit archive, units sync and callsign allocation (task 1.7b).
--- Uses its own database fredpd_test_core_lua (reset once per run, with db/dev/qbx_stub.sql). Skips with a notice when
--- MariaDB is unreachable. Run: lua5.4 tests/lua/run.lua core_db_test
+-- Uses its own database fredpd_test_core_lua (reset once per run, with db/dev/qbx_stub.sql). Every session runs at
+-- time_zone '+02:00' (a Stockholm-summer server): FredPD stores UTC whatever the zone (docs/contracts.md §C7), so
+-- nothing here may depend on it. Skips with a notice when MariaDB is unreachable.
+-- Run: lua5.4 tests/lua/run.lua core_db_test
 local shim = require('mysql_shim')
 local helper = require('helper')
 local Core = require('server.core')
@@ -34,7 +36,7 @@ local function withDb(t, fn)
         'TriggerClientEvent', 'GetPlayerName' }
     local saved = {}
     for _, n in ipairs(names) do saved[n] = { rawget(_G, n) } end
-    shim.install({ database = DB })
+    shim.install({ database = DB, sessionTimeZone = '+02:00' })
     -- oxmysql runs mysql2 with CLIENT_FOUND_ROWS, the mariadb CLI behind the shim does not. Emulate it where the
     -- number differs: an INSERT ... ON DUPLICATE KEY UPDATE that matched a row and left it unchanged reports at
     -- least 1, not 0 (exact for one row). UPDATE counts differ too (matched vs changed), but the modules only read
@@ -65,7 +67,13 @@ local function withDb(t, fn)
         if prepared then fn(t) end
     end)
     for n, v in pairs(saved) do rawset(_G, n, v[1]) end
+    shim.sessionTimeZone = nil
     if not okRun then error(err, 0) end
+end
+
+--- Seconds between a UTC DATETIME column value (selected by `sql`) and UTC_TIMESTAMP(), absolute.
+local function utcSkew(sql, params)
+    return MySQL.scalar.await('SELECT ABS(TIMESTAMPDIFF(SECOND, (' .. sql .. '), UTC_TIMESTAMP()))', params)
 end
 
 local function q(sql, params) return MySQL.query.await(sql, params) end
@@ -182,6 +190,8 @@ tests['07 grant cache round trip through the JSON column'] = function(t)
             '2026-09-29 12:00:00')
         local empty = Perms.validateSet({ grants = {}, denied = {}, tier = 0, units = {}, computedAt = 'not iso' })
         Perms.writeCache('9001', empty)
+        t.ok(utcSkew("SELECT computed_at FROM fredpd_grant_cache WHERE discord_id = '9001'") <= 60,
+            'no usable computedAt: UTC_TIMESTAMP()')
         t.eq(Perms.readCache('9001').grants, {})
         t.eq(scalar("SELECT JSON_TYPE(JSON_EXTRACT(grants, '$.grants')) FROM fredpd_grant_cache WHERE discord_id = '9001'"),
             'ARRAY')
@@ -201,6 +211,8 @@ tests['08 identities: last_seen on join, character + license on load (NULL licen
         t.eq(row.last_citizenid, 'FPD10003')
         t.eq(row.license, 'license2:abc', 'a missing license does not erase the known one')
         t.ok(row.last_seen ~= nil)
+        t.ok(utcSkew("SELECT last_seen FROM fredpd_identities WHERE discord_id = '9100'") <= 60, 'last_seen is UTC')
+        t.ok(utcSkew("SELECT created_at FROM fredpd_identities WHERE discord_id = '9100'") <= 60, 'created_at is UTC')
     end)
 end
 
@@ -229,16 +241,23 @@ tests['10 archiveOlderThan moves old rows in batches and keeps recent ones'] = f
         q('DELETE FROM fredpd_audit')
         for i = 1, 5 do
             q("INSERT INTO fredpd_audit (actor_citizenid, action, target_type, target_id, created_at) VALUES "
-                .. "(?, 'lookup.person', 'person', ?, NOW() - INTERVAL ? DAY)", { 'OLD', 'T' .. i, 100 + i })
+                .. "(?, 'lookup.person', 'person', ?, UTC_TIMESTAMP() - INTERVAL ? DAY)", { 'OLD', 'T' .. i, 100 + i })
         end
-        q("INSERT INTO fredpd_audit (actor_citizenid, action, created_at) VALUES ('NEW', 'lookup.person', NOW() - INTERVAL 89 DAY)")
+        q("INSERT INTO fredpd_audit (actor_citizenid, action, created_at) VALUES ('NEW', 'lookup.person', UTC_TIMESTAMP() - INTERVAL 89 DAY)")
+        -- 30 minutes inside the window: a cutoff taken from the +02:00 session clock (NOW()) would move it.
+        q("INSERT INTO fredpd_audit (actor_citizenid, action, created_at) VALUES ('EDGE', 'lookup.person', "
+            .. 'UTC_TIMESTAMP() - INTERVAL 90 DAY + INTERVAL 30 MINUTE)')
         q("INSERT INTO fredpd_audit (actor_citizenid, action) VALUES ('NOW', 'lookup.person')")
+        t.ok(utcSkew("SELECT created_at FROM fredpd_audit WHERE actor_citizenid = 'NOW'") <= 60, 'created_at default is UTC')
         local moved = Audit.archiveOlderThan(90, 2)
         t.eq(moved, 5)
         t.eq(scalar("SELECT COUNT(*) FROM fredpd_audit_archive WHERE actor_citizenid = 'OLD'"), 5)
         t.eq(scalar("SELECT COUNT(*) FROM fredpd_audit WHERE actor_citizenid = 'OLD'"), 0)
-        t.eq(scalar("SELECT COUNT(*) FROM fredpd_audit WHERE actor_citizenid IN ('NEW', 'NOW')"), 2)
+        t.eq(scalar("SELECT COUNT(*) FROM fredpd_audit WHERE actor_citizenid IN ('NEW', 'EDGE', 'NOW')"), 3)
         t.eq(scalar("SELECT COUNT(*) FROM fredpd_audit WHERE action = 'audit.archive'"), 1)
+        t.ok(utcSkew("SELECT MAX(archived_at) FROM fredpd_audit_archive") <= 60, 'archived_at default is UTC')
+        local meta = json.decode(scalar("SELECT meta FROM fredpd_audit WHERE action = 'audit.archive'"))
+        t.ok(meta.cutoff:match('^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ$'), 'cutoff in the audit meta is ISO UTC: ' .. meta.cutoff)
         t.eq(Audit.archiveOlderThan(90), 0, 'nothing left to move')
     end)
 end
@@ -386,6 +405,73 @@ tests['14 ensureRow creates and audits a roster row once, and audits a Discord r
         end)
         Perms.getDiscordId = savedId
         q("DELETE FROM fredpd_officers WHERE citizenid IN ('ROW0', 'ROW1')")
+        if not ok then error(err, 0) end
+    end)
+end
+
+---------------------------------------------------------------------------------------------------------------
+-- updated_at: no ON UPDATE clause (UTC, docs/contracts.md §C7); the writers set it, and only on a real change
+
+tests['15 mirror upserts move updated_at only for changed rows'] = function(t)
+    withDb(t, function()
+        local old = '2000-01-01 00:00:00'
+        q('UPDATE fredpd_persons SET updated_at = ?', { old })
+        q('UPDATE fredpd_vehicles_idx SET updated_at = ?', { old })
+        local anna = Mirror.personRow('FPD10001', { firstname = 'Anna', lastname = 'Berg', birthdate = '1994-03-12', gender = 1 })
+        local erik = q('SELECT * FROM fredpd_persons WHERE citizenid = ?', { 'FPD10002' })[1]
+        local same = {}
+        for _, col in ipairs(Mirror.PERSON_COLUMNS) do same[col] = erik[col] end
+        same.phone = same.phone and tostring(same.phone):gsub('^', '0') or nil -- the shim read '07…' as a number
+        t.eq(Mirror.upsertPersons({ anna, same }), 2)
+        t.ok(utcSkew("SELECT updated_at FROM fredpd_persons WHERE citizenid = 'FPD10001'") <= 60, 'changed row: UTC now')
+        t.eq(scalar("SELECT DATE_FORMAT(updated_at, '%Y') FROM fredpd_persons WHERE citizenid = 'FPD10002'"), 2000,
+            'unchanged row keeps its updated_at')
+        -- A change of letter case only is a change (byte comparison, not the _ci collation).
+        anna.lastname = 'BERG'
+        q("UPDATE fredpd_persons SET updated_at = ? WHERE citizenid = 'FPD10001'", { old })
+        Mirror.upsertPersons({ anna })
+        t.ok(utcSkew("SELECT updated_at FROM fredpd_persons WHERE citizenid = 'FPD10001'") <= 60, 'case change counts')
+
+        Mirror.upsertVehicles({ { plate = 'ABC12D', citizenid = 'FPD10002', model = 'sultan' },
+            { plate = 'KLM34E', citizenid = 'FPD10001', model = 'blista' } })
+        t.eq(scalar("SELECT DATE_FORMAT(updated_at, '%Y') FROM fredpd_vehicles_idx WHERE plate = 'ABC12D'"), 2000)
+        t.ok(utcSkew("SELECT updated_at FROM fredpd_vehicles_idx WHERE plate = 'KLM34E'") <= 60, 'new owner: UTC now')
+        Mirror.backfill(0) -- restore the stub's values for later tests
+    end)
+end
+
+tests['16 units, officers and callsigns set updated_at in UTC'] = function(t)
+    withDb(t, function()
+        local old = '2000-01-01 00:00:00'
+        local units = helper.readJson('config/units.json')
+        Officers.syncUnits(units)
+        q('UPDATE fredpd_units SET updated_at = ?', { old })
+        Officers.syncUnits(units)
+        t.eq(scalar("SELECT COUNT(*) FROM fredpd_units WHERE updated_at > ?", { old }), 0, 'unchanged config: nothing moves')
+        Officers.syncUnits({ units = { units.units[1] } })
+        t.eq(scalar("SELECT COUNT(*) FROM fredpd_units WHERE updated_at > ?", { old }), 4, 'four units deactivated')
+        t.eq(scalar("SELECT DATE_FORMAT(updated_at, '%Y') FROM fredpd_units WHERE code = ?", { units.units[1].code }), 2000)
+        Officers.syncUnits({ units = { units.units[1] } })
+        t.eq(scalar("SELECT COUNT(*) FROM fredpd_units WHERE updated_at > ?", { old }), 4, 'already inactive: untouched')
+        Officers.syncUnits(units)
+
+        local savedId = Perms.getDiscordId
+        Perms.getDiscordId = function() return '7102' end
+        local ok, err = pcall(function()
+            q("INSERT INTO fredpd_officers (citizenid, discord_id, display_name, updated_at) VALUES ('UTC1', '7101', 'x', ?)",
+                { old })
+            t.ok(utcSkew("SELECT created_at FROM fredpd_officers WHERE citizenid = 'UTC1'") <= 60, 'created_at default')
+            Officers.ensureRow(1, { citizenid = 'UTC1', job = { type = 'leo', onduty = false } })
+            t.ok(utcSkew("SELECT updated_at FROM fredpd_officers WHERE citizenid = 'UTC1'") <= 60, 'relink sets updated_at')
+            q("UPDATE fredpd_officers SET updated_at = ? WHERE citizenid = 'UTC1'", { old })
+            Officers.ensureRow(1, { citizenid = 'UTC1', job = { type = 'leo', onduty = false } })
+            t.eq(scalar("SELECT DATE_FORMAT(updated_at, '%Y') FROM fredpd_officers WHERE citizenid = 'UTC1'"), 2000,
+                'no relink needed: untouched')
+            MySQL.update.await(Officers.CALLSIGN_SQL, { 'igv', 'IGV-99', 'UTC1' })
+            t.ok(utcSkew("SELECT updated_at FROM fredpd_officers WHERE citizenid = 'UTC1'") <= 60, 'callsign sets updated_at')
+        end)
+        Perms.getDiscordId = savedId
+        q("DELETE FROM fredpd_officers WHERE citizenid = 'UTC1'")
         if not ok then error(err, 0) end
     end)
 end

@@ -11,6 +11,7 @@
 -- (the service audits the permission change itself as perms.update).
 
 local Grants = require 'shared.grants'
+local Time = require 'shared.time'
 local Core = require 'server.core'
 
 local M = {}
@@ -24,15 +25,16 @@ local MAX_LIST = 2000
 local GRANT_PATTERN = '^[%l_]+:%S+$'
 local UNIT_PATTERN = '^[%w_%-]+$'
 
--- computed_at is the set's computedAt as a UTC DATETIME; %s is '?' or NOW() (see M.cacheUpsert).
+-- computed_at is the set's computedAt as a UTC DATETIME; %s is '?' or UTC_TIMESTAMP() (see M.cacheUpsert). Times are
+-- UTC whatever the MariaDB time zone is (docs/contracts.md §C7): never NOW() or CURRENT_TIMESTAMP.
 M.CACHE_UPSERT_SQL = 'INSERT INTO fredpd_grant_cache (discord_id, grants, computed_at) VALUES (?, ?, %s) '
     .. 'ON DUPLICATE KEY UPDATE grants = VALUES(grants), computed_at = VALUES(computed_at)'
 M.CACHE_SELECT_SQL = 'SELECT grants FROM fredpd_grant_cache WHERE discord_id = ?'
-M.IDENTITY_SEEN_SQL = 'INSERT INTO fredpd_identities (discord_id, last_seen) VALUES (?, NOW()) '
+M.IDENTITY_SEEN_SQL = 'INSERT INTO fredpd_identities (discord_id, last_seen) VALUES (?, UTC_TIMESTAMP()) '
     .. 'ON DUPLICATE KEY UPDATE last_seen = VALUES(last_seen)'
 -- %s = placeholders for (discord_id, license, last_citizenid); license may be NULL (Core.bindRow).
 M.IDENTITY_CHARACTER_SQL = 'INSERT INTO fredpd_identities (discord_id, license, last_citizenid, last_seen) '
-    .. 'VALUES (%s, NOW()) ON DUPLICATE KEY UPDATE license = COALESCE(VALUES(license), license), '
+    .. 'VALUES (%s, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE license = COALESCE(VALUES(license), license), '
     .. 'last_citizenid = VALUES(last_citizenid), last_seen = VALUES(last_seen)'
 
 ---------------------------------------------------------------------------------------------------------------
@@ -110,12 +112,11 @@ function M.encodeSet(set)
         list(set.grants), list(set.denied), set.tier, list(set.units), rank, json.encode(set.computedAt))
 end
 
---- '2026-09-29T12:00:00.000Z' -> '2026-09-29 12:00:00' (UTC DATETIME); nil for anything else.
+--- '2026-09-29T12:00:00.000Z' -> '2026-09-29 12:00:00' (UTC DATETIME; an offset such as +02:00 is converted);
+--- nil for anything that is not an ISO-8601 timestamp.
 function M.isoToDatetime(iso)
-    if type(iso) ~= 'string' then return nil end
-    local d, t = iso:match('^(%d%d%d%d%-%d%d%-%d%d)T(%d%d:%d%d:%d%d)%.?%d*Z$')
-    if not d then return nil end
-    return d .. ' ' .. t
+    if type(iso) ~= 'string' or not iso:find('T', 1, true) then return nil end
+    return (Time.toDatetime(iso))
 end
 
 ---------------------------------------------------------------------------------------------------------------
@@ -140,12 +141,12 @@ local function store(src, set, notify)
     TriggerEvent('fredpd:grantsChanged', src)
 end
 
---- SQL and parameters for the fredpd_grant_cache upsert (NOW() when computedAt is not a UTC ISO string).
+--- SQL and parameters for the fredpd_grant_cache upsert (UTC_TIMESTAMP() when computedAt is not an ISO string).
 function M.cacheUpsert(discordId, set)
     local computed = M.isoToDatetime(set.computedAt)
     local params = { discordId, M.encodeSet(set) }
     if computed then params[3] = computed end
-    return M.CACHE_UPSERT_SQL:format(computed and '?' or 'NOW()'), params
+    return M.CACHE_UPSERT_SQL:format(computed and '?' or 'UTC_TIMESTAMP()'), params
 end
 
 --- Upsert fredpd_grant_cache (awaits; call from a thread).
