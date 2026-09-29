@@ -107,6 +107,12 @@ describe.skipIf(!database)('UTC round trip with the DB session at +02:00', () =>
     await database!.pool.query('UPDATE fredpd_roles SET updated_at = ? WHERE discord_role_id = ?', [OLD, roleId]);
     await markRolesDeleted(database!.db, [roleId]);
     expectUtcNow(await skew('SELECT updated_at AS t FROM fredpd_roles WHERE discord_role_id = ?', [roleId]), 'roles.updated_at (update)');
+    // $onUpdate moves updated_at on every write, so a repeated delete (gateway event after an import) must not write.
+    await database!.pool.query('UPDATE fredpd_roles SET updated_at = ? WHERE discord_role_id = ?', [OLD, roleId]);
+    await markRolesDeleted(database!.db, [roleId]);
+    const [again] = await rows<{ t: string; deleted: number }>(database!,
+      "SELECT DATE_FORMAT(updated_at, '%Y-%m-%d %H:%i:%s') AS t, deleted FROM fredpd_roles WHERE discord_role_id = ?", [roleId]);
+    expect({ t: again?.t, deleted: Number(again?.deleted) }).toEqual({ t: OLD, deleted: 1 });
 
     const discordId = next();
     const citizenid = `T${PREFIX}UTC1`;

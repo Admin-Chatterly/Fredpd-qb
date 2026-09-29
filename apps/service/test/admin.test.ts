@@ -4,7 +4,9 @@
 // fredpd_audit, refreshes fredpd_grant_cache for every holder and asks FXServer (fake) to recompute them.
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { AdminRolesResponseSchema } from '@fredpd/types/actions';
-import { cleanup, GUILD_ID, ids, loginAs, makeApp, rows, seedRole, setupTestDb } from './helpers';
+import { MDT_PAGE_KEYS } from '@fredpd/types/mdtPages';
+import { buildCatalog } from '../src/catalog';
+import { cleanup, GUILD_ID, ids, loginAs, makeApp, rows, seedRole, setupTestDb, TEST_UNIT_ORDER } from './helpers';
 import type { TestApp } from './helpers';
 
 const PREFIX = '902';
@@ -69,10 +71,35 @@ describe.skipIf(!database)('permissions admin API (DB)', () => {
     expect(body.roles).toEqual(expect.arrayContaining([expect.objectContaining({ discordRoleId: polisRole, name: 'Polis', position: 10, deleted: false })]));
     expect(body.grants).toEqual(expect.arrayContaining([{ discordRoleId: polisRole, grantType: 'weapon', grantKey: 'pistol', effect: 'allow' }]));
     const units = body.catalog.find((c) => c.type === 'unit');
-    expect(units?.keys.slice(0, 6)).toEqual(['*', 'ledning', 'span', 'utredning', 'tekniker', 'igv']);
+    expect(units?.keys.slice(0, 6)).toEqual(['*', ...TEST_UNIT_ORDER]);
     expect(body.catalog.find((c) => c.type === 'intel_tier')?.keys).toEqual(['*', '0', '1', '2']);
-    expect(body.catalog.find((c) => c.type === 'perm')?.keys).toEqual(expect.arrayContaining(['admin.permissions', 'intel.read']));
+    expect(body.catalog.find((c) => c.type === 'perm')?.keys).toEqual(expect.arrayContaining([
+      'admin.permissions', 'records.admin', 'bolo.create', 'bolo.resolve', 'tablets.manage', 'intel.read', 'intel.handler', 'intel.command',
+    ]));
+    // Nav order first; keys other test files store in the shared database may follow.
+    expect(body.catalog.find((c) => c.type === 'mdt_page')?.keys.slice(0, MDT_PAGE_KEYS.length + 1)).toEqual(['*', ...MDT_PAGE_KEYS]);
+    expect(body.catalog.find((c) => c.type === 'tool')?.keys).toEqual(expect.arrayContaining(['*', 'ram']));
     expect(body.catalog.find((c) => c.type === 'weapon')?.keys).toEqual(expect.arrayContaining(['*', 'pistol']));
+  });
+
+  it('PUT accepts every key the catalog offers (mdt_page, §C12 perms, tool:ram, units, tiers)', async () => {
+    const res = await t.app.inject({ method: 'GET', url: '/api/admin/roles', headers: { cookie: adminSession.cookie } });
+    const { catalog } = AdminRolesResponseSchema.parse(res.json());
+    // The fixed keys only: keys in use come from every role in the shared test database (other files, other
+    // checkouts), and a stored unit key outside units.json is only accepted on the role that already has it.
+    const fixed = buildCatalog(TEST_UNIT_ORDER, []);
+    for (const entry of fixed) expect(catalog.find((c) => c.type === entry.type)?.keys, entry.type).toEqual(expect.arrayContaining(entry.keys));
+    const roleId = nextId();
+    await seedRole(database!, roleId, 'Alla nycklar', 5, []);
+    const grants = fixed.flatMap((c) => c.keys.map((grantKey) => ({ grantType: c.type, grantKey, effect: 'allow' as const })));
+    expect(grants.length).toBeGreaterThan(30);
+    t.fx.calls = [];
+    const saved = await put(adminSession, roleId, { grants }, adminSession.csrf);
+    expect(saved.statusCode, saved.body).toBe(200);
+    const stored = await rows<{ grant_type: string; grant_key: string }>(database!, 'SELECT grant_type, grant_key FROM fredpd_role_grants WHERE discord_role_id = ?', [roleId]);
+    expect(stored.map((r) => `${r.grant_type}:${r.grant_key}`).sort()).toEqual(grants.map((g) => `${g.grantType}:${g.grantKey}`).sort());
+    expect((await put(adminSession, roleId, { grants: [] }, adminSession.csrf)).statusCode).toBe(200);
+    t.fx.calls = [];
   });
 
   it('PUT: 401 logged out, 403 csrf without or with a wrong token, 403 forbidden without the perm', async () => {

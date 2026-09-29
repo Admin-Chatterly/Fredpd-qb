@@ -11,7 +11,9 @@
 // run it with mocks. The bottom of the file wires it to the real globals (SetHttpHandler, GetConvar, exports).
 //
 // Lua exports called from here (applyGrants, recomputeGrants, setOfficerIdentity) never yield: they update memory
-// and return a number synchronously, and start any DB/network work in their own Lua thread.
+// and return a number synchronously, and start any DB/network work in their own Lua thread. POST /rules only emits
+// the server-local event `fredpd:rulesChanged` (server/canview.lua reloads the rules in its own thread; other
+// resources may listen too). A local emit reaches Lua with source '' (never a player id).
 'use strict';
 
 const nodeCrypto = require('crypto');
@@ -27,6 +29,7 @@ const GRANT_RE = /^[a-z_]+:[^\s]{1,120}$/;
 const UNIT_RE = /^[A-Za-z0-9_-]{1,32}$/;
 const MAX_LIST = 2000;
 const MAX_NAME_CHARS = 100; // fredpd_officers.display_name VARCHAR(100) utf8mb4: characters, not UTF-16 units
+const RULES_CHANGED_EVENT = 'fredpd:rulesChanged';
 // Placeholder secrets from examples/docs. Long enough to pass the length check, but public: refuse them.
 const PLACEHOLDER_SECRET_RE = /change[_\s-]?me|placeholder|your[_\s-]?secret|^(.)\1+$/i;
 const REJECT_LOG_INTERVAL_S = 10; // at most one "rejected" log line per interval (the routes are on the public port)
@@ -130,6 +133,8 @@ const ROUTES = {
       if (problem) return [400, { error: 'invalid_body', detail: problem }];
       const applied = deps.callLua('applyGrants', body.discordId, body.grants);
       if (applied === false || applied === null || applied === undefined) return [400, { error: 'invalid_body', detail: 'rejected by applyGrants' }];
+      // One line per accepted push (role changes are rare): the Phase 1 checklist times Discord -> game with it.
+      deps.log('info', `grants pushed for discord ${body.discordId}: ${body.grants.grants.length} grant(s), applied to ${Number(applied) || 0} player(s)`);
       return [200, { ok: true, applied: Number(applied) || 0 }];
     },
   },
@@ -149,8 +154,9 @@ const ROUTES = {
         if (!isStringList(body.discordIds, DISCORD_ID_RE)) return [400, { error: 'invalid_body', detail: 'discordIds' }];
         ids = body.discordIds;
       }
-      const scheduled = deps.callLua('recomputeGrants', ids);
-      return [200, { ok: true, scheduled: Number(scheduled) || 0 }];
+      const scheduled = Number(deps.callLua('recomputeGrants', ids)) || 0;
+      deps.log('info', `grant recompute for ${ids ? `${ids.length} discord id(s)` : 'everyone online'}: ${scheduled} player(s) re-fetching`);
+      return [200, { ok: true, scheduled }];
     },
   },
   '/officer': {
@@ -171,7 +177,24 @@ const ROUTES = {
       if (updated === false || updated === null || updated === undefined) {
         return [400, { error: 'invalid_body', detail: 'rejected by setOfficerIdentity' }];
       }
+      deps.log('info', `officer name for discord ${body.discordId} is now ${JSON.stringify(name)} (${Number(updated) || 0} officer character(s))`);
       return [200, { ok: true, updated: Number(updated) || 0 }];
+    },
+  },
+  '/rules': {
+    method: 'POST',
+    // Not memoised, like /recompute: it carries no state, it only says "re-read fredpd_visibility_rules". Two rule
+    // edits in the same second sign identically and the second reload must still run. A replay within the skew
+    // window (or a captured `/recompute {}`, which signs the same body) only forces an extra reload.
+    memo: false,
+    run(body, deps) {
+      // Exactly {} (§C6). An empty body is already 400 bad_json in the handler, so a GET signature is refused, and
+      // any key is refused so a captured /grants, /officer or `/recompute { discordIds }` body cannot be reused here.
+      const unknown = Object.keys(body)[0];
+      if (unknown !== undefined) return [400, { error: 'invalid_body', detail: `unknown key ${unknown.slice(0, 32)}` }];
+      deps.emitEvent(RULES_CHANGED_EVENT);
+      deps.log('info', 'visibility rules changed: reloading');
+      return [200, { ok: true }];
     },
   },
 };
@@ -181,6 +204,7 @@ const ROUTES = {
  *   secret           HMAC secret; null/'' when the bridge is disabled (every request then gets 503)
  *   now()            unix seconds
  *   callLua(name, ...args)  calls a Lua export of this resource and returns its result
+ *   emitEvent(name, ...args)  fires a server-local event (FiveM `emit`, i.e. TriggerEvent)
  *   playerCount()    online players
  *   log(level, msg)
  * Order of checks: route (404/405) -> size (413) -> signature (401) -> duplicate of a memo route (cached answer) ->
@@ -192,8 +216,9 @@ function createHandler(deps) {
   // signature. It must not get 401 (which in §C5 means skew or a bad signature). Instead the first answer is
   // remembered for the skew window and a repeat of the same method + path + signature gets that answer again without
   // calling Lua, so a captured /grants push cannot be re-applied later to roll back a newer one. An identical body
-  // means an identical state, so nothing is lost. /ping and /recompute carry no state and always run. Only verified
-  // requests are stored; 5xx answers are not, so a retry after an internal error runs again. Pruned on insert.
+  // means an identical state, so nothing is lost. /ping, /recompute and /rules carry no state and always run. Only
+  // verified requests are stored; 5xx answers are not, so a retry after an internal error runs again. Pruned on
+  // insert.
   const answered = new Map(); // key -> { expires, status, obj }
   function remembered(key, nowSeconds) {
     const hit = answered.get(key);
@@ -401,7 +426,7 @@ function createSignedFetch(deps) {
 
 /**
  * Wires the bridge to FiveM. `fivem` holds the globals (injected so the test can pass mocks):
- *   SetHttpHandler, GetConvar, GetCurrentResourceName, GetNumPlayerIndices, exports, fetch, console
+ *   SetHttpHandler, GetConvar, GetCurrentResourceName, GetNumPlayerIndices, exports, emit, fetch, console
  */
 function createBridge(fivem) {
   const resource = fivem.GetCurrentResourceName();
@@ -424,6 +449,7 @@ function createBridge(fivem) {
     now,
     log,
     callLua: (name, ...args) => fivem.exports[resource][name](...args),
+    emitEvent: (name, ...args) => fivem.emit(name, ...args),
     playerCount: () => Number(fivem.GetNumPlayerIndices()) || 0,
   });
   fivem.SetHttpHandler(handle);
@@ -434,7 +460,7 @@ function createBridge(fivem) {
 }
 
 const api = {
-  MAX_BODY_BYTES, MAX_SKEW_SECONDS, MIN_SECRET_LENGTH, FETCH_TIMEOUT_MS, REJECT_LOG_INTERVAL_S,
+  MAX_BODY_BYTES, MAX_SKEW_SECONDS, MIN_SECRET_LENGTH, FETCH_TIMEOUT_MS, REJECT_LOG_INTERVAL_S, RULES_CHANGED_EVENT,
   signBody, verifySignature, secretProblem, grantSetProblem, createHandler, createSignedFetch, createBridge,
 };
 
@@ -447,6 +473,7 @@ if (typeof SetHttpHandler === 'function' && typeof GetConvar === 'function') {
     GetCurrentResourceName,
     GetNumPlayerIndices: globalThis.GetNumPlayerIndices,
     exports,
+    emit: typeof emit === 'function' ? emit : globalThis.TriggerEvent,
     fetch: typeof globalThis.fetch === 'function' ? globalThis.fetch.bind(globalThis) : undefined,
     console,
   });

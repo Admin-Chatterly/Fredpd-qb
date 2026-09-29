@@ -66,6 +66,25 @@ describe('FXServer client', () => {
     expect(JSON.parse(seen[4]!.body)).toEqual({ discordId: '123', displayName: 'Anna B.', avatarUrl: null });
   });
 
+  it('pushRulesChanged posts exactly {} to /rules, signed', async () => {
+    seen.length = 0;
+    const fx = createFxClient({ baseUrl: `${base}/`, secret: HMAC_SECRET, log });
+    expect(await fx.pushRulesChanged()).toEqual({ ok: true, status: 200, body: { ok: true, scheduled: 3 } });
+    expect(seen).toEqual([{ method: 'POST', url: '/fredpd_core/rules', body: '{}', verified: true }]);
+  });
+
+  it('pushRulesChanged reports a refusal or an unreachable FXServer without throwing', async () => {
+    mode = 'refuse';
+    try {
+      const fx = createFxClient({ baseUrl: base, secret: HMAC_SECRET, log });
+      expect(await fx.pushRulesChanged()).toEqual({ ok: false, status: 400, error: 'invalid_body' });
+    } finally {
+      mode = 'ok';
+    }
+    const down = createFxClient({ baseUrl: 'http://127.0.0.1:9', secret: HMAC_SECRET, log });
+    expect(await down.pushRulesChanged()).toEqual({ ok: false, status: 0, error: 'network' });
+  });
+
   it('returns the body of a successful call', async () => {
     const fx = createFxClient({ baseUrl: base, secret: HMAC_SECRET, log });
     const res = await fx.recompute(['1']);

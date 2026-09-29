@@ -12,7 +12,7 @@ and docs/contracts.md §C8 (t()) and §C10 (permissions admin API, client side).
 | `src/theme.css` | Tailwind v4 `@theme` tokens. Dark and flat. There is one accent hue (`accent`, `accent-strong`, `accent-text`, `accent-soft`), plus `canvas/surface/raised`, `line`, `fg/muted/subtle` and the status colours `success/warning/danger`. The base is 15 px (`html { font-size: 15px }`, so 1rem = 15 px). The default palette and shadows are removed (`--color-*: initial`), so pages can only use these tokens. Apps import it after `@import "tailwindcss"`. Its `@source "./"` makes Tailwind scan the shared components. It sets **no `color-scheme`** (see "color-scheme" below). |
 | `src/i18n.tsx` | `createI18n(messages, { lang = 'sv', fallbackLang = 'en', onMissing })` returns `{ lang, t, tx, has }`. `t(key: LocaleKey, vars)` is typed through `LocaleArgs`, so vars are required exactly when the key has placeholders. `tx(key: string, vars?, fallback?)` handles keys built from data, such as ``tx(`unit.${code}`, undefined, code)``. Lookup order is lang, then en, then the key itself. `{name}` is substituted and a placeholder without a value is left as is. Also exports `I18nProvider`, `useI18n()` and `useT()`. Without a provider, components render their keys. |
 | `src/components/*` | `Button` (primary/secondary/ghost/danger, `loading`), `IconButton` (a `label` is required; a padding-free square from `buttonClass(…, 'icon')`), `Input`/`Label` (`fieldClass` is the input look without a width, for `<select>`), `SearchInput` (controlled, trims on Enter, has a clear button), `Card`, `Badge` (`level={0\|1\|2}` gives Standard/Begränsad/Hemlig in neutral/warning/danger), `Notice` (kontaktnotis) and `VisibilityGate`, `EmptyState`, `Spinner` (CSS only), `VirtualList` (TanStack Virtual), `Table`, and the layout pieces `AppShell`, `Sidebar`, `NavItem`, `PageHeader`. |
-| `src/mdtPages.ts` | `MDT_PAGE_KEYS` and their `nav.*` labels (see below). |
+| `src/mdtPages.ts` | Re-exports `MDT_PAGE_KEYS`, `MdtPageKey`, `MDT_PAGE_LABEL_KEYS` and `isMdtPageKey` from `@fredpd/types/mdtPages` (docs/contracts.md §C12), so the apps keep importing them from `@fredpd/ui` (see below). |
 | `src/icons.tsx` | A small stroke icon set drawn for FredPD (`aria-hidden`). |
 
 `cn()` only joins class names, and Tailwind orders utilities in its stylesheet, not by class order. So never
@@ -23,7 +23,7 @@ variant (as `buttonClass` shapes do) or use a different property (`max-w-*`).
 field can reach the DOM. `VisibilityGate` renders content by `canView` result: `none` renders nothing, `notice`
 renders only the Notice, `masked` renders a banner and the content, and `full` renders the content.
 
-## Grant keys `mdt_page:<key>` (decided here)
+## Grant keys `mdt_page:<key>` (pinned in docs/contracts.md §C12; source `packages/types/src/mdtPages.ts`)
 
 | Key | Routes | Nav label |
 |---|---|---|
@@ -181,11 +181,11 @@ and scrollbars dark. `apps/nui/test/theme.test.ts` compiles the NUI CSS with Tai
    in dev. To get it back: add plugin-react ^5 to the apps and their vite configs, or bump vite to ^8.
 3. **Browser support.** Tailwind v4 CSS targets Chromium 111 and later (`@property`, `color-mix`). The Chromium
    version of FiveM's CEF has not been checked on the host (UNVERIFIED).
-4. **`MDT_PAGE_KEYS` (orchestrator action with the types and service owners).** They are a cross-module contract
-   (NUI routes, portal columns, and fredpd_mdt callbacks will check them server-side) but live in `packages/ui`
-   because the types package is owned elsewhere. They should move to `packages/types`, be listed by
-   `buildCatalog` in `apps/service/src/catalog.ts`, and be pinned in docs/contracts.md §C2. The portal can then
-   drop its local merge in `buildColumns`.
+4. **`MDT_PAGE_KEYS`: done.** They live in `packages/types/src/mdtPages.ts` (exported from `@fredpd/types`),
+   `packages/ui/src/mdtPages.ts` re-exports them, and `buildCatalog` always lists them, in nav order, and they are
+   pinned in docs/contracts.md §C12. The portal's local merge in `buildColumns` (`apps/portal/src/permissions/matrix.ts`,
+   not changed by that task) is now redundant but harmless: the keys already come from the catalog, so it adds nothing.
+   It can be dropped when the portal is next touched.
 5. **Locale keys.** `perms.addKey`, `perms.newKey` (the add-column form) and `perms.csrfRetry` are in
    `locales/pending/ui.json` and read with `tx()` until merged (`node scripts/merge-pending-locales.mjs`); after
    the merge they can become `t()`. Everything else uses existing keys; the matrix cell labels join existing labels with " · ".

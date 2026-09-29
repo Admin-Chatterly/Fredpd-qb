@@ -39,12 +39,19 @@ other resources on the same server keep their local-time data):
   SQL must not go through `string.format`). `Time.toIsoUtc(v)` normalises `YYYY-MM-DD HH:MM:SS`/ISO text (numbers
   raise, with that explanation). `Time.nowIso()` = `os.date('!%Y-%m-%dT%H:%M:%SZ')`.
 - **Reads in Node**: mysql2 with `timezone: 'Z'` (service pool, `migrate.mjs`), drizzle reads text and appends `Z`.
+- **Epochs**: never `UNIX_TIMESTAMP(col)` / `FROM_UNIXTIME(?)` (both convert through the session zone: 1–2 h off
+  on a Stockholm server). Use `TIMESTAMPDIFF(SECOND, '1970-01-01', col)` for a column's epoch seconds and
+  `'1970-01-01' + INTERVAL ? SECOND` for an epoch parameter, or convert in code (`Time.toEpoch` / `Time.toDatetime`
+  in Lua, a JS `Date` in Node). A bare `UNIX_TIMESTAMP()` (now, no argument) is zone-free. Likewise never
+  `CURRENT_DATE`/`CURDATE()`/`CURRENT_TIME`/`CURTIME()`: use `UTC_DATE()`/`UTC_TIME()`.
 - The runners never check or set the time zone. `db/dev/qbx_stub.sql` keeps upstream qbx's `TIMESTAMP … ON UPDATE
   CURRENT_TIMESTAMP` (it mirrors a table FredPD does not own; `TIMESTAMP` is stored zone-independently anyway).
-- Guards: db_test.lua and migrations.test.ts reject `CURRENT_TIMESTAMP`, `NOW()`, `LOCALTIME…`, `SYSDATE/CURDATE/
-  CURTIME(`, `ON UPDATE <clock>` and an unparenthesised `DEFAULT UTC_TIMESTAMP` in every migration/seed statement,
-  and migrations.test.ts rejects the session-clock functions in all FredPD Lua/JS/TS code (`resources/[fredpd]`,
-  `apps/service/src`, `scripts`; upper-case `NOW()` only, since `x.now()` is a clock call).
+- Guards: db_test.lua and migrations.test.ts reject `CURRENT_TIMESTAMP`, `CURRENT_DATE`, `CURRENT_TIME`,
+  `LOCALTIME…`, `NOW(`, `SYSDATE/CURDATE/CURTIME(`, `FROM_UNIXTIME(`, `UNIX_TIMESTAMP(<argument>`, `ON UPDATE <clock>`
+  and an unparenthesised `DEFAULT UTC_TIMESTAMP` in every migration/seed statement (any case). migrations.test.ts
+  rejects the same functions in all FredPD Lua/JS/TS code (`resources/[fredpd]`, `apps/service/src`, `scripts`):
+  in any case inside string literals (quotes, JS template literals, Lua long strings), and outside strings too
+  except lower-case `now(`, which there is a JS/Lua clock call (`clock.now()`, `self:now()` are never flagged).
 
 ## Runner algorithm (both runners)
 
@@ -217,15 +224,19 @@ bands (ordningsbot up to 30 km/h over, bot above). `law_ref` values are best eff
   `lua5.4 tests/lua/mysql_shim.lua migrate`, then identical `fredpd_migrations` rows, columns, indexes, FKs, checks
   and seed data in both databases, and the same `<file>: line N: …` error from both for a malformed file. The last
   test on `fredpd_test_db*` leaves both holding only an empty `fredpd_migrations`. The **time zone regression**
-  then sets the server's `GLOBAL time_zone` to `+02:00` (restored in `finally`; falls back to `+02:00` sessions with a
-  warning if the user lacks the privilege), runs both runners on `fredpd_test_utc_node` / `fredpd_test_utc_lua` and
-  checks that `applied_at`, `created_at` (migrations, charges, rules, fresh audit/tablet/role rows), `issued_at` and
-  `updated_at` defaults are within a minute of `UTC_TIMESTAMP()` and two hours off the session clock, then drops both.
+  then takes the server-side lock `fredpd_test_global_tz` (waits up to 90 s, so concurrent runs on one shared
+  MariaDB take turns and each saves the real original zone), sets the server's `GLOBAL time_zone` to `+02:00`
+  (restored and read back in `finally` before the lock is released; falls back to `+02:00` sessions with a warning if
+  the user lacks the privilege), runs both runners on `fredpd_test_utc_node` / `fredpd_test_utc_lua` and checks that
+  `applied_at`, `created_at` (migrations, charges, rules, fresh audit/tablet/role rows), `issued_at` and `updated_at`
+  defaults are within a minute of `UTC_TIMESTAMP()` and two hours off the session clock, then drops both (still under
+  the lock; a failing run leaves them for inspection).
 - Server/credentials from `FREDPD_TEST_DB_URL` (default `mysql://fredpd:fredpd@127.0.0.1:3306/fredpd_test`); the
   tests drop and recreate `fredpd_test_db` and `fredpd_test_db_lua`; `fredpd_test_core_lua` is reset once per Lua
-  run; the service's `setupTestDb` drops and rebuilds its database when an applied migration's checksum changed or
-  its file is gone (under a per-database `GET_LOCK`, so parallel test files rebuild it once). Any server time zone
-  works.
+  run; the service's `setupTestDb` drops and rebuilds its database when an applied migration's checksum changed
+  (under a per-database `GET_LOCK`, so parallel test files rebuild it once); an applied migration whose file is not in
+  the checkout only gets the runner's warning, so an older checkout never drops a database a newer one is using. Any
+  server time zone works.
 - The shim keeps the server's default session time zone like oxmysql; `shim.sessionTimeZone = '+02:00'` (or
   `install({ sessionTimeZone = … })`, CLI `--time-zone=+02:00`) simulates a non-UTC server. core_db_test.lua runs
   all its sessions at `+02:00`.
@@ -237,7 +248,10 @@ bands (ordningsbot up to 30 km/h over, bot above). `law_ref` values are best eff
 - IMPLEMENTATION.md §6 still says `created_at DATETIME DEFAULT CURRENT_TIMESTAMP`; docs/contracts.md §C7 (UTC
   defaults) supersedes it. Not edited here (not owned).
 - The time zone regression briefly changes the test server's `GLOBAL time_zone`. FredPD code does not care, but
-  a non-FredPD process on the same test server that opens a session in that window gets `+02:00`.
+  a non-FredPD process on the same test server that opens a session in that window gets `+02:00`. Concurrent FredPD
+  runs serialise on `fredpd_test_global_tz`; only a test process killed between the switch and the restore (the lock
+  is freed, the zone is not) leaves the server at `+02:00`; set it back by hand (`SET GLOBAL time_zone = 'SYSTEM'`
+  or whatever `my.ini`/`my.cnf` configures).
 - fredpd_core's fxmanifest lists `'migrations/*'` under `files`; the core owner should remove it (see "Using it").
 - A per-seed apply-once mode (e.g. a `-- @seed-once` header) would stop re-inserting deleted visibility rules, but
   extends the §C7 directive grammar and means new default rules need a migration; not done, disable-not-delete

@@ -19,6 +19,12 @@ export interface FxClient {
   recompute(discordIds?: string[]): Promise<FxResult>;
   /** POST /officer: refresh the in-memory officer name/avatar used for rosters. */
   pushOfficer(discordId: string, displayName: string, avatarUrl: string | null): Promise<FxResult>;
+  /**
+   * POST /rules with the body `{}` (exactly: http.js refuses anything else): fredpd_core reloads
+   * fredpd_visibility_rules (server event `fredpd:rulesChanged`). Send it after a committed rule edit.
+   * TODO(rules editor, Ledning page): no caller yet; call it after the transaction that edits the rules.
+   */
+  pushRulesChanged(): Promise<FxResult>;
 }
 
 export interface FxClientOptions {
@@ -77,5 +83,6 @@ export function createFxClient(opts: FxClientOptions): FxClient {
     recompute: (discordIds) =>
       call('POST', '/recompute', discordIds && discordIds.length <= MAX_RECOMPUTE_IDS ? { discordIds } : {}),
     pushOfficer: (discordId, displayName, avatarUrl) => call('POST', '/officer', { discordId, displayName, avatarUrl }),
+    pushRulesChanged: () => call('POST', '/rules', {}),
   };
 }

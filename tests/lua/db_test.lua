@@ -201,12 +201,34 @@ tests['migrations and seeds never use the session clock (docs/contracts.md §C7)
     local files = {}
     for _, name in ipairs(listMigrations()) do files[#files + 1] = MIGRATION_DIR .. '/' .. name end
     for _, name in ipairs(listSeeds()) do files[#files + 1] = SEED_DIR .. '/' .. name end
+    -- The session clock and conversions through the session zone (same list as migrations.test.ts SESSION_CLOCK):
+    -- FROM_UNIXTIME(n) and UNIX_TIMESTAMP(value) too; a bare UNIX_TIMESTAMP() is a zone-free epoch and allowed.
+    local SESSION_CLOCK = {
+        '%f[%w_]CURRENT_TIMESTAMP%f[^%w_]', '%f[%w_]CURRENT_DATE%f[^%w_]', '%f[%w_]CURRENT_TIME%f[^%w_]',
+        '%f[%w_]LOCALTIME%f[^%w_]', '%f[%w_]LOCALTIMESTAMP%f[^%w_]',
+        '%f[%w_]NOW%s*%(', '%f[%w_]SYSDATE%s*%(', '%f[%w_]CURDATE%s*%(', '%f[%w_]CURTIME%s*%(',
+        '%f[%w_]FROM_UNIXTIME%s*%(', '%f[%w_]UNIX_TIMESTAMP%s*%(%s*[^%)%s]',
+    }
+    local function clock(sql)
+        local upper = sql:upper()
+        for _, pat in ipairs(SESSION_CLOCK) do
+            local s, e = upper:find(pat)
+            if s then return upper:sub(s, e) end
+        end
+    end
+    for _, bad in ipairs({ 'DEFAULT CURRENT_TIMESTAMP', 'x < now()', 'CURRENT_DATE', 'CURRENT_TIME', 'LOCALTIME',
+        'LOCALTIMESTAMP()', 'curdate()', 'FROM_UNIXTIME(1)', 'unix_timestamp( created_at )' }) do
+        t.ok(clock(bad), 'guard misses ' .. bad)
+    end
+    for _, ok in ipairs({ 'UTC_TIMESTAMP()', 'DEFAULT (UTC_TIMESTAMP())', 'UNIX_TIMESTAMP()', 'UNIX_TIMESTAMP( )',
+        "TIMESTAMPDIFF(SECOND, '1970-01-01', created_at)", 'known_at', 'snow()' }) do
+        t.ok(not clock(ok), 'guard rejects ' .. ok)
+    end
     for _, path in ipairs(files) do
         for _, st in ipairs(db.splitStatements(t.readFile(path))) do
             local upper = st.sql:upper()
-            for _, bad in ipairs({ 'CURRENT_TIMESTAMP', 'NOW()', 'LOCALTIME', 'SYSDATE(', 'CURDATE(', 'CURTIME(' }) do
-                t.ok(not upper:find(bad, 1, true), ('%s line %d: uses %s (write UTC_TIMESTAMP())'):format(path, st.line, bad))
-            end
+            local bad = clock(st.sql)
+            t.ok(not bad, ('%s line %d: uses %s (write UTC_TIMESTAMP())'):format(path, st.line, tostring(bad)))
             t.ok(not upper:find('ON UPDATE%s+UTC') and not upper:find('ON UPDATE%s+CURRENT'),
                 ('%s line %d: ON UPDATE timestamp (writers set updated_at themselves)'):format(path, st.line))
             -- One spelling: the parenthesised expression default (MariaDB accepts both, MySQL 8 only this one).

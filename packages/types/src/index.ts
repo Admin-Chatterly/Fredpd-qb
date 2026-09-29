@@ -6,3 +6,4 @@ export * from './hmac';
 export * from './actions';
 export * from './locale-keys';
 export * from './mdt';
+export * from './mdtPages';

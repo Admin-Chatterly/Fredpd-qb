@@ -29,7 +29,9 @@ const utcNow = sql`(UTC_TIMESTAMP())`;
 const createdAt = () => utc('created_at').notNull().default(utcNow);
 /**
  * The tables have no ON UPDATE clause (MariaDB has none in UTC), so every drizzle update() and
- * onDuplicateKeyUpdate() sets updated_at = UTC_TIMESTAMP() through $onUpdate. Raw SQL writers must set it themselves.
+ * onDuplicateKeyUpdate() sets updated_at = UTC_TIMESTAMP() through $onUpdate. Unlike ON UPDATE (and fredpd_core's
+ * buildInsert `touch`) this moves it even when no value changes, so repo.ts writes only rows that really change.
+ * Raw SQL writers must set it themselves.
  */
 const updatedAt = () =>
   utc('updated_at')

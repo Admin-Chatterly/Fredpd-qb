@@ -4,7 +4,8 @@
 // db/migrations identically. DB tests use fredpd_test_db (Node) and fredpd_test_db_lua (Lua) on the server from
 // FREDPD_TEST_DB_URL and are skipped with a warning when it is unreachable; Lua parity tests need lua5.4. The time
 // zone regression test (docs/contracts.md §C7: UTC whatever the server zone) uses fredpd_test_utc_node and
-// fredpd_test_utc_lua and briefly sets the server's GLOBAL time_zone to '+02:00' (restored afterwards).
+// fredpd_test_utc_lua and briefly sets the server's GLOBAL time_zone to '+02:00' (restored afterwards, under the
+// server-side lock fredpd_test_global_tz so concurrent runs on one MariaDB take turns).
 import { spawnSync } from 'node:child_process';
 import { cpSync, existsSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, symlinkSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -245,7 +246,17 @@ describe('scripts/migrate.mjs CLI', () => {
 // --- time zone independence (static) --------------------------------------------------------------------------
 
 describe('UTC storage (docs/contracts.md §C7)', () => {
-  const SESSION_CLOCK = /\b(CURRENT_TIMESTAMP|NOW\(\)|LOCALTIME|LOCALTIMESTAMP|SYSDATE\(|CURDATE\(|CURTIME\()/i;
+  // SQL that reads the session clock or converts through the session zone: the current-time functions, plus
+  // FROM_UNIXTIME(n) and UNIX_TIMESTAMP(value) (with an argument; bare UNIX_TIMESTAMP() is a zone-free epoch).
+  // Epoch arithmetic is TIMESTAMPDIFF(SECOND, '1970-01-01', col) / '1970-01-01' + INTERVAL n SECOND (db.md).
+  const CLOCK_PARTS = [
+    String.raw`\b(?:CURRENT_TIMESTAMP|CURRENT_DATE|CURRENT_TIME|LOCALTIME|LOCALTIMESTAMP)\b`,
+    String.raw`\b(?:SYSDATE|CURDATE|CURTIME|FROM_UNIXTIME)\s*\(`,
+    String.raw`\bUNIX_TIMESTAMP\s*\(\s*[^)\s]`,
+  ];
+  // Not after . : $ or a word character: x.now(), self:now() and ${clock.now()} in a template are clock calls.
+  const NOW_PART = String.raw`(?<![\w.$:])NOW\s*\(`;
+  const SESSION_CLOCK = new RegExp([...CLOCK_PARTS, NOW_PART].join('|'), 'i');
 
   it('migrations and seeds default to (UTC_TIMESTAMP()) and never use the session clock or ON UPDATE', () => {
     const offenders: string[] = [];
@@ -263,11 +274,18 @@ describe('UTC storage (docs/contracts.md §C7)', () => {
   });
 
   it('FredPD code never writes the session clock into SQL (Lua, service, scripts)', () => {
-    // NOW() in upper case only (a lower-case now() is a JS/Lua clock call); the other names in any case.
-    const CODE_CLOCK = [/(?<![\w.$])NOW\(\)/, /\b(?:CURRENT_TIMESTAMP|LOCALTIMESTAMP)\b|\b(?:SYSDATE|CURDATE|CURTIME)\s*\(/i];
+    // Anywhere in a line: every SESSION_CLOCK name except now(), which only counts in upper case there (a lower-case
+    // now() is a JS/Lua clock call, e.g. clock.now() or an interface member). Inside string literals (quotes on one
+    // line, JS template literals and Lua long strings across lines) every name counts in any case, now() included.
+    const LINE_CLOCK = [new RegExp(NOW_PART), new RegExp(CLOCK_PARTS.join('|'), 'i')];
+    const STRING_CLOCK = SESSION_CLOCK;
+    const STRINGS = {
+      lua: /\[(=*)\[[\s\S]*?\]\1\]|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g,
+      js: /`(?:[^`\\]|\\[\s\S])*`|'(?:[^'\\\n]|\\.)*'|"(?:[^"\\\n]|\\.)*"/g,
+    };
     const roots = [join(ROOT, 'resources', '[fredpd]'), join(ROOT, 'apps', 'service', 'src'), join(ROOT, 'scripts')];
     const skip = new Set(['node_modules', 'migrations', 'build', 'dist', 'locales', 'fixtures', 'config', 'test']);
-    const offenders: string[] = [];
+    const offenders = new Set<string>();
     const walk = (dir: string) => {
       if (!existsSync(dir)) return;
       for (const name of readdirSync(dir)) {
@@ -275,17 +293,36 @@ describe('UTC storage (docs/contracts.md §C7)', () => {
         if (statSync(path).isDirectory()) {
           if (!skip.has(name)) walk(path);
         } else if (/\.(lua|js|mjs|ts|tsx)$/.test(name)) {
-          readFileSync(path, 'utf8').split('\n').forEach((line, i) => {
-            for (const re of CODE_CLOCK) {
+          const text = readFileSync(path, 'utf8');
+          const where = (index: number) => `${path.slice(ROOT.length)}:${text.slice(0, index).split('\n').length}`;
+          text.split('\n').forEach((line, i) => {
+            for (const re of LINE_CLOCK) {
               const m = re.exec(line);
-              if (m) offenders.push(`${path.slice(ROOT.length)}:${i + 1}: ${m[0]}`);
+              if (m) offenders.add(`${path.slice(ROOT.length)}:${i + 1}: ${m[0]}`);
             }
           });
+          for (const s of text.matchAll(name.endsWith('.lua') ? STRINGS.lua : STRINGS.js)) {
+            const m = STRING_CLOCK.exec(s[0]);
+            if (m) offenders.add(`${where((s.index ?? 0) + m.index)}: ${m[0]} (in a string)`);
+          }
         }
       }
     };
     roots.forEach(walk);
-    expect(offenders).toEqual([]);
+    expect([...offenders]).toEqual([]);
+  });
+
+  it('the session clock guards catch the zone-dependent spellings and allow the UTC ones', () => {
+    for (const bad of ['DEFAULT CURRENT_TIMESTAMP', 'x < now()', 'NOW( )', 'CURRENT_DATE', 'CURRENT_TIME', 'LOCALTIME',
+      'LOCALTIMESTAMP()', 'SYSDATE()', 'curdate()', 'CURTIME()', 'FROM_UNIXTIME(?)', 'from_unixtime (1)',
+      'UNIX_TIMESTAMP(created_at)', 'unix_timestamp( ? )']) {
+      expect(SESSION_CLOCK.test(bad), bad).toBe(true);
+    }
+    for (const ok of ['UTC_TIMESTAMP()', 'DEFAULT (UTC_TIMESTAMP())', 'UNIX_TIMESTAMP()', 'UNIX_TIMESTAMP( )', 'UTC_DATE()',
+      "TIMESTAMPDIFF(SECOND, '1970-01-01', created_at)", "'1970-01-01' + INTERVAL ? SECOND", 'known_at', 'snow()',
+      '${clock.now()}', 'self:now()', '$now()']) {
+      expect(SESSION_CLOCK.test(ok), ok).toBe(false);
+    }
   });
 
   it('the runners have no time zone check left', () => {
@@ -596,20 +633,29 @@ describe.skipIf(!admin)('migrations against MariaDB', () => {
   // Regression for docs/contracts.md §C7: a Windows MariaDB defaults to SYSTEM = Europe/Stockholm. Both runners
   // must migrate there, and every default must still be UTC. The GLOBAL zone is what oxmysql and every new
   // session inherit, so it is switched for the duration of this test (restored in finally; if this user may not
-  // set it, only the sessions are switched and a warning says so).
-  it('migrates with global and session time_zone +02:00 and every created_at default is UTC (both runners)', { timeout: DB_TIMEOUT }, async () => {
+  // set it, only the sessions are switched and a warning says so). Several checkouts may test against one shared
+  // MariaDB at once, so the whole test (save, switch, the fredpd_test_utc_* databases, restore) runs under the
+  // server-side lock GLOBAL_TZ_LOCK: a second run waits and then saves the real original instead of the first run's
+  // '+02:00', and can neither restore '+02:00' last nor drop the first run's databases. The server releases the lock
+  // if the holder's connection dies.
+  it('migrates with global and session time_zone +02:00 and every created_at default is UTC (both runners)', { timeout: 3 * DB_TIMEOUT }, async () => {
     if (!admin) throw new Error('no database');
-    const [[before]] = (await admin.query('SELECT @@global.time_zone AS tz')) as [Row[], unknown];
-    const original = String(before?.tz);
+    const GLOBAL_TZ_LOCK = 'fredpd_test_global_tz';
+    const [[lock]] = (await admin.query('SELECT GET_LOCK(?, 90) AS ok', [GLOBAL_TZ_LOCK])) as [Row[], unknown];
+    if (Number(lock?.ok) !== 1) throw new Error(`${GLOBAL_TZ_LOCK} is still held by another test run after 90 s`);
+    let original = '';
+    let restored: unknown = null;
     let global = true;
-    try {
-      await admin.query("SET GLOBAL time_zone = '+02:00'");
-    } catch (err) {
-      global = false;
-      console.warn(`[migrations.test] cannot SET GLOBAL time_zone (${(err as Error).message}); testing +02:00 sessions only`);
-    }
     const checked: Row[] = [];
     try {
+      const [[before]] = (await admin.query('SELECT @@global.time_zone AS tz')) as [Row[], unknown];
+      original = String(before?.tz);
+      try {
+        await admin.query("SET GLOBAL time_zone = '+02:00'");
+      } catch (err) {
+        global = false;
+        console.warn(`[migrations.test] cannot SET GLOBAL time_zone (${(err as Error).message}); testing +02:00 sessions only`);
+      }
       for (const db of [UTC_NODE_DB, UTC_LUA_DB]) {
         await admin.query(`DROP DATABASE IF EXISTS \`${db}\``);
         await admin.query(`CREATE DATABASE \`${db}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_swedish_ci`);
@@ -653,12 +699,20 @@ describe.skipIf(!admin)('migrations against MariaDB', () => {
           expect(Number(skew?.session), `${db}: ${q} is not session time`).toBeGreaterThanOrEqual(119);
         }
       }
+      expect(checked.length).toBeGreaterThanOrEqual(10);
+      // Only after a pass (a failure leaves them for inspection), and still under the lock.
+      for (const db of [UTC_NODE_DB, UTC_LUA_DB]) await admin.query(`DROP DATABASE IF EXISTS \`${db}\``);
     } finally {
-      if (global) await admin.query('SET GLOBAL time_zone = ?', [original]);
+      try {
+        if (global && original) {
+          await admin.query('SET GLOBAL time_zone = ?', [original]);
+          // Read back while still holding the lock: after the release another run may switch it again.
+          restored = (await rows(admin, 'SELECT @@global.time_zone AS tz'))[0]?.tz;
+        }
+      } finally {
+        await admin.query('SELECT RELEASE_LOCK(?)', [GLOBAL_TZ_LOCK]);
+      }
     }
-    const [after] = await rows(admin, 'SELECT @@global.time_zone AS tz');
-    expect(after?.tz).toBe(original);
-    expect(checked.length).toBeGreaterThanOrEqual(10);
-    for (const db of [UTC_NODE_DB, UTC_LUA_DB]) await admin.query(`DROP DATABASE IF EXISTS \`${db}\``);
+    if (global) expect(restored).toBe(original);
   });
 });

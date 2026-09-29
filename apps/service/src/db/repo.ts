@@ -4,8 +4,10 @@
 // Not audited per row, as in fredpd_core (docs/modules/core.md "Audit exemption"): fredpd_grant_cache and
 // fredpd_identities (caches of data audited at its source) and fredpd_sessions (login/logout are audited instead).
 // Times (docs/contracts.md §C7): Date values are written as UTC by drizzle/mysql2; updated_at is set to
-// UTC_TIMESTAMP() by every update()/onDuplicateKeyUpdate() through the schema's $onUpdate; SQL never uses the
-// session clock (comparisons take the injected clock's Date).
+// UTC_TIMESTAMP() by every update()/onDuplicateKeyUpdate() through the schema's $onUpdate, changed or not, so the
+// writers of tables with updated_at only touch rows that really change (callers pass diffRoles output, the officer
+// identity update filters stale rows, markRolesDeleted skips deleted ones); SQL never uses the session clock
+// (comparisons take the injected clock's Date).
 import { and, eq, gt, inArray, sql } from 'drizzle-orm';
 import type { GrantSet, GrantType, RoleGrantRow, RoleRow } from '@fredpd/types/grants';
 import type { Db } from './client';
@@ -113,10 +115,13 @@ export async function upsertRoles(db: DbOrTx, list: GatewayRole[]): Promise<void
     });
 }
 
-/** Soft delete: the row and its grants stay for the audit trail; resolution ignores deleted roles. */
+/**
+ * Soft delete: the row and its grants stay for the audit trail; resolution ignores deleted roles. Rows already
+ * deleted are skipped, so their updated_at (moved by $onUpdate on every write) keeps the time of the real deletion.
+ */
 export async function markRolesDeleted(db: DbOrTx, ids: string[]): Promise<void> {
   if (ids.length === 0) return;
-  await db.update(roles).set({ deleted: true }).where(inArray(roles.discordRoleId, ids));
+  await db.update(roles).set({ deleted: true }).where(and(inArray(roles.discordRoleId, ids), eq(roles.deleted, false)));
 }
 
 export async function getRole(db: DbOrTx, roleId: string): Promise<StoredRole | null> {

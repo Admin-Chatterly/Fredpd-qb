@@ -74,7 +74,8 @@ export type FxCall =
   | { kind: 'ping' }
   | { kind: 'grants'; discordId: string; grants: GrantSet }
   | { kind: 'recompute'; discordIds: string[] | undefined }
-  | { kind: 'officer'; discordId: string; displayName: string; avatarUrl: string | null };
+  | { kind: 'officer'; discordId: string; displayName: string; avatarUrl: string | null }
+  | { kind: 'rules' };
 
 export class FakeFx implements FxClient {
   calls: FxCall[] = [];
@@ -99,6 +100,10 @@ export class FakeFx implements FxClient {
   async pushOfficer(discordId: string, displayName: string, avatarUrl: string | null) {
     this.calls.push({ kind: 'officer', discordId, displayName, avatarUrl });
     return this.result({ ok: true, updated: 1 });
+  }
+  async pushRulesChanged() {
+    this.calls.push({ kind: 'rules' });
+    return this.result({ ok: true });
   }
   of<K extends FxCall['kind']>(kind: K): Extract<FxCall, { kind: K }>[] {
     return this.calls.filter((c): c is Extract<FxCall, { kind: K }> => c.kind === kind);
@@ -154,8 +159,10 @@ type MigrateModule = {
 
 /**
  * Create (if needed) and migrate fredpd_test_service (or another test database); null with a warning when MariaDB
- * is unreachable, so DB tests skip. A test database whose applied migrations no longer match db/migrations (an
- * edited migration, or one that disappeared) is dropped and rebuilt, since the runner rightly refuses drift. The
+ * is unreachable, so DB tests skip. A test database with an applied migration whose checksum no longer matches
+ * db/migrations (an edited migration) is dropped and rebuilt, since the runner rightly refuses that drift. An applied
+ * migration whose file is not in this checkout ('missing', e.g. a newer checkout's 010_*.sql on a shared MariaDB) only
+ * gets the runner's warning: dropping would pull the database from under the other checkout's running tests. The
  * check-drop-migrate runs under a server-side lock per database, so the first of the parallel test files rebuilds
  * it and the others find it current.
  */
@@ -177,7 +184,7 @@ export async function setupTestDb(tag: string, database: string = TEST_DB): Prom
     if (Number(got.ok) !== 1) throw new Error(`[${tag}] could not lock ${database} for setup`);
     await conn.query(`CREATE DATABASE IF NOT EXISTS \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_swedish_ci`);
     const states = await mig.status({ url: testDbUrl(database) });
-    if (states.some((s) => (s.state === 'changed' || s.state === 'missing') && !s.id.startsWith('seed/'))) {
+    if (states.some((s) => s.state === 'changed' && !s.id.startsWith('seed/'))) {
       await conn.query(`DROP DATABASE \`${database}\``);
       await conn.query(`CREATE DATABASE \`${database}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_swedish_ci`);
     }
@@ -236,6 +243,9 @@ export interface TestApp {
   config: Config;
 }
 
+/** config/units.json order the test apps run with (the admin catalog lists these units first). */
+export const TEST_UNIT_ORDER = ['ledning', 'span', 'utredning', 'tekniker', 'igv'];
+
 /**
  * buildApp with fakes. Without a database, a lazy pool to a closed port stands in: routes that never query work,
  * anything that does fails loudly.
@@ -247,7 +257,7 @@ export async function makeApp(opts: { database?: Database | null; config?: Confi
   const clock = fixedClock();
   const config = opts.config ?? testConfig();
   const db: Db = opts.database?.db ?? createDatabase('mysql://nobody:none@127.0.0.1:9/none', { connectionLimit: 1 }).db;
-  const app = await buildApp({ config, db, gateway, fx, clock, oauth, log: silentLogger, logger: false, unitOrder: ['ledning', 'span', 'utredning', 'tekniker', 'igv'], ...opts.deps });
+  const app = await buildApp({ config, db, gateway, fx, clock, oauth, log: silentLogger, logger: false, unitOrder: TEST_UNIT_ORDER, ...opts.deps });
   await app.ready();
   return { app, gateway, fx, oauth, clock, config };
 }

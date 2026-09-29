@@ -1,5 +1,5 @@
 {
-  "$comment": "Pinned upstream resources (IMPLEMENTATION.md §3, §8.2; verified in task 0.3, see docs/deps-verification.md). Keys are the resource folder names as ensured in server.cfg. scripts/fetch-deps.mjs clones repo@commit into resources/[upstream]/<key> (mode REFERENCE is skipped). 'tag' + 'release' are set where the upstream's documented install path is a release zip (built web UI / dist not in git): the commit is the tag's commit and the server must run the release zip of that tag, the git checkout only serves patches and review. Never track 'latest'; bump commit (+tag/release) and re-run fetch-deps + apply-patches.",
+  "$comment": "Pinned upstream resources (IMPLEMENTATION.md §3, §8.2; verified in task 0.3, see docs/deps-verification.md). Keys are the resource folder names as ensured in server.cfg. scripts/fetch-deps.mjs clones repo@commit into resources/[upstream]/<key>; mode REFERENCE is recorded but not fetched (bub-mdt: code reference only; qbx_prison: verified, not to be run; xt-prison: installed from its release zip, called only). 'tag' + 'release' are set where the upstream's documented install path is a release zip (built web UI / dist not in git): the commit is the tag's commit and the server must run the release zip of that tag, the git checkout only serves patches and review. Never track 'latest'; bump commit (+tag/release) and re-run fetch-deps + apply-patches.",
   "resources": {
     "oxmysql": {
       "repo": "https://github.com/overextended/oxmysql",
@@ -57,7 +57,7 @@
       "date": "2026-09-26T05:43:45+02:00",
       "license": "GPL-3.0-or-later",
       "mode": "REUSE",
-      "notes": "HEAD of main; the Qbox txAdmin recipe installs main (download_github ref main). Latest tag v1.24.0 (c1c3ca1, 2026-08-22) is 16 commits behind. Rami's server already runs qbx_core: this pin is the version FredPD was verified against, not something to overwrite blindly."
+      "notes": "HEAD of main = what the txAdmin recipe qbox.yaml installs (download_github ref main, 165-168). qbox-lean.yaml and qbox-stable.yaml install releases/latest instead = tag v1.24.0 (c1c3ca16721cd14eb814cfb95e8f8631690d247d, 2026-08-22, 16 commits behind): re-pin to that if Rami used one of those (open question). Rami's server already runs qbx_core: this pin is the version FredPD was verified against, not something to overwrite blindly."
     },
     "qbx_policejob": {
       "repo": "https://github.com/Qbox-project/qbx_police",
@@ -65,15 +65,25 @@
       "date": "2026-09-26T05:43:49+02:00",
       "license": "GPL-3.0-only",
       "mode": "PATCH",
-      "notes": "Folder name from fxmanifest name/README title 'qbx_policejob'. The Qbox txAdmin recipe clones it to resources/[qbx]/qbx_police (resource name = folder name): server.cfg and the prison adapter must use whichever folder Rami's server has. No release tags; LICENSE is bare GPLv3 text (no or-later notice). Patch targets: server/main.lua IsLeoAndOnDuty (13-18), evidence:server:* (435-557), FlaggedPlateTriggered (345-362)."
+      "notes": "Folder name from fxmanifest name/README title 'qbx_policejob'. The Qbox txAdmin recipes qbox.yaml/qbox-lean.yaml clone main to resources/[qbx]/qbx_police (resource name = folder name; qbox-stable.yaml does not install it): server.cfg must use whichever folder Rami's server has. No release tags; LICENSE is bare GPLv3 text (no or-later notice). Patch targets in server/main.lua: IsLeoAndOnDuty 13-18; the nine evidence handlers evidence:server:UpdateStatus 435, CreateBloodDrop 439, CreateFingerDrop 448, ClearBlooddrops 455, AddBlooddropToInventory 463, AddFingerprintToInventory 485, CreateCasing 505, ClearCasings 528, AddCasingToInventory 537 (do NOT disable 435-557 as a range: police:server:UpdateCurrentCops 514-526 sits inside and drives the client cop count); FlaggedPlateTriggered 345-362 ('#' on the source-keyed GetQBPlayers map, use pairs; same bug in UpdateCurrentCops 519). qbx_police has no jail of its own (docs §2)."
     },
     "qbx_prison": {
       "repo": "https://github.com/Qbox-project/qbx_prison",
       "commit": "977634bbaf1757dba3e6d95f0b7dd3be693e11ae",
       "date": "2026-07-09T02:20:51+02:00",
       "license": "GPL-3.0-only",
-      "mode": "REUSE",
-      "notes": "Exists; exports JailPlayer(src, minutes) / ReleasePlayer(src). Effectively unmaintained: last functional commit 2024-06-23, the 2026 commit is repo-template chore. The current Qbox txAdmin recipe ships xt-prison instead (qbx_police has xt-prison compat). Use only if Rami's server runs it (docs/deps-verification.md Decisions)."
+      "mode": "REFERENCE",
+      "notes": "Verified, not to be run (docs/deps-verification.md §2a, Decision 2). Exports JailPlayer(src, minutes) / ReleasePlayer(src). Unmaintained (last functional commit 2024-06-23; the 2026 commit is a repo-template chore). Security: net event qbx_prison:server:onGateHackDone (server/main.lua:77-85) calls exports.ox_doorlock:setDoorState with a client-chosen gateKey, which ox_doorlock authorises (source is nil on the export path): any client can unlock any door. Clients can also clear their own sentence (qbx_prison:server:playerEscaped 61-64, prison:server:SetJailStatus 19-21). Run only after a patch that validates gateKey against the configured gates."
+    },
+    "xt-prison": {
+      "repo": "https://github.com/xT-Development/xt-prison",
+      "commit": "6f4d06f69217ce1e7bbbdb91eeb799edf86699c1",
+      "date": "2026-06-24T14:29:58-06:00",
+      "license": "NOASSERTION",
+      "mode": "REFERENCE",
+      "tag": "v1.4.9",
+      "release": "https://github.com/xT-Development/xt-prison/releases/download/v1.4.9/xt-prison.zip",
+      "notes": "Default prison (Decision 2): all three Qbox txAdmin recipes install this release zip (releases/latest = v1.4.9) into resources/[standalone]/xt-prison. No LICENSE file (all rights reserved): call its API only, never copy or ship a patch, hence REFERENCE (not fetched). Verified at HEAD 85fd705 (2026-08-24), which differs from v1.4.9 only in configs/client.lua. API: export SetJailTime(src, minutes) (bridge/server/qbx.lua:30-47) sets state + injail metadata only; confinement = lib.callback.await('xt-prison:client:enterJail', src, minutes), release = setJailTime 0 + 'xt-prison:client:exitJail'. Client-trusting: prison:server:SetJailStatus and xt-prison:server:setJailStatus let a client zero its own sentence, so FredPD's record is the authority."
     },
     "qbx_vehicles": {
       "repo": "https://github.com/Qbox-project/qbx_vehicles",
@@ -81,7 +91,7 @@
       "date": "2026-09-26T05:43:12+02:00",
       "license": "GPL-3.0-only",
       "mode": "REUSE",
-      "notes": "HEAD of main (recipe installs main; tag v1.4.2 is 6 commits behind). Server event qbx_vehicles:server:vehicleSaved(vehicleId); hooks via exports.qbx_vehicles:registerHook('createPlayerVehicle'|'changeVehicleOwner', fn). Required by qbx_garages."
+      "notes": "HEAD of main = what qbox.yaml installs (172-175); qbox-lean/qbox-stable install releases/latest = tag v1.4.2 (7cd0380464b4494dbc12ff5d7f9d557dd7b89524, 2024-12-19, 6 commits behind): re-pin if Rami used those. Server event qbx_vehicles:server:vehicleSaved(vehicleId); hooks via exports.qbx_vehicles:registerHook('createPlayerVehicle'|'changeVehicleOwner', fn). Required by qbx_garages."
     },
     "qbx_garages": {
       "repo": "https://github.com/Qbox-project/qbx_garages",
@@ -89,17 +99,17 @@
       "date": "2026-09-26T03:15:06+02:00",
       "license": "GPL-3.0-only",
       "mode": "REUSE",
-      "notes": "HEAD of main (recipe installs main; tag v1.1.4 is 20 commits behind). exports.qbx_garages:registerHook('parkVehicle'|'spawnVehicle'|'spawnedVehicle', fn) covers task 3.4 without a patch."
+      "notes": "HEAD of main = what qbox.yaml installs (237-240); qbox-lean/qbox-stable install releases/latest = tag v1.1.4 (1ff6effc7bff74aa56f8a66d3201419901eda4a0, 2024-11-11, 20 commits behind): re-pin if Rami used those. exports.qbx_garages:registerHook('parkVehicle'|'spawnVehicle'|'spawnedVehicle', fn) covers task 3.4 without a patch."
     },
     "evidences": {
       "repo": "https://github.com/noobsystems/evidences",
       "commit": "0d15876e9a08fd89976ffd64acc5b1338558d92e",
       "date": "2026-08-18T21:33:01+02:00",
       "license": "GPL-3.0-or-later",
-      "mode": "REUSE",
+      "mode": "PATCH",
       "tag": "v1.3.1",
       "release": "https://github.com/noobsystems/evidences/releases/download/v1.3.1/evidences.zip",
-      "notes": "Tag v1.3.1 = HEAD of main. Release zip is the documented install (html/dui/laptop/dist is built, not in git); item images: releases/download/v1.3.1/item_images.zip; items from .github/setup/en_items.lua go into ox_inventory data/items.lua. No sv locale upstream. Works with upstream ox_target (the noobsystems fork is only recommended)."
+      "notes": "Tag v1.3.1 = HEAD of main. Release zip is the documented install (html/dui/laptop/dist is built, not in git, so the [upstream] checkout cannot run the laptop UI); item images: releases/download/v1.3.1/item_images.zip; items from .github/setup/en_items.lua go into ox_inventory data/items.lua. No sv locale upstream. Works with upstream ox_target (the noobsystems fork is only recommended). PATCH (task 4.2, Decision 5): net evidences:syncEvidence runs any evidence method with client arguments and no permission check, incl. atItem/removeFromItem on any inventory (server/evidences/api.lua:50-59), and collect copies client metadata over the item (server/evidences/actions.lua:61-75, 92-94), so C16's item_uid is forgeable until patched: whitelist methods, atItem/removeFromItem only on inventory == source, strip reserved keys, remove.fun only removeFrom*."
     },
     "ps-dispatch": {
       "repo": "https://github.com/Project-Sloth/ps-dispatch",
@@ -107,7 +117,7 @@
       "date": "2026-08-12T18:21:40-04:00",
       "license": "GPL-3.0-only",
       "mode": "PATCH",
-      "notes": "HEAD of main = tag 3.0.0 (8de73dd) + a README-only commit; no release zip (html/ is committed). Qbox support is through qbx_core's qb-core bridge. fxmanifest hard-includes @PolyZone files that the code never uses (lib.zones): install PolyZone or patch those 3 lines. lsn-radar is not referenced by any code (optional). Patch: TriggerEvent('fredpd:alertCreated', data) in server/main.lua before broadcastCall (line 335) and a broadcast/keybind switch (no NUI-off config flag exists)."
+      "notes": "HEAD of main = tag 3.0.0 (8de73dd) + a README-only commit; no release zip (html/ is committed). Qbox support is through qbx_core's qb-core bridge. fxmanifest hard-includes @PolyZone files that the code never uses (lib.zones): install PolyZone or patch those 3 lines. lsn-radar is not referenced by any code (optional). Patch: TriggerEvent('fredpd:dispatch:incoming', data, src) (contracts C13) in server/main.lua before broadcastCall (line 335) and a broadcast/keybind switch (no NUI-off config flag exists)."
     },
     "screenshot-basic": {
       "repo": "https://github.com/citizenfx/screenshot-basic",

@@ -51,8 +51,10 @@ Additions (additive, no contract change needed):
 
 Events: client `fredpd:client:grantsChanged(set)` (contract). New server-local events other modules may listen to:
 `fredpd:grantsChanged(src)` after every cache change, `fredpd:officerChanged(citizenid)` after a name push or a new
-callsign, `fredpd:devtools:fakeUnits(units|nil)` per fake-unit tick. `fredpd:rulesChanged` is consumed (server-only:
-`AddEventHandler`, and a player source is ignored with a warning).
+callsign, `fredpd:devtools:fakeUnits(units|nil)` per fake-unit tick. `fredpd:rulesChanged` is produced by http.js
+(`emit`, server-local) for a signed `POST /rules` and may also be fired by another server resource with
+`TriggerEvent`; canview.lua consumes it (server-only: `AddEventHandler`, and a player source is ignored with a
+warning).
 
 ## HTTP bridge (`server/http.js`)
 
@@ -74,11 +76,24 @@ callsign, `fredpd:devtools:fakeUnits(units|nil)` per fake-unit tick. `fredpd:rul
   400 `bad_json` and any other key is 400 `invalid_body` (`unknown key …`). This keeps a captured `GET /ping`
   signature (empty body) or a `/grants` / `/officer` body from being reused as "recompute everyone" (§C5 does not
   sign the path). **The service must send `{}`, not an empty body, to recompute everyone.**
+- **`POST /rules` (§C6):** body exactly `{}`: an empty body or non-object JSON is 400 `bad_json`, any key is 400
+  `invalid_body` (`unknown key …`), so no other route's body or a GET signature is accepted. It fires the
+  server-local event `fredpd:rulesChanged` with FiveM's JS `emit` (= `TriggerEvent`; Lua handlers then see
+  `source == ''`, never a player id) and answers `{ ok: true }` at once: the reload runs in canview.lua's own
+  thread, so the answer means "reload started", not "rules loaded" (the console then prints `loaded N visibility
+  rules`). Not memoised, like `/recompute`: two rule edits in one second sign identically and both must reload.
+  Replay within 60 s (or a captured `/recompute {}`, which signs the same body) only costs an extra reload. The
+  service client is `fx.pushRulesChanged()` (docs/modules/service.md).
+- **Info log lines (console, for the Phase 1 checklist):** one line per accepted push: `grants pushed for discord
+  <id>: <n> grant(s), applied to <m> player(s)`, `grant recompute for <n discord id(s) | everyone online>: <m>
+  player(s) re-fetching`, `officer name for discord <id> is now "<name>" (<m> officer character(s))` (JSON-quoted, so control
+  characters cannot forge log lines) and `visibility rules changed: reloading`. Pushes are rare (role or name
+  changes, service start, permission saves), so this is not per-request noise; rejections stay throttled.
 - Rejected requests (401) are logged at most once per 10 s with a count of the suppressed ones: the routes are on the
   public game port, so an unauthenticated client must not be able to flood the console.
 - GET is answered without waiting for a body (signed with the empty string, §C5).
 - Responses: `/ping` `{ ok, players }`, `/grants` `{ ok, applied }`, `/recompute` `{ ok, scheduled }`, `/officer`
-  `{ ok, updated }`. The Lua exports it calls never yield; DB/network work runs in its own Lua thread.
+  `{ ok, updated }`, `/rules` `{ ok }`. The Lua exports it calls never yield; DB/network work runs in its own Lua thread.
 - Secret: convar `fredpd_hmac_secret`, ≥ 32 chars and not a known placeholder (`change_me`/`changeme`,
   `placeholder`, `your_secret`, one repeated character), else an error is logged, every route answers 503 and
   `signedFetch` calls back `(0, '{"error":"bridge_disabled"}')`. `server.cfg.example` ships `"CHANGE_ME"`, which is
@@ -90,7 +105,20 @@ callsign, `fredpd:devtools:fakeUnits(units|nil)` per fake-unit tick. `fredpd:rul
   (timer + AbortController) for both transports: global `fetch` (hence `node_version '22'`) and the `node:http(s)`
   fallback, which is aborted by the same signal (not a socket idle timeout, so a trickling peer cannot hold it).
 - The file is structured as pure factories (`createHandler`, `createSignedFetch`, `createBridge`) plus a few lines
-  that wire the FiveM globals, so the test evaluates it in a `vm` context with mocked globals.
+  that wire the FiveM globals (`SetHttpHandler`, `GetConvar`, `exports`, `emit`, …), so the test evaluates it in a
+  `vm` context with mocked globals.
+
+## Visibility rules (`server/canview.lua`)
+
+- Loaded once after the migrations (`MySQL.ready`) and again on every `fredpd:rulesChanged` (`Core.async`, one-shot
+  thread). A failed query keeps the previous rules; no rules at all means every record is `none` (fail closed).
+- **Load tickets:** each load takes a ticket; a load whose query finishes after a newer load was already applied is
+  discarded (`discarded an overtaken visibility rules load`), so two quick rule edits can never leave the older rule
+  set active. Verified outside the game with coroutines that finish out of order (a scratch script, not in the suite:
+  `tests/lua/` is not owned by this task; suggested for `core_canview_test.lua`).
+- **Source guard:** `tonumber(source) > 0` (a player) → ignored with a warning; `''`/nil/0 (server-local emit,
+  console) → reload. Belt and braces: `AddEventHandler` without `RegisterNetEvent` already makes FXServer drop a
+  client's `TriggerServerEvent` ("not safe for net"). Covered by `core_canview_test.lua` (source `''`, nil, 12).
 
 ## Grants runtime (`server/perms.lua`)
 
@@ -119,6 +147,8 @@ callsign, `fredpd:devtools:fakeUnits(units|nil)` per fake-unit tick. `fredpd:rul
   parameter array (a Lua array with nil holes does not reach oxmysql as an array). `buildInsert(tbl, cols, rows,
   update, touch)`: with `touch = 'updated_at'` the upsert maintains that column, moving it to `UTC_TIMESTAMP()` only
   when an `update` column really changes (docs/modules/db.md "Time zones"); mirrors and the units sync use it.
+- `Core.getPlayerData(src)` always asks `exports.qbx_core:GetPlayer(src)`, so the actor is never taken from the
+  client or a stale cache (§4.6).
 
 ## Timestamps (`shared/time.lua`, docs/contracts.md §C7/§C12)
 
@@ -129,14 +159,13 @@ callsign, `fredpd:devtools:fakeUnits(units|nil)` per fake-unit tick. `fredpd:rul
   FXServer host's local zone (1–2 h off on a Stockholm host). `Time.toIsoUtc` rejects such numbers with that
   explanation; it also normalises `YYYY-MM-DD HH:MM:SS` text (e.g. from `DATE_FORMAT(…, '%Y-%m-%d %H:%i:%s')`).
 - `Time.toDatetime(iso)` binds a wire timestamp into a DATETIME parameter; `Time.toEpoch(v)` compares with
-  `os.time()`; `Time.nowIso()` is `os.date('!…')` (UTC, zone-independent).
+  `os.time()`; `Time.nowIso()` is `os.date('!…')` (UTC, zone-independent). Never `UNIX_TIMESTAMP(col)` or
+  `FROM_UNIXTIME(?)` in SQL (they convert through the session zone); see docs/modules/db.md "Time zones", Epochs.
 - No existing core read exposes a DATETIME column yet (officers, perms cache, mirror and rules select none); the
   audit archive cutoff is computed with `UTC_TIMESTAMP()` and logged in the audit meta as ISO UTC.
 - `/fredpd_selftest` adds a `time` suite: pure checks plus, in game, `isoSelect(UTC_TIMESTAMP())` through oxmysql
   compared with the Lua UTC clock (must be a string, within 60 s) and the session zone printed. UNVERIFIED until run
   on FXServer.
-- `Core.getPlayerData(src)` always asks `exports.qbx_core:GetPlayer(src)`, so the actor is never taken from the
-  client or a stale cache (§4.6).
 
 ## Search mirrors (`server/mirror.lua`, task 1.4)
 
@@ -189,12 +218,11 @@ callsign, `fredpd:devtools:fakeUnits(units|nil)` per fake-unit tick. `fredpd:rul
   (`WHERE discord_id <> ?`, so affectedRows means "changed" with FOUND_ROWS too) and audited as `officer.relink`.
   Citizenids longer than the 50-character column are refused (INSERT IGNORE would truncate the key).
 - `fredpd_units` is upserted from `config/units.json` at start; codes no longer in the config get `active = 0`.
-- **Audit exemption (needs the contract owner):** CLAUDE.md says every `fredpd_*` write is audited. These are not
-  audited per row, because they are system-maintained caches of data whose change is audited at its source:
-  `fredpd_grant_cache` and `fredpd_identities` (the service audits `perms.update`), `fredpd_persons` /
-  `fredpd_vehicles_idx` mirror upserts (qbx is the source; backfill and seeding write one row each),
-  `fredpd_units` (a copy of `config/units.json`). The exemption should be recorded in CLAUDE.md or
-  docs/contracts.md §C7; this module cannot edit either, so it stays an open deviation until the orchestrator does.
+- **Audit exemption:** docs/contracts.md §C7 now exempts `fredpd_grant_cache`, `fredpd_identities` (last_seen),
+  `fredpd_persons` and `fredpd_vehicles_idx`, which covers the per-row writes here (the service audits
+  `perms.update`; backfill and seeding write one audit row each). Two writes are still outside the §C7 list (see
+  open question 6): `fredpd_identities.license` / `last_citizenid` (written when a character loads, not only
+  `last_seen`) and `fredpd_units` (a copy of `config/units.json`, upserted at start).
 
 ## Audit (`server/audit.lua`)
 
@@ -238,7 +266,9 @@ production (`server.cfg.example` has it commented out).
 
 - `pnpm exec vitest run --project resources` → `fredpd_core/test/http.test.ts`: all HMAC vectors on
   `verifySignature` and through the handler, every route and status, duplicate suppression on `/grants` and
-  `/officer` only (identical `/recompute` and `/ping` both run), the `/recompute` body rules, rejection-log
+  `/officer` only (identical `/recompute`, `/rules` and `/ping` all run), the `/recompute` body rules, `/rules`
+  (exactly `{}`, other routes' bodies and a GET signature refused, one `emit('fredpd:rulesChanged')`, 401/405/503,
+  an `emit` that throws → 500 and a retry runs), the info log lines, rejection-log
   throttling, size limits, disabled bridge incl. placeholder secrets, signedFetch signing/timeout/network/fallback
   over a real local `node:http` server incl. a trickling peer cut off at the deadline. **It is `.ts`, not `.js`:**
   Vitest 5 refuses `require('vitest')` and the ESLint block for `resources/**/*.js` is CommonJS, so an ESM `.js`
@@ -260,10 +290,9 @@ production (`server.cfg.example` has it commented out).
 
 ## Open questions
 
-1. There is no route for the portal to tell FXServer that visibility rules changed, so `fredpd:rulesChanged` has no
-   producer and rule edits reach FXServer only on restart. Suggest adding `POST /rules` (HMAC) to §C6; http.js then
-   routes it to a Lua export that runs `Core.async(CanView.loadRules)`. Until then: **restart fredpd_core after
-   editing visibility rules** (belongs in `docs/test-phase-1.md`, not owned by this module).
+1. Resolved: `POST /rules` (§C6) is built (http.js emits `fredpd:rulesChanged`; service `fx.pushRulesChanged()`).
+   There is no rule editor yet, so nothing calls it; until the Ledning rules page exists, rules are edited in the
+   database and applied with the signed curl call in `docs/test-phase-1.md` step 10 (or a fredpd_core restart).
 2. `files { 'migrations/*' }` (as specified) ships the SQL files to every client; `db.lua` reads them with
    `LoadResourceFile` on the server, which does not need `files`. Consider dropping it.
 3. The derived personnummer is FredPD-only. If an ID-card script is added, store its number in
@@ -271,5 +300,10 @@ production (`server.cfg.example` has it commented out).
 4. Should `getOfficer` fall back to anything when a character has no `fredpd_officers` row (currently nil)?
 5. §C5 signs `ts + "." + body` only, not method or path. `/recompute` now refuses an empty body and unknown keys,
    so a captured `GET /ping` signature or `/grants` / `/officer` body is no longer accepted there; what remains is
-   that a captured `/recompute` body can be replayed within 60 s (an extra reload). Still suggest signing
+   that a captured `/recompute` body can be replayed within 60 s (an extra reload), and `/rules {}` and
+   `/recompute {}` sign the same bytes, so either can be replayed as the other within 60 s (an extra rules reload or
+   an extra grant re-fetch for everyone online; no state changes). Still suggest signing
    `ts + "." + METHOD + " " + path + "." + body` in a contract revision (both sides + fixtures).
+6. §C7's audit-exempt list lacks `fredpd_units` (system copy of `config/units.json`) and names only `last_seen` of
+   `fredpd_identities`, while perms.lua also writes `license` and `last_citizenid` there (a cache of which character
+   a Discord user plays, whose source is qbx). Suggest adding both to §C7 (contract owner).

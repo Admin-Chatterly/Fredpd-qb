@@ -31,10 +31,11 @@ interface FakeReq {
 }
 type Handler = (req: FakeReq, res: FakeRes) => void;
 type SignedFetch = (method: string, path: string, body: unknown, cb: (status: number, text: string) => void) => void;
-interface HandlerDeps { secret: string | null; now(): number; callLua: Fn; playerCount(): number; log(level: string, msg: string): void }
+interface HandlerDeps { secret: string | null; now(): number; callLua: Fn; emitEvent?: Fn; playerCount(): number; log(level: string, msg: string): void }
 interface HttpApi {
   MAX_BODY_BYTES: number;
   REJECT_LOG_INTERVAL_S: number;
+  RULES_CHANGED_EVENT: string;
   secretProblem(secret: unknown): string | null;
   signBody(secret: string, ts: string | number, rawBody: string): string;
   verifySignature(o: { secret: string; ts: string; sig: string; rawBody: string; nowSeconds: number }): VerifyResult;
@@ -47,6 +48,8 @@ interface Loaded {
   handler: Handler | undefined;
   registered: Record<string, Fn>;
   lua: { applyGrants: ReturnType<typeof vi.fn>; recomputeGrants: ReturnType<typeof vi.fn>; setOfficerIdentity: ReturnType<typeof vi.fn> };
+  /** The FiveM `emit` global (server-local TriggerEvent). */
+  emit: ReturnType<typeof vi.fn>;
   logs: string[];
 }
 
@@ -60,6 +63,7 @@ function load(opts: { secret?: string; serviceUrl?: string; fetch?: Fn } = {}): 
     setOfficerIdentity: vi.fn((): unknown => 1),
   };
   const exportsFn = Object.assign((name: string, fn: Fn) => { registered[name] = fn; }, { fredpd_core: lua });
+  const emit = vi.fn((..._args: unknown[]): unknown => undefined);
   const logs: string[] = [];
   const convars: Record<string, string> = {
     fredpd_hmac_secret: opts.secret ?? SECRET,
@@ -76,10 +80,11 @@ function load(opts: { secret?: string; serviceUrl?: string; fetch?: Fn } = {}): 
     GetCurrentResourceName: () => 'fredpd_core',
     GetNumPlayerIndices: () => 7,
     exports: exportsFn,
+    emit,
     fetch: opts.fetch,
   };
   vm.runInNewContext(readFileSync(HTTP_JS, 'utf8'), sandbox, { filename: HTTP_JS });
-  return { api: sandbox.module.exports as HttpApi, handler: handlers[0], registered, lua, logs };
+  return { api: sandbox.module.exports as HttpApi, handler: handlers[0], registered, lua, emit, logs };
 }
 
 interface Reply { status: number; headers: Record<string, string>; json: Record<string, unknown>; dataHandlerUsed: boolean }
@@ -162,9 +167,10 @@ describe('http.js routes (SetHttpHandler)', () => {
   });
 
   it('POST /grants calls applyGrants(discordId, grants)', async () => {
-    const { handler, lua } = load();
+    const { handler, lua, logs } = load();
     const reply = await signed(handler!, 'POST', '/grants', { discordId: DISCORD, grants: GRANTS });
     expect(reply).toMatchObject({ status: 200, json: { ok: true, applied: 1 } });
+    expect(logs).toContain(`info [fredpd_core:http] grants pushed for discord ${DISCORD}: 3 grant(s), applied to 1 player(s)`);
     expect(lua.applyGrants).toHaveBeenCalledTimes(1);
     const [id, set] = lua.applyGrants.mock.calls[0] as unknown[];
     expect(id).toBe(DISCORD);
@@ -378,11 +384,13 @@ describe('http.js routes (SetHttpHandler)', () => {
   });
 
   it('POST /recompute passes the ids, or null for everyone ({})', async () => {
-    const { handler, lua } = load();
+    const { handler, lua, logs } = load();
     expect((await signed(handler!, 'POST', '/recompute', { discordIds: [DISCORD, '42'] })).json).toEqual({ ok: true, scheduled: 2 });
     expect(lua.recomputeGrants).toHaveBeenLastCalledWith([DISCORD, '42']);
+    expect(logs).toContain('info [fredpd_core:http] grant recompute for 2 discord id(s): 2 player(s) re-fetching');
     await signed(handler!, 'POST', '/recompute', {});
     expect(lua.recomputeGrants).toHaveBeenLastCalledWith(null);
+    expect(logs).toContain('info [fredpd_core:http] grant recompute for everyone online: 2 player(s) re-fetching');
     await signed(handler!, 'POST', '/recompute', { discordIds: null });
     expect(lua.recomputeGrants).toHaveBeenLastCalledWith(null);
     expect((await signed(handler!, 'POST', '/recompute', { discordIds: ['x'] })).status).toBe(400);
@@ -401,10 +409,11 @@ describe('http.js routes (SetHttpHandler)', () => {
   });
 
   it('POST /officer calls setOfficerIdentity with a trimmed name', async () => {
-    const { handler, lua } = load();
+    const { handler, lua, logs } = load();
     const reply = await signed(handler!, 'POST', '/officer', { discordId: DISCORD, displayName: '  Anna B. ', avatarUrl: null });
     expect(reply).toMatchObject({ status: 200, json: { ok: true, updated: 1 } });
     expect(lua.setOfficerIdentity).toHaveBeenCalledWith(DISCORD, 'Anna B.', null);
+    expect(logs).toContain(`info [fredpd_core:http] officer name for discord ${DISCORD} is now "Anna B." (1 officer character(s))`);
     await signed(handler!, 'POST', '/officer', { discordId: DISCORD, displayName: 'Erik', avatarUrl: 'http://x/a.png' });
     expect(lua.setOfficerIdentity).toHaveBeenLastCalledWith(DISCORD, 'Erik', 'http://x/a.png');
     expect((await signed(handler!, 'POST', '/officer', { discordId: DISCORD, displayName: ' ' })).status).toBe(400);
@@ -420,6 +429,89 @@ describe('http.js routes (SetHttpHandler)', () => {
     lua.setOfficerIdentity.mockReturnValueOnce(false);
     const reply = await signed(handler!, 'POST', '/officer', { discordId: DISCORD, displayName: 'Anna' });
     expect(reply).toMatchObject({ status: 400, json: { error: 'invalid_body' } });
+  });
+});
+
+describe('http.js POST /rules (§C6)', () => {
+  it('a signed {} emits fredpd:rulesChanged once (server-local emit) and answers { ok: true }', async () => {
+    const { handler, emit, lua, api, logs } = load();
+    const reply = await signed(handler!, 'POST', '/rules', {});
+    expect(reply).toMatchObject({ status: 200, json: { ok: true } });
+    expect(reply.json).toEqual({ ok: true });
+    expect(logs).toContain('info [fredpd_core:http] visibility rules changed: reloading');
+    expect(api.RULES_CHANGED_EVENT).toBe('fredpd:rulesChanged');
+    expect(emit).toHaveBeenCalledTimes(1);
+    expect(emit).toHaveBeenCalledWith('fredpd:rulesChanged');
+    // Nothing else is touched: no grants, no recompute.
+    expect(lua.applyGrants).not.toHaveBeenCalled();
+    expect(lua.recomputeGrants).not.toHaveBeenCalled();
+  });
+
+  it('the body must be exactly {}: empty or non-object -> 400 bad_json, any key -> 400 invalid_body', async () => {
+    const { handler, emit } = load();
+    expect((await signed(handler!, 'POST', '/rules')).json).toEqual({ error: 'bad_json' });
+    expect((await signed(handler!, 'POST', '/rules', '[]')).json).toEqual({ error: 'bad_json' });
+    expect((await signed(handler!, 'POST', '/rules', 'null')).json).toEqual({ error: 'bad_json' });
+    expect((await signed(handler!, 'POST', '/rules', '"{}"')).json).toEqual({ error: 'bad_json' });
+    expect(await signed(handler!, 'POST', '/rules', { reload: true })).toMatchObject({ status: 400, json: { error: 'invalid_body', detail: 'unknown key reload' } });
+    // Bodies signed for the other routes are refused here too (§C5 does not sign the path).
+    for (const b of [{ discordIds: [DISCORD] }, { discordIds: null }, { discordId: DISCORD, grants: GRANTS }, { discordId: DISCORD, displayName: 'A', avatarUrl: null }]) {
+      const reply = await signed(handler!, 'POST', '/rules', b);
+      expect(reply.status, JSON.stringify(b)).toBe(400);
+      expect(reply.json.error).toBe('invalid_body');
+    }
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('whitespace around {} is still the empty object', async () => {
+    const { handler, emit } = load();
+    expect((await signed(handler!, 'POST', '/rules', ' { } ')).status).toBe(200);
+    expect(emit).toHaveBeenCalledTimes(1);
+  });
+
+  it('unsigned, badly signed or stale -> 401 and nothing is emitted', async () => {
+    const { handler, emit } = load();
+    expect((await request(handler!, { method: 'POST', path: '/rules', body: '{}' })).status).toBe(401);
+    const forged = sign('{}', nowSeconds(), 'another-secret-that-is-long-enough-0000');
+    expect((await request(handler!, { method: 'POST', path: '/rules', body: '{}', headers: forged })).status).toBe(401);
+    expect((await request(handler!, { method: 'POST', path: '/rules', body: '{}', headers: sign('{}', nowSeconds() - 120) })).status).toBe(401);
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('GET /rules -> 405 with Allow: POST; a GET /ping signature reused on /rules -> 400', async () => {
+    const { handler, emit } = load();
+    expect(await signed(handler!, 'GET', '/rules')).toMatchObject({ status: 405, headers: { Allow: 'POST' } });
+    const headers = sign('');
+    expect((await request(handler!, { method: 'GET', path: '/ping', headers })).status).toBe(200);
+    expect(await request(handler!, { method: 'POST', path: '/rules', headers })).toMatchObject({ status: 400, json: { error: 'bad_json' } });
+    expect(emit).not.toHaveBeenCalled();
+  });
+
+  it('two identical signed /rules in the same second both reload (not memoised)', async () => {
+    const { handler, emit } = load();
+    const headers = sign('{}');
+    const first = await request(handler!, { method: 'POST', path: '/rules', body: '{}', headers });
+    const second = await request(handler!, { method: 'POST', path: '/rules', body: '{}', headers });
+    expect(first.status).toBe(200);
+    expect(second).toMatchObject({ status: 200, json: { ok: true } });
+    expect(second.headers['X-FredPD-Duplicate']).toBeUndefined();
+    expect(emit).toHaveBeenCalledTimes(2);
+  });
+
+  it('an emit that throws -> 500 internal (logged), and a retry runs again', async () => {
+    const { handler, emit, logs } = load();
+    emit.mockImplementationOnce(() => { throw new Error('no handler runtime'); });
+    const headers = sign('{}');
+    expect(await request(handler!, { method: 'POST', path: '/rules', body: '{}', headers })).toMatchObject({ status: 500, json: { error: 'internal' } });
+    expect(logs.some((l) => l.startsWith('error') && l.includes('no handler runtime'))).toBe(true);
+    expect((await request(handler!, { method: 'POST', path: '/rules', body: '{}', headers })).status).toBe(200);
+    expect(emit).toHaveBeenCalledTimes(2);
+  });
+
+  it('bridge disabled -> 503 and nothing is emitted', async () => {
+    const { handler, emit } = load({ secret: 'CHANGE_ME' });
+    expect((await request(handler!, { method: 'POST', path: '/rules', body: '{}', headers: sign('{}', nowSeconds(), 'CHANGE_ME') })).status).toBe(503);
+    expect(emit).not.toHaveBeenCalled();
   });
 });
 

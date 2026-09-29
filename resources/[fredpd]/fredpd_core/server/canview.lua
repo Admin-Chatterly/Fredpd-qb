@@ -1,6 +1,7 @@
 -- SPDX-License-Identifier: GPL-3.0-only
 -- Server wrapper for record visibility (docs/contracts.md §C3). The rules live in fredpd_visibility_rules; they are
--- loaded after the migrations and again whenever a server-side `fredpd:rulesChanged` event fires. The evaluation
+-- loaded after the migrations and again whenever a server-side `fredpd:rulesChanged` event fires (server/http.js emits
+-- it for the signed `POST /fredpd_core/rules` the service sends after a rule edit, §C6). The evaluation
 -- itself is shared/canview.lua (same fixtures as the TS port). The viewer is always built on the server: citizenid
 -- from qbx_core, tier/units/grants from the grant cache. No rules loaded -> every record is 'none' (fail closed).
 
@@ -11,6 +12,9 @@ local Perms = require 'server.perms'
 local M = {}
 
 local rules = {}
+-- Every load takes a ticket. Two rule edits in quick succession start two loads whose queries may finish out of
+-- order; a load that finishes after a newer one was applied is discarded, so older rules never win.
+local loadTicket, appliedTicket = 0, 0
 
 M.RULES_SQL = 'SELECT id, record_type, level, record_status, viewer_condition, condition_value, result, priority, '
     .. 'enabled FROM fredpd_visibility_rules'
@@ -40,15 +44,23 @@ function M.getRules()
     return rules
 end
 
---- Load the rules from the database (awaits). Keeps the previous rules if the query fails.
+--- Load the rules from the database (awaits). Keeps the previous rules if the query fails, and discards the result
+--- of a load that a newer load has already overtaken (returns true: the rules in use are newer).
 function M.loadRules()
+    loadTicket = loadTicket + 1
+    local ticket = loadTicket
     local ok, rows = pcall(MySQL.query.await, M.RULES_SQL)
     if not ok or type(rows) ~= 'table' then
         Core.error('could not load fredpd_visibility_rules: %s', tostring(rows))
         return false
     end
+    if ticket < appliedTicket then
+        Core.info('discarded an overtaken visibility rules load')
+        return true
+    end
     local list = {}
     for i, row in ipairs(rows) do list[i] = M.rowToRule(row) end
+    appliedTicket = ticket
     rules = list
     Core.info('loaded %d visibility rules', #list)
     return true
@@ -88,8 +100,10 @@ function M.register()
     exports('canView', M.canView)
     exports('canViewMany', M.canViewMany)
 
-    -- Server-only: registered with AddEventHandler (not RegisterNetEvent), so clients cannot trigger it; the source
-    -- check is a second guard in case a player id ever reaches here.
+    -- Server-only: registered with AddEventHandler (not RegisterNetEvent), so FXServer drops a client's
+    -- TriggerServerEvent of it ("not safe for net"). The source check is a second guard in case a player id ever
+    -- reaches here: a server-local emit (http.js, another resource's TriggerEvent) arrives with source '' (nil after
+    -- tonumber), a net event with the player's id (> 0).
     AddEventHandler('fredpd:rulesChanged', function()
         local src = tonumber(source)
         if src and src > 0 then
