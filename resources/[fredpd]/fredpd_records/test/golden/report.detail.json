@@ -1,0 +1,32 @@
+{
+  "author": {
+    "callsign": "IGV-07",
+    "citizenid": "REC10001",
+    "displayName": "Anna Patrull",
+    "unit": "igv"
+  },
+  "body": "# Händelse\n- Blåste 0,8 promille",
+  "caseId": 2,
+  "caseNumber": "K-9-26",
+  "charges": [
+    {
+      "citizenid": "RP502",
+      "class": "bot",
+      "code": "BRB-004",
+      "fine": 6000,
+      "id": 1,
+      "jailMinutes": 0,
+      "personName": "Omar Nilsson",
+      "quantity": 1,
+      "status": "issued",
+      "title": "Ringa misshandel"
+    }
+  ],
+  "createdAt": "2026-09-05T20:00:00Z",
+  "editable": true,
+  "id": 1,
+  "level": 0,
+  "reportNumber": "K-9-26/1",
+  "title": "Rapport ringa misshandel",
+  "updatedAt": "2026-09-05T20:00:00Z"
+}

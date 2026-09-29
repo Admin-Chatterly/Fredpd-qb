@@ -8,7 +8,7 @@ import { MemoryRouter } from 'react-router';
 import { QueryClientProvider } from '@tanstack/react-query';
 import { vi } from 'vitest';
 import { I18nProvider } from '@fredpd/ui';
-import type { MdtActionName, OfficerRef } from '@fredpd/types/mdt';
+import type { OfficerRef } from '@fredpd/types/mdt';
 import { i18n } from '../src/i18n';
 import { createQueryClient } from '../src/queryClient';
 import { TabletProvider, useTablet } from '../src/tablet/TabletContext';
@@ -19,6 +19,8 @@ import { toLuaWire } from '../src/api/wire';
 import { createMockDb } from '../src/mock/data';
 import type { MockDb } from '../src/mock/data';
 import { createMockHandlers } from '../src/mock/handlers';
+import { createSectionMocks } from '../src/mock/sections';
+import type { TabletActionName } from '../src/api/actions';
 
 export const ME: OfficerRef = { citizenid: 'DEV00001', displayName: 'Anna Berg', callsign: 'IGV-07', unit: 'igv' };
 export const FIXED_NOW = Date.parse('2026-09-29T10:00:00Z');
@@ -73,10 +75,10 @@ export function renderAt(path: string, grants: string[] = ['mdt_page:*', ...ALL_
  */
 export function installMockRegister(opts: { tier?: 0 | 1 | 2; unit?: string | null } = {}) {
   const db: MockDb = createMockDb({ me: ME, tier: opts.tier ?? 1, unit: opts.unit === undefined ? 'igv' : opts.unit, now: () => FIXED_NOW });
-  const handlers = createMockHandlers(db);
-  const calls = vi.fn<(action: MdtActionName, input: unknown) => void>();
+  const handlers = { ...createMockHandlers(db), ...createSectionMocks(db) };
+  const calls = vi.fn<(action: TabletActionName, input: unknown) => void>();
   const unregister: (() => void)[] = [];
-  for (const action of Object.keys(handlers) as MdtActionName[]) {
+  for (const action of Object.keys(handlers) as TabletActionName[]) {
     const handler = handlers[action] as (input: unknown) => unknown;
     unregister.push(
       registerNuiMock(action, (input) => {

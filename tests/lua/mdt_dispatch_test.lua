@@ -2,7 +2,8 @@
 -- fredpd_mdt/server/dispatch.lua: the §C12 order (closed tablet -> unauthorized; unknown action / bad input ->
 -- validation; missing grant -> unauthorized; off duty -> unauthorized + reason; rate limit -> rate_limited), routing
 -- to the owning resource's export with the cleaned input and unwrapping { ok, data | error }, local handlers
--- (getHome, listTablets, setTabletRevoked, close), and the server/main.lua wiring (callbacks, close event, drop).
+-- (getHome, listTablets, setTabletRevoked, close), the server/main.lua wiring (callbacks, close event, drop), and the
+-- Phase 3/4/5/5b merges (DISPATCH/EVIDENCE/RECORDS/INTEL_ACTIONS: route, grant, limit class, unavailable paths).
 -- FiveM, fredpd_core, ox_inventory and the routed resources are mocked (fredpd_mdt/test/harness.lua).
 -- Run: lua5.4 tests/lua/run.lua mdt_dispatch
 local helper = require('helper')
@@ -135,7 +136,7 @@ tests['5 the Lua grant/route table mirrors the fixtures (= MDT/DISPATCH/EVIDENCE
     end)
 end
 
-tests['6 rate limits: lookups 500 ms, writes 2 s, reads 250 ms, per player per action'] = function(t)
+tests['6 rate limits: lookups 500 ms, writes 2 s, reads 500 ms, per player per action'] = function(t)
     H.with(function(env, mods)
         local D = mods['server.dispatch']
         H.openTablet(mods, 1)
@@ -160,7 +161,7 @@ tests['6 rate limits: lookups 500 ms, writes 2 s, reads 250 ms, per player per a
         -- reads
         local list = { action = 'listBolos', input = {} }
         t.eq(D.handle(1, list).error, nil)
-        env.now = env.now + 249
+        env.now = env.now + 499
         t.eq(D.handle(1, list), { error = 'rate_limited' })
         env.now = env.now + 1
         t.eq(D.handle(1, list).error, nil)
@@ -176,7 +177,7 @@ tests['7 routing: each action reaches its export with (src, cleaned input); data
         getVehicle = { 'fredpd_records', 'getVehicleSummary' }, checkPlate = { 'fredpd_bolo', 'plateCheck' },
         listBolos = { 'fredpd_bolo', 'listBolos' }, createBolo = { 'fredpd_bolo', 'createBolo' },
         resolveBolo = { 'fredpd_bolo', 'resolveBolo' }, listAlerts = { 'fredpd_dispatch', 'listAlerts' },
-        takeAlert = { 'fredpd_dispatch', 'takeAlert' }, leaveAlert = { 'fredpd_dispatch', 'leaveAlert' },
+        takeAlert = { 'fredpd_dispatch', 'assignSelf' }, leaveAlert = { 'fredpd_dispatch', 'leaveAlert' },
         closeAlert = { 'fredpd_dispatch', 'closeAlert' }, getUnits = { 'fredpd_dispatch', 'getUnits' },
         listEvidence = { 'fredpd_forensics', 'listEvidence' }, getEvidence = { 'fredpd_forensics', 'getEvidence' },
         linkEvidence = { 'fredpd_forensics', 'linkEvidence' },
@@ -318,6 +319,167 @@ tests['12 terminal session: re-checked per action; leaving the vehicle force-clo
         env.now = env.now + 10000
         H.openTablet(mods, 1)
         t.eq(D.handle(1, { action = 'search', input = { query = 'Anna' } }), { routed = 'fredpd_records:search' })
+    end)
+end
+
+-- RECORDS_ACTIONS (§C14) and INTEL_ACTIONS (§C15): export = action name; limit class per action.
+local PHASE5 = {
+    fredpd_records = {
+        listCases = 'read', getCase = 'read', createCase = 'write', updateCase = 'write', assignCase = 'write',
+        unassignCase = 'write', addCaseSubject = 'write', closeCase = 'write', getReport = 'read',
+        createReport = 'write', saveReport = 'write', saveReportDraft = 'draft', listReportTemplates = 'read',
+        listCharges = 'read', applyCharges = 'write', issueFine = 'write',
+    },
+    fredpd_intel = {
+        listSources = 'read', getSource = 'read', createSource = 'write', updateSource = 'write',
+        listIntelReports = 'read', getIntelReport = 'read', createIntelReport = 'write', searchEntities = 'read',
+        ensureEntity = 'write', getEntity = 'read', addLink = 'write', getGraph = 'read', listMissions = 'read',
+        getMission = 'read', createMission = 'write', addMissionMember = 'write', closeMission = 'write',
+    },
+}
+
+--- Every valid fixture sample of an action (so nested/union/array shapes are routed too).
+local function allValid(action)
+    local out = {}
+    for _, s in ipairs(FIX.shapes[FIX.actions[action].shape].valid) do out[#out + 1] = H.copy(s.input) end
+    return out
+end
+
+tests['13 RECORDS/INTEL actions: routed to the same-named export with (src, cleaned input) and their limit class'] = function(t)
+    H.with(function(env, mods)
+        local D, Config = mods['server.dispatch'], mods['config']
+        H.openTablet(mods, 2)
+        env.players[2].grants['perm:*'] = true
+        local n = 0
+        for res, actions in pairs(PHASE5) do
+            for action, limit in pairs(actions) do
+                t.eq(D.ACTIONS[action].route, { res, action }, action .. ' route')
+                t.eq(D.ACTIONS[action].limit, limit, action .. ' limit class')
+                for _, input in ipairs(allValid(action)) do
+                    env.now = env.now + 10000
+                    local before = #env.callsTo(res, action)
+                    t.eq(D.handle(2, { action = action, input = input }), { routed = res .. ':' .. action }, action)
+                    local calls = env.callsTo(res, action)
+                    t.eq(#calls, before + 1, action .. ' called once')
+                    t.eq(calls[#calls].src, 2)
+                    t.eq(calls[#calls].input, FIX.shapes[FIX.actions[action].shape].valid[#calls].output,
+                        action .. ' gets zod\'s cleaned value')
+                    n = n + 1
+                end
+                -- A second call inside the window is limited; after it, allowed again.
+                local input = allValid(action)[1]
+                t.eq(D.handle(2, { action = action, input = input }), { error = 'rate_limited' }, action .. ' limited')
+                env.now = env.now + Config.limits[limit] - 1
+                t.eq(D.handle(2, { action = action, input = input }), { error = 'rate_limited' }, action .. ' still limited')
+                env.now = env.now + 1
+                t.eq(D.handle(2, { action = action, input = input }).error, nil, action .. ' window over')
+            end
+        end
+        t.ok(n >= 60, 'routed every valid sample, got ' .. n)
+        t.eq(Config.limits.read, 500)
+        t.eq(Config.limits.write, 2000)
+        t.eq(Config.limits.draft, 5000)
+    end)
+end
+
+tests['14 RECORDS/INTEL grants: without its grant column an action is unauthorized and not routed'] = function(t)
+    H.with(function(env, mods)
+        local D = mods['server.dispatch']
+        H.openTablet(mods, 2)
+        local all = { ['mdt_page:search'] = true, ['mdt_page:cases'] = true, ['mdt_page:intel'] = true,
+            ['perm:cases.create'] = true, ['perm:charges.apply'] = true, ['perm:charges.fine'] = true,
+            ['perm:intel.read'] = true, ['perm:intel.handler'] = true, ['perm:intel.command'] = true }
+        for res, actions in pairs(PHASE5) do
+            for action in pairs(actions) do
+                local grant = FIX.actions[action].grant
+                env.players[2].grants = H.copy(all)
+                env.now = env.now + 10000
+                t.eq(D.handle(2, { action = action, input = allValid(action)[1] }), { routed = res .. ':' .. action },
+                    action .. ' allowed')
+                if grant then
+                    env.players[2].grants[grant[1] .. ':' .. grant[2]] = nil
+                    env.now = env.now + 10000
+                    local before = #env.calls
+                    t.eq(D.handle(2, { action = action, input = allValid(action)[1] }), { error = 'unauthorized' },
+                        action .. ' needs ' .. grant[1] .. ':' .. grant[2])
+                    t.eq(#env.calls, before, action .. ' not routed')
+                end
+            end
+        end
+        -- listCharges has no grant column but still needs duty.
+        env.players[2].grants = { ['mdt_page:search'] = true }
+        env.now = env.now + 10000
+        t.eq(D.handle(2, { action = 'listCharges', input = {} }), { routed = 'fredpd_records:listCharges' })
+        env.players[2].duty = false
+        env.now = env.now + 10000
+        t.eq(D.handle(2, { action = 'listCharges', input = {} }), { error = 'unauthorized', reason = 'off_duty' })
+    end)
+end
+
+tests['15 unavailable: stopped resource, missing export, raising export, malformed answer'] = function(t)
+    H.with(function(env, mods)
+        local D = mods['server.dispatch']
+        H.openTablet(mods, 2)
+        env.players[2].grants['perm:*'] = true
+        local function call(action, input)
+            env.now = env.now + 10000
+            return D.handle(2, { action = action, input = input })
+        end
+        for _, res in ipairs({ 'fredpd_records', 'fredpd_intel', 'fredpd_dispatch', 'fredpd_forensics' }) do
+            env.resources[res] = 'stopped'
+        end
+        local before = #env.calls
+        for _, action in ipairs({ 'createCase', 'getGraph', 'takeAlert', 'getEvidence', 'saveReportDraft' }) do
+            t.eq(call(action, allValid(action)[1]), { error = 'unavailable' }, action .. ' stopped')
+        end
+        t.eq(#env.calls, before, 'a stopped resource is never called')
+        env.resources.fredpd_records, env.resources.fredpd_intel = 'started', 'started'
+        -- An export the resource does not (yet) provide: FiveM raises "No such export" -> unavailable.
+        env.exports.fredpd_records.closeCase = nil
+        env.exports.fredpd_intel.closeMission = nil
+        t.eq(call('closeCase', { id = 1, resolution = 'Klar' }), { error = 'unavailable' }, 'missing records export')
+        t.eq(call('closeMission', { id = 1 }), { error = 'unavailable' }, 'missing intel export')
+        env.replies['fredpd_intel:addLink'] = function() error('deadlock', 0) end
+        t.eq(call('addLink', allValid('addLink')[1]), { error = 'unavailable' }, 'raise')
+        env.replies['fredpd_records:getCase'] = { data = {} }
+        t.eq(call('getCase', { id = 1 }), { error = 'unavailable' }, 'no ok field')
+        env.replies['fredpd_records:getCase'] = { ok = false, error = 'not_found' }
+        t.eq(call('getCase', { id = 1 }), { error = 'not_found' }, 'codes pass through')
+        local logged = {}
+        for _, l in ipairs(env.logs) do logged[#logged + 1] = l.msg end
+        local text = table.concat(logged, '\n')
+        t.ok(text:find('fredpd_intel is not started', 1, true), 'stopped logged')
+        t.ok(text:find('fredpd_records:closeCase failed', 1, true), 'missing export logged')
+    end)
+end
+
+tests['16 nested inputs: union, array defaults and refines are cleaned before routing'] = function(t)
+    H.with(function(env, mods)
+        local D = mods['server.dispatch']
+        H.openTablet(mods, 2)
+        env.players[2].grants['perm:*'] = true
+        local function last(res, fn)
+            local c = env.callsTo(res, fn)
+            return c[#c].input
+        end
+        env.now = env.now + 10000
+        D.handle(2, { action = 'addLink', input = { fromId = 1, to = { id = 2, label = 'x', type = 'person' },
+            type = ' känner ', extra = 1 } })
+        t.eq(last('fredpd_intel', 'addLink'), { fromId = 1, to = { id = 2 }, type = 'känner', confidence = 50, level = 1 })
+        env.now = env.now + 10000
+        D.handle(2, { action = 'applyCharges', input = { reportId = 3, citizenid = 'ABC1',
+            lines = { { code = 'BrB 8:1', junk = true }, { code = 'TF-2', quantity = 2 } } } })
+        t.eq(last('fredpd_records', 'applyCharges'), { reportId = 3, citizenid = 'ABC1',
+            lines = { { code = 'BrB 8:1', quantity = 1 }, { code = 'TF-2', quantity = 2 } } })
+        env.now = env.now + 10000
+        local before = #env.calls
+        t.eq(D.handle(2, { action = 'addCaseSubject', input = { id = 1, type = 'person', plate = 'ABC' } }),
+            { error = 'validation' }, 'refine')
+        t.eq(D.handle(2, { action = 'applyCharges', input = { reportId = 3, citizenid = 'ABC1', lines = {} } }),
+            { error = 'validation' }, 'empty lines')
+        t.eq(D.handle(2, { action = 'addLink', input = { fromId = 1, to = {}, type = 'känner' } }),
+            { error = 'validation' }, 'union: no option')
+        t.eq(#env.calls, before)
     end)
 end
 

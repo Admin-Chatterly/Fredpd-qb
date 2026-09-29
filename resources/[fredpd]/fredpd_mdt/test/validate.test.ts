@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // The tablet action inputs of docs/contracts.md §C12 exist twice: the zod schemas (packages/types/src/mdt.ts,
-// dispatch.ts, evidence.ts) used by the NUI and the portal, and the Lua mirror fredpd_mdt/shared/validate.lua used by
+// dispatch.ts, evidence.ts, records.ts, intel.ts) used by the NUI and the portal, and the Lua mirror fredpd_mdt/shared/validate.lua used by
 // the server dispatcher. Both are checked against packages/types/test/fixtures/mdt-inputs.fixtures.json (this file
 // for zod, tests/lua/mdt_validate_test.lua for Lua). On top of that, when lua5.4 is on PATH, a generated corpus of
-// ~675 edge-case inputs is run through both sides and every accept/refuse decision and cleaned value must agree.
+// ~1800 edge-case inputs is run through both sides and every accept/refuse decision and cleaned value must agree.
 import { spawnSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
@@ -12,6 +12,8 @@ import { describe, expect, it } from 'vitest';
 import { MDT_ACTIONS, TabletIssueInputSchema } from '../../../../packages/types/src/mdt';
 import { DISPATCH_ACTIONS } from '../../../../packages/types/src/dispatch';
 import { EVIDENCE_ACTIONS } from '../../../../packages/types/src/evidence';
+import { RECORDS_ACTIONS } from '../../../../packages/types/src/records';
+import { INTEL_ACTIONS } from '../../../../packages/types/src/intel';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const root = join(here, '..', '..', '..', '..');
@@ -27,7 +29,13 @@ interface Schema { safeParse(v: unknown): { success: boolean; data?: unknown } }
 interface ActionDef { input: unknown; grant: readonly [string, string] | null }
 
 const FIX = JSON.parse(readFileSync(join(root, 'packages/types/test/fixtures/mdt-inputs.fixtures.json'), 'utf8')) as Fixtures;
-const REGISTRY: Record<string, ActionDef> = { ...MDT_ACTIONS, ...DISPATCH_ACTIONS, ...EVIDENCE_ACTIONS };
+const REGISTRY: Record<string, ActionDef> = {
+  ...MDT_ACTIONS,
+  ...DISPATCH_ACTIONS,
+  ...EVIDENCE_ACTIONS,
+  ...RECORDS_ACTIONS,
+  ...INTEL_ACTIONS,
+};
 const EXTRA_SHAPES: Record<string, Schema> = { TabletIssueInput: TabletIssueInputSchema as Schema };
 
 /** Schema for a fixture shape: the input schema of every action that uses it (they must all agree), or an extra. */
@@ -40,7 +48,10 @@ function schemasFor(shape: string): Schema[] {
 }
 
 describe('mdt-inputs fixtures vs zod', () => {
-  it('cover exactly MDT_ACTIONS + DISPATCH_ACTIONS + EVIDENCE_ACTIONS with the same grant column', () => {
+  it('cover exactly MDT/DISPATCH/EVIDENCE/RECORDS/INTEL_ACTIONS with the same grant column', () => {
+    // No name may be defined by two registries (the spread above would hide it).
+    const all = [MDT_ACTIONS, DISPATCH_ACTIONS, EVIDENCE_ACTIONS, RECORDS_ACTIONS, INTEL_ACTIONS].flatMap((r) => Object.keys(r));
+    expect(new Set(all).size).toBe(all.length);
     expect(Object.keys(FIX.actions).sort()).toEqual(Object.keys(REGISTRY).sort());
     for (const [name, def] of Object.entries(FIX.actions)) {
       const grant = REGISTRY[name]!.grant;
@@ -49,8 +60,12 @@ describe('mdt-inputs fixtures vs zod', () => {
     }
   });
 
-  it('use every shape somewhere', () => {
+  it('use every shape somewhere, with valid and invalid samples for every action', () => {
     for (const shape of Object.keys(FIX.shapes)) expect(schemasFor(shape).length, shape).toBeGreaterThan(0);
+    for (const [name, def] of Object.entries(FIX.actions)) {
+      expect(FIX.shapes[def.shape]!.valid.length, name).toBeGreaterThan(0);
+      expect(FIX.shapes[def.shape]!.invalid.length, name).toBeGreaterThan(0);
+    }
   });
 
   for (const [shape, samples] of Object.entries(FIX.shapes)) {
@@ -112,6 +127,39 @@ const FIELDS: Record<string, string[]> = {
   EvidenceListInput: ['caseId', 'unlinked', 'page'],
   EvidenceIdInput: ['id'],
   EvidenceLinkInput: ['id', 'caseId'],
+  IdInput: ['id'],
+  PageInput: ['page'],
+  CaseListInput: ['filter', 'query', 'page'],
+  CaseCreateInput: ['title', 'summary', 'level', 'unit'],
+  CaseUpdateInput: ['id', 'title', 'summary', 'level'],
+  CaseAssigneeInput: ['id', 'citizenid', 'role'],
+  CaseUnassignInput: ['id', 'citizenid'],
+  CaseSubjectInput: ['id', 'type', 'citizenid', 'plate', 'role'],
+  CaseCloseInput: ['id', 'resolution'],
+  ReportCreateInput: ['caseId', 'title', 'templateId', 'level'],
+  ReportSaveInput: ['id', 'title', 'body', 'level'],
+  ReportDraftInput: ['reportId', 'title', 'body'],
+  ChargeListInput: ['query', 'class'],
+  ApplyChargesInput: ['reportId', 'citizenid', 'lines', 'note'],
+  IssueFineInput: ['citizenid', 'lines', 'caseId'],
+  SourceCreateInput: ['codename', 'reliability', 'notes', 'realCitizenid', 'level'],
+  SourceUpdateInput: ['id', 'reliability', 'status', 'notes'],
+  IntelReportListInput: ['sourceId', 'missionId', 'page'],
+  IntelReportCreateInput: ['sourceId', 'missionId', 'body', 'reliability', 'level'],
+  EntitySearchInput: ['query', 'type'],
+  EnsureEntityInput: ['type', 'ref', 'label'],
+  AddLinkInput: ['fromId', 'to', 'type', 'confidence', 'reportId', 'level'],
+  GraphInput: ['entityId', 'depth'],
+  MissionCreateInput: ['title', 'description', 'level', 'unit'],
+  MissionMemberInput: ['id', 'citizenid', 'role'],
+};
+
+/** Nested values for the fields that hold objects or arrays (union / array kinds). */
+const NESTED: Record<string, Json[]> = {
+  to: [{ id: 3 }, { id: 0 }, { id: 3, type: 'person', label: 'x' }, { type: 'group', label: ' Ballas ' }, { type: 'weapon', label: 'x' },
+    { type: 'case', ref: ' K-1 ', label: '' }, { ref: 'x' }, {}],
+  lines: [[{ code: 'X' }], [{ code: 'X', quantity: 20 }, { code: 'Y' }], [{ code: '' }], [{ code: 'X', quantity: 21 }], ['X'],
+    [{ code: 'X', junk: true }], { code: 'X' }, Array.from({ length: 11 }, (_, i) => ({ code: 'C' + i }))],
 };
 
 function corpus(): { shape: string; input: Json }[] {
@@ -133,6 +181,7 @@ function corpus(): { shape: string; input: Json }[] {
         if (fields.length && r < 0.8) {
           const f = pick(fields);
           if (rand() < 0.15) delete input[f];
+          else if (NESTED[f] && rand() < 0.6) input[f] = pick(NESTED[f]!);
           else input[f] = value();
         } else if (r < 0.9) {
           input.extra = value();
@@ -154,7 +203,12 @@ local function enc(v)
   if t == 'string' then return json.encode(v) end
   if t == 'boolean' then return tostring(v) end
   if t == 'number' then return math.type(v) == 'integer' and ('%d'):format(v) or ('%.17g'):format(v) end
-  local parts = {}
+  local parts, n = {}, 0
+  for _ in pairs(v) do n = n + 1 end
+  if n > 0 and n == #v then
+    for i = 1, n do parts[i] = enc(v[i]) end
+    return '[' .. table.concat(parts, ',') .. ']'
+  end
   for k, x in pairs(v) do parts[#parts + 1] = json.encode(tostring(k)) .. ':' .. enc(x) end
   table.sort(parts)
   return '{' .. table.concat(parts, ',') .. '}'

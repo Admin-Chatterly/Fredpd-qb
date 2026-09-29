@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // The tablet's t(): locales/*.json are bundled into the single-file build (IMPLEMENTATION.md §4.4).
 //
-// Keys this app added in locales/pending/nui.json (not merged yet) are layered under the main files and read with
+// Keys this app added in locales/pending/nui.json and nui-pages.json (Phase 3–5b pages; not merged yet) are layered under the main files and read with
 // tx(). The glob finds nothing once scripts/merge-pending-locales.mjs has merged and deleted the file, so the build
 // keeps working and the keys then come from sv.json/en.json.
 import { createI18n } from '@fredpd/ui';
@@ -11,7 +11,10 @@ import sv from '../../../locales/sv.json';
 import en from '../../../locales/en.json';
 
 type PendingFile = Record<string, unknown>;
-const pendingFiles = import.meta.glob<PendingFile>('../../../locales/pending/nui.json', { eager: true, import: 'default' });
+const pendingFiles = import.meta.glob<PendingFile>(['../../../locales/pending/nui.json', '../../../locales/pending/nui-pages.json'], {
+  eager: true,
+  import: 'default',
+});
 
 /** One language of the pending file(s): `{ key: { sv, en } }` → `{ key: text }` (`$comment` and the like skipped). */
 export function pendingMessages(files: Readonly<Record<string, PendingFile>>, lang: string): Messages {

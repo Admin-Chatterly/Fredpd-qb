@@ -1,0 +1,137 @@
+{
+  "assignees": [
+    {
+      "callsign": "LED-01",
+      "citizenid": "REC10003",
+      "displayName": "Lena Ledning",
+      "role": "lead",
+      "unit": "ledning"
+    }
+  ],
+  "caseNumber": "K-7-26",
+  "createdAt": "2026-09-01T08:00:00Z",
+  "evidence": [
+    {
+      "collectedAt": "2026-09-01T07:30:00Z",
+      "id": 11,
+      "tag": "B-K-7-26-001",
+      "type": "casing"
+    }
+  ],
+  "id": 1,
+  "level": 0,
+  "owner": {
+    "callsign": "UTR-02",
+    "citizenid": "REC10002",
+    "displayName": "Olle Utredare",
+    "unit": "utredning"
+  },
+  "reports": [
+    {
+      "author": {
+        "callsign": "UTR-02",
+        "citizenid": "REC10002",
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "createdAt": "2026-09-01T09:00:00Z",
+      "id": 1,
+      "level": 0,
+      "reportNumber": "K-7-26/1",
+      "title": "Anmälan"
+    },
+    {
+      "author": {
+        "callsign": "LED-01",
+        "citizenid": "REC10003",
+        "displayName": "Lena Ledning",
+        "unit": "ledning"
+      },
+      "createdAt": "2026-09-02T09:00:00Z",
+      "id": 2,
+      "level": 2,
+      "reportNumber": "K-7-26/2",
+      "title": "Spaningsrapport"
+    }
+  ],
+  "status": "open",
+  "subjects": [
+    {
+      "citizenid": "RP502",
+      "label": "Omar Nilsson",
+      "role": "suspect",
+      "type": "person"
+    },
+    {
+      "label": "ABC123 (sultan)",
+      "plate": "ABC123",
+      "role": "other",
+      "type": "vehicle"
+    }
+  ],
+  "summary": "Beväpnat rån kl 02",
+  "timeline": [
+    {
+      "action": "case.update",
+      "at": "2026-09-02T12:00:00Z"
+    },
+    {
+      "action": "evidence.link",
+      "actor": {
+        "callsign": "UTR-02",
+        "citizenid": "REC10002",
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "at": "2026-09-02T10:00:00Z",
+      "detail": "B-K-7-26-001"
+    },
+    {
+      "action": "report.create",
+      "actor": {
+        "callsign": "LED-01",
+        "citizenid": "REC10003",
+        "displayName": "Lena Ledning",
+        "unit": "ledning"
+      },
+      "at": "2026-09-02T09:00:00Z",
+      "detail": "K-7-26/2"
+    },
+    {
+      "action": "report.create",
+      "actor": {
+        "callsign": "UTR-02",
+        "citizenid": "REC10002",
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "at": "2026-09-01T09:00:00Z",
+      "detail": "K-7-26/1"
+    },
+    {
+      "action": "case.assign",
+      "actor": {
+        "callsign": "UTR-02",
+        "citizenid": "REC10002",
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "at": "2026-09-01T08:05:00Z",
+      "detail": "Lena Ledning"
+    },
+    {
+      "action": "case.create",
+      "actor": {
+        "callsign": "UTR-02",
+        "citizenid": "REC10002",
+        "displayName": "Olle Utredare",
+        "unit": "utredning"
+      },
+      "at": "2026-09-01T08:00:00Z",
+      "detail": "K-7-26"
+    }
+  ],
+  "title": "Rån på bensinstation",
+  "unit": "utredning",
+  "visibility": "full"
+}

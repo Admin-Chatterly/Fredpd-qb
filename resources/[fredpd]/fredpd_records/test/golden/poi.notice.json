@@ -1,0 +1,11 @@
+{
+  "citizenid": "RP502",
+  "name": "Omar Nilsson",
+  "poi": {
+    "contact": {
+      "displayName": "Olle Utredare",
+      "unit": "utredning"
+    },
+    "visibility": "notice"
+  }
+}

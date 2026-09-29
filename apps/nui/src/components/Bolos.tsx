@@ -101,8 +101,11 @@ export function BoloList({ bolos, showSubject = false, onResolve, empty }: BoloL
 // Create
 // ---------------------------------------------------------------------------------------------------------------
 
-/** Search-based subject picker: person (name or personnummer) or vehicle (plate). Enter searches. */
-function SubjectPicker({ kind, onPick }: { kind: BoloKind; onPick: (subject: BoloSubject) => void }) {
+/**
+ * Search-based subject picker: person (name or personnummer) or vehicle (plate). Enter searches. Also used by the
+ * case page (add subject) and the charge picker (person).
+ */
+export function SubjectPicker({ kind, onPick }: { kind: BoloKind; onPick: (subject: BoloSubject) => void }) {
   const { t } = useI18n();
   const [query, setQuery] = useState('');
   const [submitted, setSubmitted] = useState('');

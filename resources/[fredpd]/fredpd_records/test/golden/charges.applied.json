@@ -1,0 +1,44 @@
+{
+  "records": [
+    {
+      "citizenid": "RP502",
+      "class": "fängelse",
+      "code": "BRB-005",
+      "fine": 10000,
+      "id": 1,
+      "jailMinutes": 20,
+      "personName": "Omar Nilsson",
+      "quantity": 2,
+      "status": "issued",
+      "title": "Misshandel"
+    },
+    {
+      "citizenid": "RP502",
+      "class": "bot",
+      "code": "BRB-004",
+      "fine": 4000,
+      "id": 2,
+      "jailMinutes": 0,
+      "personName": "Omar Nilsson",
+      "quantity": 1,
+      "status": "issued",
+      "title": "Ringa misshandel"
+    },
+    {
+      "citizenid": "RP502",
+      "class": "ordningsbot",
+      "code": "BRB-046",
+      "fine": 1500,
+      "id": 3,
+      "jailMinutes": 0,
+      "personName": "Omar Nilsson",
+      "quantity": 1,
+      "status": "issued",
+      "title": "Förargelseväckande beteende"
+    }
+  ],
+  "totals": {
+    "fine": 15500,
+    "jailMinutes": 20
+  }
+}

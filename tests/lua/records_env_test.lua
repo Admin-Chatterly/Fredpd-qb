@@ -19,24 +19,34 @@ local H = {}
 H.DB = 'fredpd_test_records_lua'
 H.ROOT = './resources/[fredpd]/fredpd_records/'
 H.GOLDEN = H.ROOT .. 'test/golden/'
-H.MODULES = { 'server.common', 'server.caserefs', 'server.search', 'server.summary' }
+H.MODULES = { 'server.common', 'server.caserefs', 'server.search', 'server.lookupflag', 'server.summary', 'server.cases',
+    'server.reports', 'server.charges', 'server.export', 'server.poi', 'server.shares', 'server.releases' }
 H.ISO = '^%d%d%d%d%-%d%d%-%d%dT%d%d:%d%d:%d%dZ$'
 
 -- ox_lib `require '@fredpd_core.shared.x'` -> fredpd_core/shared/x.lua (package.path already has fredpd_core).
 package.preload['@fredpd_core.shared.format'] = function() return require('shared.format') end
 package.preload['@fredpd_core.shared.time'] = function() return require('shared.time') end
+package.preload['@fredpd_core.shared.canview'] = function() return require('shared.canview') end
+package.preload['@fredpd_core.shared.sha256'] = function() return require('shared.sha256') end
 
 -- Viewers. 1 IGV patrol (tier 0), 2 Utredning investigator (tier 1), 3 Ledning with records.admin (tier 2),
 -- 4 civilian (no grants), 5 officer grants but no character loaded (no citizenid).
+-- Phase 5: 1-3 are on duty and hold mdt_page:cases; 1 also charges.fine/charges.apply (patrol), 2 cases.create and
+-- charges.apply, 3 everything. `duty` false = off duty. 6 is a second IGV patrol (tier 0) for authorization matrices.
 local function defaultPlayers()
     return {
-        [1] = { cid = 'REC10001', tier = 0, units = { 'igv' }, grants = { 'mdt_page:search', 'unit:igv' } },
-        [2] = { cid = 'REC10002', tier = 1, units = { 'utredning' },
-            grants = { 'intel_tier:1', 'mdt_page:search', 'unit:utredning' } },
-        [3] = { cid = 'REC10003', tier = 2, units = { 'ledning' },
-            grants = { 'intel_tier:2', 'mdt_page:search', 'perm:records.admin', 'unit:ledning' } },
+        [1] = { cid = 'REC10001', tier = 0, units = { 'igv' }, duty = true, grants = { 'mdt_page:search', 'unit:igv',
+            'mdt_page:cases', 'perm:charges.fine', 'perm:charges.apply', 'perm:cases.create' } },
+        [2] = { cid = 'REC10002', tier = 1, units = { 'utredning' }, duty = true,
+            grants = { 'intel_tier:1', 'mdt_page:search', 'unit:utredning', 'mdt_page:cases', 'perm:cases.create',
+                'perm:charges.apply' } },
+        [3] = { cid = 'REC10003', tier = 2, units = { 'ledning' }, duty = true,
+            grants = { 'intel_tier:2', 'mdt_page:search', 'perm:records.admin', 'unit:ledning', 'mdt_page:cases',
+                'perm:cases.create', 'perm:charges.apply', 'perm:charges.fine' } },
         [4] = { cid = 'CIV40004', tier = 0, units = {}, grants = {} },
-        [5] = { cid = nil, tier = 0, units = {}, grants = { 'mdt_page:search' } },
+        [5] = { cid = nil, tier = 0, units = {}, duty = true, grants = { 'mdt_page:search' } },
+        [6] = { cid = 'REC10006', tier = 0, units = { 'igv' }, duty = true, grants = { 'mdt_page:search', 'unit:igv',
+            'mdt_page:cases', 'perm:charges.apply' } },
     }
 end
 
@@ -44,6 +54,7 @@ H.OFFICERS = {
     { 'REC10001', '100000000000000001', 'Anna Patrull', 'IGV-07', 'igv' },
     { 'REC10002', '100000000000000002', 'Olle Utredare', 'UTR-02', 'utredning' },
     { 'REC10003', '100000000000000003', 'Lena Ledning', 'LED-01', 'ledning' },
+    { 'REC10006', '100000000000000006', 'Pelle Patrull', 'IGV-08', 'igv' },
 }
 
 -- fredpd_plate_checks is created by fredpd_bolo's 010 migration (§C12). While fredpd_core/migrations/index.json does
@@ -64,7 +75,8 @@ H.PLATE_CHECKS_DDL = [[CREATE TABLE IF NOT EXISTS fredpd_plate_checks (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_swedish_ci]]
 
 local GLOBALS = { 'MySQL', 'LoadResourceFile', 'GetCurrentResourceName', 'exports', 'GetResourceState', 'lib',
-    'source', 'CreateThread', 'TriggerEvent' }
+    'source', 'CreateThread', 'TriggerEvent', 'TriggerClientEvent', 'GetPlayerPed', 'GetEntityCoords',
+    'GetPlayerRoutingBucket', 'GetPlayers', 'GetInvokingResource', 'AddEventHandler', 'GetGameTimer' }
 
 local prepared = nil -- nil: not tried, true: ready, false: failed
 local notified = false
@@ -114,6 +126,11 @@ function H.makeEnv()
         resources = { fredpd_core = 'started', fredpd_bolo = 'started' },
         bolos = { plates = {}, persons = {}, lists = {} },
         visOverride = {}, addresses = {}, failMany = false, boloThrows = false, adapterThrows = false,
+        -- Phase 5 world: auditDb = also insert audit rows into fredpd_audit (timeline, obehörig sökning);
+        -- coords/buckets per src, bank balances per citizenid, captured notifications/pushes/events/jails.
+        auditDb = false, coords = {}, buckets = {}, bank = {}, notifies = {}, pushes = {}, events = {}, jails = {},
+        evidence = {}, intelNotices = nil, tokens = 0, tokenFails = false, jailResult = false, bankingStarted = true,
+        depositFails = false, invoking = nil, gameTimer = 0,
     }
 
     local function player(src) return env.players[tonumber(src)] end
@@ -164,14 +181,30 @@ function H.makeEnv()
         audit = function(_, src, action, targetType, targetId, meta)
             env.audits[#env.audits + 1] = { src = src, action = action, targetType = targetType, targetId = targetId,
                 meta = meta }
+            if env.auditDb then
+                local p = player(src)
+                local okRun, _, err = shim.run(shim.bind('INSERT INTO fredpd_audit (actor_citizenid, action, target_type, '
+                    .. 'target_id, meta) VALUES (?, ?, ?, ?, ?);', { p and p.cid or nil, action, targetType,
+                        targetId ~= nil and tostring(targetId) or nil, meta and json.encode(meta) or nil }), H.DB)
+                if not okRun then error('audit insert failed: ' .. tostring(err), 0) end
+            end
             return true
         end,
         refreshPlate = function(_, plate)
             env.calls.refreshPlate = env.calls.refreshPlate + 1
             return Mirror.refreshPlate(plate)
         end,
+        getUnits = function(_, src) local p = player(src); return p and p.units or {} end,
+        isOnDuty = function(_, src) local p = player(src); return p ~= nil and p.duty == true end,
+        L = function(_, key, vars) return key .. (vars and (' ' .. json.encode(vars)) or '') end,
         getAdapter = function(_, kind)
             env.calls.getAdapter = env.calls.getAdapter + 1
+            if kind == 'prison' then
+                return { kind = 'prison', jail = setmetatable({}, { __call = function(_, target, minutes, charges)
+                    env.jails[#env.jails + 1] = { target = target, minutes = minutes, charges = charges }
+                    return env.jailResult
+                end }) }
+            end
             if kind ~= 'housing' then return nil end
             -- Functions in a table returned across resources arrive as msgpack function references: tables with a
             -- __call metamethod (citizenfx scheduler.lua funcref_mt), never plain Lua functions.
@@ -228,12 +261,102 @@ function H.makeEnv()
     local shimLoad = LoadResourceFile
     local formatsText = helper.readFile('config/formats.json')
 
+    local function byCid(cid)
+        for src, p in pairs(env.players) do
+            if p.cid == cid and p.online ~= false then return src, p end
+        end
+        return nil
+    end
+    local function qbxPlayer(src, p)
+        return { PlayerData = { source = src, citizenid = p.cid }, Functions = {
+            RemoveMoney = function(account, amount)
+                assert(account == 'bank')
+                local have = env.bank[p.cid] or 0
+                if have < amount then return false end
+                env.bank[p.cid] = have - amount
+                return true
+            end,
+            AddMoney = function(account, amount)
+                assert(account == 'bank')
+                env.bank[p.cid] = (env.bank[p.cid] or 0) + amount
+                return true
+            end,
+        } }
+    end
+    local qbx = {
+        GetPlayerByCitizenId = function(_, cid)
+            local src, p = byCid(cid)
+            return src and qbxPlayer(src, p) or nil
+        end,
+        GetPlayer = function(_, src)
+            local p = player(src)
+            if not p or not p.cid or p.online == false then return nil end
+            return qbxPlayer(tonumber(src), p)
+        end,
+    }
+    local records = {
+        -- CSPRNG stand-in for server/random.js: 32 bytes from /dev/urandom, base64url.
+        randomToken = function(_, n)
+            if env.tokenFails then error('No such export randomToken in resource fredpd_records', 0) end
+            env.tokens = env.tokens + 1
+            local f = assert(io.open('/dev/urandom', 'rb'))
+            local bytes = f:read(n or 32)
+            f:close()
+            local alphabet = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_'
+            local bits, out = {}, {}
+            for i = 1, #bytes do
+                local b = bytes:byte(i)
+                for k = 7, 0, -1 do bits[#bits + 1] = (b >> k) & 1 end
+            end
+            for i = 1, #bits, 6 do
+                local v = 0
+                for k = 0, 5 do v = v * 2 + (bits[i + k] or 0) end
+                out[#out + 1] = alphabet:sub(v + 1, v + 1)
+            end
+            return table.concat(out)
+        end,
+    }
+    local mdt = {
+        pushToOpenTablets = function(_, topic, payload, filter)
+            local targets = {}
+            for src in pairs(env.players) do
+                if filter == nil or filter(src) then targets[#targets + 1] = src end
+            end
+            table.sort(targets)
+            env.pushes[#env.pushes + 1] = { topic = topic, payload = payload, targets = targets }
+            return #targets
+        end,
+    }
+    local forensics = {
+        listCaseEvidence = function(_, _src, input)
+            return { ok = true, data = { items = env.evidence[input.caseId] or {}, total = 0, page = 1 } }
+        end,
+    }
+    local intel = {
+        getPersonNotices = function(_, _src, _cid) return env.intelNotices or {} end,
+    }
+    local banking = {
+        addAccountMoney = function(_, account, amount)
+            env.deposits = env.deposits or {}
+            if env.depositFails then return false end
+            env.deposits[#env.deposits + 1] = { account = account, amount = amount }
+            return true
+        end,
+    }
+    env.resources.fredpd_mdt = 'started'
+    env.resources.fredpd_forensics = 'started'
+    env.resources['Renewed-Banking'] = 'started'
+
     env.globals = {
-        exports = setmetatable({ fredpd_core = core, fredpd_bolo = bolo }, {
+        exports = setmetatable({ fredpd_core = core, fredpd_bolo = bolo, qbx_core = qbx, fredpd_records = records,
+            fredpd_mdt = mdt, fredpd_forensics = forensics, fredpd_intel = intel, ['Renewed-Banking'] = banking }, {
             __call = function(_, name, fn) env.exported[name] = fn end,
         }),
         GetResourceState = function(name) return env.resources[name] or 'missing' end,
         LoadResourceFile = function(res, path)
+            if res == 'fredpd_core' and path == 'config/integrations.json' then
+                return env.integrationsText or helper.readFile('config/integrations.json')
+            end
             if res == 'fredpd_core' and path == 'config/formats.json' then
                 if env.formatsText ~= nil then return env.formatsText or nil end
                 return formatsText
@@ -241,7 +364,25 @@ function H.makeEnv()
             return shimLoad(res, path)
         end,
         CreateThread = function(fn) fn() end,
-        TriggerEvent = function() end,
+        TriggerEvent = function(name, ...) env.events[#env.events + 1] = { name = name, args = { ... } } end,
+        TriggerClientEvent = function(name, target, data)
+            if name == 'ox_lib:notify' then env.notifies[#env.notifies + 1] = { target = target, data = data } end
+        end,
+        GetPlayerPed = function(src) return env.players[tonumber(src)] and (tonumber(src) + 1000) or 0 end,
+        GetEntityCoords = function(ped)
+            local c = env.coords[ped - 1000] or { x = 0.0, y = 0.0, z = 0.0 }
+            return { x = c.x or c[1], y = c.y or c[2], z = c.z or c[3] }
+        end,
+        GetPlayerRoutingBucket = function(src) return env.buckets[tonumber(src)] or 0 end,
+        GetPlayers = function()
+            local list = {}
+            for src in pairs(env.players) do list[#list + 1] = tostring(src) end
+            table.sort(list)
+            return list
+        end,
+        GetInvokingResource = function() return env.invoking end,
+        AddEventHandler = function() end,
+        GetGameTimer = function() return env.gameTimer end,
         lib = {
             print = setmetatable({}, { __index = function(_, level)
                 return function(msg) env.logs[#env.logs + 1] = { level = level, msg = msg } end
@@ -253,7 +394,7 @@ end
 
 --- Record every SQL statement the modules send (after the shim is installed).
 local function captureSql(env)
-    for _, kind in ipairs({ 'query', 'single', 'scalar' }) do
+    for _, kind in ipairs({ 'query', 'single', 'scalar', 'insert', 'update' }) do
         local api = MySQL[kind]
         local raw = api.await
         local function wrapped(sql, params)
@@ -267,6 +408,36 @@ local function captureSql(env)
             if cb then cb(r) end
             return r
         end })
+    end
+    local rawTx = MySQL.transaction.await
+    local function tx(queries, params)
+        for _, q in ipairs(queries) do
+            env.sql[#env.sql + 1] = { kind = 'transaction', sql = type(q) == 'string' and q or (q.query or q[1]),
+                params = type(q) == 'table' and (q.values or q[2]) or params }
+        end
+        if env.onTransaction then env.onTransaction(queries) end
+        return rawTx(queries, params)
+    end
+    MySQL.transaction = setmetatable({ await = tx }, { __call = function(_, queries, params, cb)
+        local r = tx(queries, params)
+        if cb then cb(r) end
+        return r
+    end })
+    -- env.yield: every statement yields first (coroutine interleaving = two pool connections, see records_cases_test)
+    for _, kind in ipairs({ 'query', 'single', 'scalar', 'insert', 'update', 'transaction' }) do
+        local api = MySQL[kind]
+        local inner = api.await
+        local function yielding(sql, params)
+            if env.yield and coroutine.isyieldable() then coroutine.yield(kind) end
+            return inner(sql, params)
+        end
+        MySQL[kind] = setmetatable({ await = yielding }, getmetatable(api))
+        getmetatable(MySQL[kind]).__call = function(_, sql, params, cb)
+            if type(params) == 'function' then params, cb = nil, params end
+            local r = yielding(sql, params)
+            if cb then cb(r) end
+            return r
+        end
     end
 end
 
@@ -284,12 +455,16 @@ H.run = run
 --- ids in golden files are stable.
 function H.resetData()
     local parts = {
-        'DELETE FROM fredpd_records', 'DELETE FROM fredpd_case_subjects', 'DELETE FROM fredpd_case_assignees',
+        'DELETE FROM fredpd_records', 'DELETE FROM fredpd_report_drafts', 'DELETE FROM fredpd_reports',
+        'DELETE FROM fredpd_case_subjects', 'DELETE FROM fredpd_case_assignees',
         'DELETE FROM fredpd_cases', 'DELETE FROM fredpd_persons', 'DELETE FROM fredpd_vehicles_idx',
         'DELETE FROM fredpd_officers', 'DELETE FROM fredpd_plate_checks', 'DELETE FROM fredpd_audit',
-        'DELETE FROM fredpd_bolos',
+        'DELETE FROM fredpd_bolos', 'DELETE FROM fredpd_poi', 'DELETE FROM fredpd_shares',
+        'DELETE FROM fredpd_release_requests', "DELETE FROM fredpd_sequences WHERE seq_type = 'case'",
         'ALTER TABLE fredpd_cases AUTO_INCREMENT = 1', 'ALTER TABLE fredpd_records AUTO_INCREMENT = 1',
         'ALTER TABLE fredpd_plate_checks AUTO_INCREMENT = 1', 'ALTER TABLE fredpd_bolos AUTO_INCREMENT = 1',
+        'ALTER TABLE fredpd_reports AUTO_INCREMENT = 1', 'ALTER TABLE fredpd_poi AUTO_INCREMENT = 1',
+        'ALTER TABLE fredpd_shares AUTO_INCREMENT = 1', 'ALTER TABLE fredpd_release_requests AUTO_INCREMENT = 1',
     }
     for _, o in ipairs(H.OFFICERS) do
         parts[#parts + 1] = shim.bind('INSERT INTO fredpd_officers (citizenid, discord_id, display_name, callsign, unit) '
@@ -334,6 +509,58 @@ function H.case(c)
         H.insert('fredpd_case_subjects', { 'case_id', 'subject_type', 'subject_id', 'role' }, { { id, s[1], s[2], s[3] or 'other' } })
     end
     return id
+end
+
+--- Report row with fixed times: { case_id, n, report_number, title, body, level, author, created_at }. Returns its id.
+function H.report(r)
+    H.insert('fredpd_reports', { 'case_id', 'n', 'report_number', 'title', 'body', 'level', 'author_citizenid',
+        'created_at', 'updated_at' }, { { r[1], r[2], r[3], r[4], r[5], r[6], r[7], r[8] or '2026-09-02 09:00:00',
+        r[8] or '2026-09-02 09:00:00' } })
+    return tonumber(MySQL.scalar.await('SELECT id FROM fredpd_reports WHERE report_number = ?', { r[3] }))
+end
+
+--- Audit row with a fixed time: { actor, action, target_type, target_id, meta table, created_at }.
+function H.auditRow(a)
+    H.insert('fredpd_audit', { 'actor_citizenid', 'action', 'target_type', 'target_id', 'meta', 'created_at' },
+        { { a[1], a[2], a[3], a[4], a[5] and json.encode(a[5]) or nil, a[6] } })
+end
+
+--- A few people for Phase 5 tests (RP501 Sara Svensson, RP502 Omar Nilsson, RP503 Eva Ek, RP504 Ali Berg).
+function H.fewPeople()
+    H.persons({
+        { 'RP501', 'Sara', 'Svensson', '1990-01-01', '19900101-1234', 1, '0701234567' },
+        { 'RP502', 'Omar', 'Nilsson', '1985-05-05', '19850505-5678', 0, '0707654321' },
+        { 'RP503', 'Eva', 'Ek', '1970-07-07', '19700707-7777', 1, '0700000000' },
+        { 'RP504', 'Ali', 'Berg', '2000-02-02', '20000202-2222', 0, '0701111111' },
+    })
+    H.vehicles({ { 'ABC123', 'RP501', 'sultan' } })
+end
+
+--- Run fn inside coroutines that yield before every SQL statement, alternating (round robin) until all finish:
+--- a faithful model of two oxmysql pool connections (every shim statement is its own client session).
+--- Returns the results in order.
+function H.interleave(env, fns)
+    env.yield = true
+    local cos, results, done = {}, {}, 0
+    for i, fn in ipairs(fns) do cos[i] = coroutine.create(fn) end
+    local alive = #cos
+    local guard = 0
+    while done < alive do
+        guard = guard + 1
+        assert(guard < 10000, 'interleave did not finish')
+        for i, co in ipairs(cos) do
+            if coroutine.status(co) == 'suspended' then
+                local ok, res = coroutine.resume(co)
+                if not ok then env.yield = false error(res, 0) end
+                if coroutine.status(co) == 'dead' then
+                    results[i] = res
+                    done = done + 1
+                end
+            end
+        end
+    end
+    env.yield = false
+    return results
 end
 
 --- The 200-person seed: 20 last names x 10 first names, RP001..RP200, deterministic birthdates/personnummer.

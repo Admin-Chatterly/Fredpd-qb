@@ -20,3 +20,6 @@ export * from './components/Dialog';
 export * from './components/Pagination';
 export * from './components/Textarea';
 export * from './components/VirtualListbox';
+export * from './components/Tabs';
+export * from './components/Drawer';
+export * from './components/MarkdownLite';

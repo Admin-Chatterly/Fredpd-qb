@@ -39,8 +39,10 @@ return {
     --- Serial numbers: prefix + two groups of 4 from an alphabet without look-alikes (I/1, O/0).
     serial = { prefix = 'SP', alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789', groups = 2, groupLength = 4 },
 
-    --- Rate limits in ms (docs/contracts.md §C12 step 4: lookups 1 per 500 ms, writes 1 per 2 s; reads are ours).
-    limits = { lookup = 500, write = 2000, read = 250, open = 750, issue = 2000 },
+    --- Rate limits in ms per player per action (docs/contracts.md §C12 step 4: lookups 1 per 500 ms, writes 1 per
+    --- 2 s). Reads (list/get) 500 ms and the report autosave (saveReportDraft, debounced ≥ 10 s by the NUI) 5 s are
+    --- ours.
+    limits = { lookup = 500, write = 2000, read = 500, draft = 5000, open = 750, issue = 2000 },
 
     --- Page size of listTablets (IMPLEMENTATION.md §4.7).
     pageSize = 50,

@@ -1,0 +1,31 @@
+{
+  "items": [
+    {
+      "category": "traffic",
+      "class": "ordningsbot",
+      "code": "TRF-009",
+      "fine": 1500,
+      "jailMinutes": 0,
+      "lawRef": "TrF 3 kap. 17 §",
+      "title": "Hastighetsöverträdelse 1–10 km/h"
+    },
+    {
+      "category": "traffic",
+      "class": "ordningsbot",
+      "code": "TRF-010",
+      "fine": 2000,
+      "jailMinutes": 0,
+      "lawRef": "TrF 3 kap. 17 §",
+      "title": "Hastighetsöverträdelse 11–15 km/h"
+    },
+    {
+      "category": "traffic",
+      "class": "ordningsbot",
+      "code": "TRF-011",
+      "fine": 2500,
+      "jailMinutes": 0,
+      "lawRef": "TrF 3 kap. 17 §",
+      "title": "Hastighetsöverträdelse 16–20 km/h"
+    }
+  ]
+}

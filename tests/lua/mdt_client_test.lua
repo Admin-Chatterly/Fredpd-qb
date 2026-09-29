@@ -338,6 +338,16 @@ tests['7 pushes and grant updates reach the NUI only while open'] = function(t)
         env.net['fredpd:client:push'](5, {})
         env.net['fredpd:client:grantsChanged']('x')
         t.eq(#env.nui, 3, 'malformed ignored')
+        -- Phase 3/5 topics go through the same generic forwarder, payload untouched.
+        local payloads = {
+            alerts = { type = 'updated', alert = { id = 4, status = 'assigned' } },
+            units = { units = { { citizenid = 'MDT10001', onDuty = true, alertId = 4 } } },
+            case = { type = 'updated', id = 12 },
+        }
+        for _, topic in ipairs({ 'alerts', 'units', 'case' }) do
+            env.net['fredpd:client:push'](topic, payloads[topic])
+            t.eq(env.nui[#env.nui], { action = 'push', topic = topic, payload = payloads[topic] }, topic)
+        end
     end)
 end
 
@@ -357,6 +367,14 @@ tests['8 one NUI callback per action, forwarding { action, input }; nothing is s
         t.eq(env.calls[#env.calls], { name = 'fredpd:mdt:action', delay = false,
             req = { action = 'search', input = { query = 'Anna' } } })
         t.eq(answer, { hits = {}, echo = { action = 'search', input = { query = 'Anna' } } })
+        -- Phase 3/4/5/5b actions are registered from the same list and forwarded the same way.
+        for _, name in ipairs({ 'takeAlert', 'linkEvidence', 'createCase', 'saveReportDraft', 'issueFine', 'addLink',
+            'getGraph', 'closeMission' }) do
+            t.ok(env.nuiCallbacks[name], 'NUI callback ' .. name)
+            env.nuiCallbacks[name]({ id = 1 }, function(v) answer = v end)
+            t.eq(env.calls[#env.calls].req, { action = name, input = { id = 1 } }, name)
+        end
+        t.eq(#V.actionNames(), 52, 'MDT 11 + DISPATCH 5 + EVIDENCE 3 + RECORDS 16 + INTEL 17')
         env.reply = function() return nil end
         env.nuiCallbacks.listBolos({}, function(v) answer = v end)
         t.eq(answer, { error = 'unavailable' })

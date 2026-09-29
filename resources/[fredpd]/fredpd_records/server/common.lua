@@ -305,4 +305,179 @@ function M.address(citizenid)
     return text
 end
 
+---------------------------------------------------------------------------------------------------------------
+-- Phase 5 writes: actor, duty, perms, text bodies, config, notifications, pushes, rate limits
+
+M.MDT = 'fredpd_mdt'
+
+--- The actor's citizenid, from fredpd_core (qbx_core), never from an argument. nil when no character is loaded.
+function M.actor(src)
+    return M.citizenid(M.str(M.coreOr('getCitizenId', src)))
+end
+
+--- On duty (fredpd_core isOnDuty; fails closed).
+function M.onDuty(src)
+    local ok, res = M.core('isOnDuty', src)
+    return ok and res == true
+end
+
+--- perm:<key> (fails closed).
+function M.perm(src, key)
+    return M.hasGrant(src, 'perm', key)
+end
+
+--- The actor's units (copy from fredpd_core), [] when unknown. First = primary unit (config/units.json order).
+function M.units(src)
+    local ok, res = M.core('getUnits', src)
+    local out = {}
+    if ok and type(res) == 'table' then
+        for _, u in ipairs(res) do
+            if type(u) == 'string' and u:match('^[%w_%-]+$') and #u <= 32 then out[#out + 1] = u end
+        end
+    end
+    return out
+end
+
+--- Common gate for a Phase 5 export: valid src, grant (type/key or nil), on duty, a loaded character.
+--- Returns src, actor citizenid on success, or nil, failure result.
+function M.gate(src, grantType, grantKey)
+    src = M.playerSrc(src)
+    if not src then return nil, M.fail('unauthorized') end
+    if grantType and not M.hasGrant(src, grantType, grantKey) then return nil, M.fail('unauthorized') end
+    if not grantType and not M.hasAnyPageGrant(src) then return nil, M.fail('unauthorized') end
+    if not M.onDuty(src) then return nil, { ok = false, error = 'unauthorized', reason = 'off_duty' } end
+    local cid = M.actor(src)
+    if not cid then return nil, M.fail('unauthorized') end
+    return src, cid
+end
+
+--- { ok = false, error = code, reason = reason } (reason: ^[%a_]+$, <= 32, as the dispatcher forwards it).
+function M.failWith(code, reason)
+    return { ok = false, error = code, reason = reason }
+end
+
+--- Required positive integer id (JSON numbers arrive as floats with an integral value; 1.0 is accepted).
+function M.id(v)
+    if type(v) ~= 'number' then return nil end
+    local i = math.tointeger(v)
+    if not i or i < 1 or i > 4294967295 then return nil end
+    return i
+end
+
+--- Level 0..2 from input; `default` when nil; false for anything else.
+function M.optLevel(v, default)
+    if v == nil then return default end
+    local i = type(v) == 'number' and math.tointeger(v) or nil
+    if i == 0 or i == 1 or i == 2 then return i end
+    return false
+end
+
+--- One of the listed values (or `default` when nil); false for anything else.
+function M.enum(v, allowed, default)
+    if v == nil then return default end
+    if type(v) ~= 'string' then return false end
+    for _, a in ipairs(allowed) do if a == v then return v end end
+    return false
+end
+
+--- Multi-line text body (report body, summaries, notes): CRLF/CR -> LF, control characters other than LF and TAB
+--- removed, invalid UTF-8 refused (nil), at most `max` code points (longer -> nil). Stored as given otherwise: the
+--- NUI renders markdown-lite as text (no HTML passthrough, §C14).
+function M.body(v, max, allowEmpty)
+    if type(v) ~= 'string' then return nil end
+    if #v > max * 4 + 16 then return nil end
+    local s = v:gsub('\r\n?', '\n'):gsub('[\0-\8\11-\31\127]', '')
+    local n = utf8.len(s)
+    if not n or n > max then return nil end
+    if not allowEmpty and not s:find('%S') then return nil end
+    return s
+end
+
+--- ASCII-trimmed string (zod .trim() on the texts that reach here; the NUI already trimmed).
+function M.trim(s)
+    return (s:gsub('^%s+', ''):gsub('%s+$', ''))
+end
+
+--- Optional trimmed single-line text (nil stays nil; false when invalid).
+function M.optText(v, min, max)
+    if v == nil then return nil end
+    return M.text(v, min, max) or false
+end
+
+--- config/integrations.json from fredpd_core (decoded once; {} when missing).
+local integrations
+function M.integrations()
+    if integrations then return integrations end
+    local text = LoadResourceFile(M.CORE, 'config/integrations.json')
+    local ok, tbl = pcall(json.decode, text or '')
+    integrations = (ok and type(tbl) == 'table') and tbl or {}
+    return integrations
+end
+
+--- Tests only.
+function M.resetConfig() integrations = nil end
+
+--- L(key, vars) through fredpd_core (the key itself when the call fails).
+function M.L(key, vars)
+    local ok, res = M.core('L', key, vars)
+    if ok and type(res) == 'string' then return res end
+    return key
+end
+
+--- ox_lib notification to one player (player-facing text via L()).
+function M.notify(src, kind, key, vars)
+    if not src or src <= 0 then return end
+    TriggerClientEvent('ox_lib:notify', src, { type = kind, description = M.L(key, vars) })
+end
+
+--- exports.fredpd_mdt:pushToOpenTablets(topic, payload, filter) (pcall; 0 when fredpd_mdt is not running).
+function M.push(topic, payload, filter)
+    if GetResourceState(M.MDT) ~= 'started' then return 0 end
+    local ok, n = pcall(call, M.MDT, 'pushToOpenTablets', topic, payload, filter)
+    if not ok then
+        M.warnOnce('mdt:push', ('exports.fredpd_mdt:pushToOpenTablets failed: %s'):format(tostring(n)))
+        return 0
+    end
+    return tonumber(n) or 0
+end
+
+--- Online server id of a character (qbx_core GetPlayerByCitizenId), or nil.
+function M.onlineSrc(citizenid)
+    local ok, player = pcall(function() return exports.qbx_core:GetPlayerByCitizenId(citizenid) end)
+    if not ok or type(player) ~= 'table' or type(player.PlayerData) ~= 'table' then return nil end
+    return M.playerSrc(player.PlayerData.source)
+end
+
+--- qbx_core player object of a server id, or nil.
+function M.qbxPlayer(src)
+    local ok, player = pcall(function() return exports.qbx_core:GetPlayer(src) end)
+    if ok and type(player) == 'table' then return player end
+    return nil
+end
+
+--- Per-src, per-key minimum interval in milliseconds (in memory, no timers). true = allowed (and consumed).
+local lastCall = {}
+function M.rateLimit(src, key, ms)
+    local now = (type(GetGameTimer) == 'function' and GetGameTimer()) or math.floor(os.clock() * 1000)
+    local k = tostring(src) .. ':' .. key
+    local last = lastCall[k]
+    if last and now - last < ms then return false end
+    lastCall[k] = now
+    return true
+end
+
+--- Tests only.
+function M.resetRateLimits() lastCall = {} end
+
+--- An audit row that the timeline may show; meta.label is a short safe label for TimelineEntry.detail.
+function M.auditWrite(src, action, targetType, targetId, meta)
+    M.audit(src, action, targetType, targetId ~= nil and tostring(targetId) or nil, meta)
+end
+
+--- Whether an oxmysql error text is a duplicate-key violation.
+function M.isDuplicate(err)
+    local s = tostring(err)
+    return s:find('Duplicate entry', 1, true) ~= nil or s:find('ER_DUP_ENTRY', 1, true) ~= nil
+end
+
 return M

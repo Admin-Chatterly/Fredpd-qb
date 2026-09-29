@@ -3,8 +3,8 @@
 // opens, never on a timer; src/queryClient.ts) and retry once only for errors a retry can fix.
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import type { UseMutationResult, UseQueryResult } from '@tanstack/react-query';
-import type { MdtActionName, MdtInput, MdtOutput } from '@fredpd/types/mdt';
-import { MUTATION_INVALIDATES, callMdt, invalidateActions, mdtQueryKey } from './client';
+import type { TabletActionName as MdtActionName, TabletInput as MdtInput, TabletOutput as MdtOutput } from './actions';
+import { MUTATION_INVALIDATES, MUTATION_WRITES, callMdt, invalidateActions, mdtQueryKey } from './client';
 import { isRetryable } from './errors';
 import type { MdtClientError } from './errors';
 
@@ -48,6 +48,8 @@ export function useMdtMutation<A extends MdtActionName>(
   return useMutation<MdtOutput<A>, MdtClientError, MdtInput<A>>({
     mutationFn: (input) => callMdt(action, input),
     onSuccess: (data, input) => {
+      const write = MUTATION_WRITES[action]?.(data, input);
+      if (write) queryClient.setQueryData(mdtQueryKey(write[0], write[1] as never), data);
       void invalidateActions(queryClient, MUTATION_INVALIDATES[action] ?? []);
       options.onSuccess?.(data, input);
     },

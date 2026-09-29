@@ -3,7 +3,8 @@
 // - open: store the payload, show the root, tell TanStack Query the "window" is focused (refetches stale data);
 // - close: hide the root, unfocus;
 // - push: invalidate queries whose key starts with the topic, plus the tablet actions the topic can change
-//   (src/api/client.ts PUSH_INVALIDATES), and notify subscribers (no polling anywhere). While closed the queries
+//   (src/api/client.ts PUSH_INVALIDATES; alerts/units are written into the cache instead, src/api/pushes.ts), and
+//   notify subscribers (no polling anywhere). While closed the queries
 //   are only marked stale (no fetch); the focus on the next open refetches them (§4.7);
 // - Esc (while open) and requestClose(): hide at once and call fetchNui('close') so Lua releases NUI focus.
 import { createContext, useCallback, useContext, useEffect, useEffectEvent, useMemo, useRef, useState } from 'react';
@@ -15,6 +16,7 @@ import type { MdtOpenPayload } from '@fredpd/types/actions';
 import type { GrantSet } from '@fredpd/types/grants';
 import { fetchNui } from '../utils/fetchNui';
 import { invalidateForPush } from '../api/client';
+import { applyPushToCache } from '../api/pushes';
 import { GRANTS_TOPIC, parseNuiMessage } from './messages';
 
 export type PushListener = (payload: unknown) => void;
@@ -120,7 +122,10 @@ export function TabletProvider({ queryClient, onReady, children }: TabletProvide
         // Closed: mark stale only, so a push in flight across a close does not fetch through Lua; open refetches.
         const refetchType = visibleRef.current ? 'active' : 'none';
         void queryClient.invalidateQueries({ queryKey: [message.topic], refetchType });
-        void invalidateForPush(queryClient, message.topic, refetchType);
+        // alerts/units carry the new state: written into the cache (src/api/pushes.ts), never refetched.
+        if (!applyPushToCache(queryClient, message.topic, message.payload, state.session?.me.citizenid ?? null, refetchType)) {
+          void invalidateForPush(queryClient, message.topic, refetchType);
+        }
         listeners.get(message.topic)?.forEach((listener) => listener(message.payload));
         break;
       }

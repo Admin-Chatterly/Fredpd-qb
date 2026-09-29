@@ -1,0 +1,38 @@
+{
+  "channel": "station",
+  "createdAt": "2026-09-11T10:00:00Z",
+  "decidedAt": "2026-09-11T12:00:00Z",
+  "decidedBy": {
+    "callsign": "LED-01",
+    "citizenid": "REC10003",
+    "displayName": "Lena Ledning",
+    "unit": "ledning"
+  },
+  "decisionNote": "Maskerat enligt OSL",
+  "description": "Jag vill ta del av ärendet om klottret",
+  "id": 1,
+  "released": {
+    "caseNumber": "K-1-26",
+    "closedAt": "2026-09-02T10:00:00Z",
+    "createdAt": "2026-09-01T10:00:00Z",
+    "reports": [
+      {
+        "body": "OFFENTLIG_TEXT om klotter",
+        "createdAt": "2026-09-01T11:00:00Z",
+        "reportNumber": "K-1-26/1",
+        "title": "Anmälan skadegörelse"
+      }
+    ],
+    "status": "closed",
+    "summary": "Klotter på fasaden",
+    "title": "Skadegörelse på skola",
+    "type": "case"
+  },
+  "requesterCitizenid": "CIV40004",
+  "status": "partial",
+  "target": {
+    "id": "1",
+    "label": "K-1-26",
+    "type": "case"
+  }
+}

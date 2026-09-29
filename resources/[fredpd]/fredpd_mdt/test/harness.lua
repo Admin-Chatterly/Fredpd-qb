@@ -2,7 +2,7 @@
 -- Test harness for tests/lua/mdt_*_test.lua (plain Lua 5.4, run from the repo root by tests/lua/run.lua): loads fresh
 -- copies of the fredpd_mdt server modules and builds a mocked FiveM world — players with grants/duty/officers
 -- (fredpd_core exports), an ox_inventory, the routed resources (fredpd_records, fredpd_bolo, fredpd_dispatch,
--- fredpd_forensics), client events, net/local event handlers, lib.callback / lib.addCommand capture and a clock.
+-- fredpd_forensics, fredpd_intel), client events, net/local event handlers, lib.callback / lib.addCommand capture and a clock.
 -- MySQL is left to the caller (a small in-memory double here, or tests/lua/mysql_shim.lua for the DB tests).
 local H = {}
 
@@ -144,7 +144,8 @@ function H.world(opts)
         now = 100000, players = H.players(), tablets = H.tabletRows(), queries = {}, client = {}, audits = {},
         calls = {}, handlers = {}, net = {}, callbacks = {}, commands = {}, exported = {}, logs = {}, events = {},
         replies = {}, resources = { fredpd_core = 'started', ox_inventory = 'started', fredpd_records = 'started',
-            fredpd_bolo = 'started', fredpd_dispatch = 'started', fredpd_forensics = 'started' },
+            fredpd_bolo = 'started', fredpd_dispatch = 'started', fredpd_forensics = 'started',
+            fredpd_intel = 'started' },
         vehicles = {}, units = nil,
     }
 
@@ -236,10 +237,19 @@ function H.world(opts)
         fredpd_core = core,
         ox_inventory = inventory,
         fredpd_records = routed('fredpd_records',
-            { 'search', 'getPersonSummary', 'getVehicleSummary', 'getHomeCases', 'countMyOpenCases' }),
+            { 'search', 'getPersonSummary', 'getVehicleSummary', 'getHomeCases', 'countMyOpenCases',
+                -- RECORDS_ACTIONS (§C14)
+                'listCases', 'getCase', 'createCase', 'updateCase', 'assignCase', 'unassignCase', 'addCaseSubject',
+                'closeCase', 'getReport', 'createReport', 'saveReport', 'saveReportDraft', 'listReportTemplates',
+                'listCharges', 'applyCharges', 'issueFine' }),
         fredpd_bolo = routed('fredpd_bolo', { 'listBolos', 'createBolo', 'resolveBolo', 'plateCheck' }),
-        fredpd_dispatch = routed('fredpd_dispatch', { 'listAlerts', 'takeAlert', 'leaveAlert', 'closeAlert', 'getUnits' }),
+        fredpd_dispatch = routed('fredpd_dispatch',
+            { 'listAlerts', 'assignSelf', 'takeAlert', 'leaveAlert', 'closeAlert', 'getUnits' }),
         fredpd_forensics = routed('fredpd_forensics', { 'listEvidence', 'getEvidence', 'linkEvidence' }),
+        fredpd_intel = routed('fredpd_intel', {
+            'listSources', 'getSource', 'createSource', 'updateSource', 'listIntelReports', 'getIntelReport',
+            'createIntelReport', 'searchEntities', 'ensureEntity', 'getEntity', 'addLink', 'getGraph', 'listMissions',
+            'getMission', 'createMission', 'addMissionMember', 'closeMission' }),
     }, { __call = function(_, name, fn) env.exported[name] = fn end })
 
     local unitsJson = helper.readFile('config/units.json')

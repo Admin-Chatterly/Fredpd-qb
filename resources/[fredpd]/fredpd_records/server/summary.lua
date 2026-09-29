@@ -10,6 +10,7 @@
 local C = require 'server.common'
 local Refs = require 'server.caserefs'
 local Search = require 'server.search'
+local LookupFlag = require 'server.lookupflag'
 local Time = require '@fredpd_core.shared.time'
 
 local M = {}
@@ -71,6 +72,48 @@ local function vehiclesOf(src, citizenid)
     return out
 end
 
+--- Kontaktnotiser from fredpd_intel (§C15, docs/modules/intel.md: getPersonNotices(src, citizenid) -> Notice[], the
+--- CaseRef notice shape) merged into the person's case refs; deduplicated by contact against the case notices and
+--- re-ordered with them (caserefs.order), so an intel notice is indistinguishable from a case notice. [] while
+--- fredpd_intel is stopped or failing; only { displayName, unit } strings are taken over.
+function M.withIntelNotices(src, citizenid, refs)
+    if GetResourceState('fredpd_intel') ~= 'started' then return refs end
+    local ok, list = pcall(function() return exports.fredpd_intel:getPersonNotices(src, citizenid) end)
+    if not ok or type(list) ~= 'table' then
+        C.warnOnce('intel:notices', ('exports.fredpd_intel:getPersonNotices failed: %s'):format(tostring(list)))
+        return refs
+    end
+    if list.ok ~= nil then list = list.ok == true and list.data or {} end
+    local seen = {}
+    for _, ref in ipairs(refs) do
+        if ref.visibility == 'notice' then seen[(ref.contact.unit or '') .. '\0' .. (ref.contact.displayName or '')] = true end
+    end
+    local added = false
+    for _, n in ipairs(type(list) == 'table' and list or {}) do
+        local contact = type(n) == 'table' and n.visibility == 'notice' and type(n.contact) == 'table' and n.contact or nil
+        if contact then
+            local name = type(contact.displayName) == 'string' and contact.displayName or nil
+            local unit = type(contact.unit) == 'string' and contact.unit or nil
+            local key = (unit or '') .. '\0' .. (name or '')
+            if (name or unit) and not seen[key] then
+                seen[key] = true
+                refs[#refs + 1] = { visibility = 'notice', contact = { displayName = name, unit = unit } }
+                added = true
+            end
+        end
+    end
+    return added and Refs.order(refs) or refs
+end
+
+--- Obehörig sökning check after a person lookup (server/lookupflag.lua); a failure is logged, never returned.
+function M.flagLookup(src, citizenid)
+    local ok, err = pcall(function()
+        local officer = C.actor(src)
+        if officer then LookupFlag.evaluate(src, officer, citizenid) end
+    end)
+    if not ok then C.warnOnce('lookupflag', ('obehörig sökning check failed: %s'):format(tostring(err))) end
+end
+
 --- export getPersonSummary(src, { citizenid }) -> { ok, data = PersonSummary } | { ok = false, error }
 function M.person(src, input)
     src = C.playerSrc(src)
@@ -82,6 +125,7 @@ function M.person(src, input)
     local row = MySQL.single.await(PERSON_SQL, { citizenid })
     if not row then
         C.audit(src, 'lookup.person', 'person', citizenid, { source = 'summary', found = false })
+        M.flagLookup(src, citizenid)
         return C.fail('not_found')
     end
     local cid = C.str(row.citizenid) or citizenid
@@ -135,6 +179,8 @@ function M.person(src, input)
     end
 
     C.audit(src, 'lookup.person', 'person', cid, { source = 'summary', found = true })
+    refs = M.withIntelNotices(src, cid, refs)
+    M.flagLookup(src, cid)
     return C.ok({
         person = person,
         vehicles = vehiclesOf(src, cid),

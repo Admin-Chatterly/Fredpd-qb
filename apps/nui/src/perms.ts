@@ -9,6 +9,15 @@ export const PERMS = {
   boloCreate: 'bolo.create',
   boloResolve: 'bolo.resolve',
   tabletsManage: 'tablets.manage',
+  alertsManage: 'alerts.manage',
+  casesCreate: 'cases.create',
+  recordsAdmin: 'records.admin',
+  chargesApply: 'charges.apply',
+  chargesFine: 'charges.fine',
+  evidenceLink: 'evidence.link',
+  intelRead: 'intel.read',
+  intelHandler: 'intel.handler',
+  intelCommand: 'intel.command',
 } as const;
 
 export type NuiPerm = (typeof PERMS)[keyof typeof PERMS];

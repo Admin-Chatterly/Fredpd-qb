@@ -467,8 +467,12 @@ end
 tests['12 main.lua: exports registered; a database failure is unavailable, logged'] = function(t)
     H.with(t, function(_, env, mods)
         local main = H.loadMain(mods)
-        t.eq(H.keys(env.exported), { 'countMyOpenCases', 'getHomeCases', 'getPersonSummary', 'getVehicleSummary',
-            'search' })
+        t.eq(H.keys(env.exported), { 'addAssignee', 'addCaseSubject', 'addCharge', 'applyCharges', 'assignCase',
+            'closeCase', 'countMyOpenCases', 'createCase', 'createReleaseRequest', 'createReleaseRequestPortal',
+            'createReport', 'createShare', 'decideReleaseRequest', 'getCase', 'getHomeCases', 'getPersonSummary', 'getPoi',
+            'getReport', 'getVehicleSummary', 'issueFine', 'listCases', 'listCharges', 'listReleaseRequests',
+            'listReportTemplates', 'revokeShare', 'saveReport', 'saveReportDraft', 'search', 'unassignCase', 'updateCase',
+            'updatePoi', 'viewShare' })
         H.seedPeople()
         local ok = env.exported.search(1, { query = 'Berg' })
         t.eq(ok.ok, true)

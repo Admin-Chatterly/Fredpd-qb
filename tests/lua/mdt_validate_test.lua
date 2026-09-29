@@ -3,7 +3,7 @@
 -- against packages/types/test/fixtures/mdt-inputs.fixtures.json, the same file resources/[fredpd]/fredpd_mdt/test/
 -- validate.test.ts runs through the zod schemas: every valid sample must give zod's cleaned value, every invalid
 -- sample must be refused, and the action set must match the fixtures (which the vitest side matches against
--- MDT_ACTIONS + DISPATCH_ACTIONS + EVIDENCE_ACTIONS).
+-- MDT_ACTIONS + DISPATCH_ACTIONS + EVIDENCE_ACTIONS + RECORDS_ACTIONS + INTEL_ACTIONS).
 -- Run: lua5.4 tests/lua/run.lua mdt_validate
 local helper = require('helper')
 
@@ -32,7 +32,7 @@ tests['fixtures: every valid sample gives the cleaned value zod gives'] = functi
             n = n + 1
         end
     end
-    t.ok(n >= 40, 'at least 40 valid samples, got ' .. n)
+    t.ok(n >= 110, 'at least 110 valid samples, got ' .. n)
 end
 
 tests['fixtures: every invalid sample is refused'] = function(t)
@@ -47,7 +47,7 @@ tests['fixtures: every invalid sample is refused'] = function(t)
             n = n + 1
         end
     end
-    t.ok(n >= 60, 'at least 60 invalid samples, got ' .. n)
+    t.ok(n >= 180, 'at least 180 invalid samples, got ' .. n)
 end
 
 tests['fixtures: the action set and each action shape match validate.lua'] = function(t)
@@ -131,6 +131,55 @@ tests['BoloCreateInput refine reports the kind field'] = function(t)
     t.eq(field, 'kind')
     t.eq(V.check('BoloCreateInput', { kind = 'vehicle', plate = ' abc 12d ', reason = ' Rån ' }),
         { kind = 'vehicle', plate = 'abc 12d', reason = 'Rån', level = 0 })
+end
+
+tests['arrays: sequences only (no holes, no extra keys), items cleaned, min/max'] = function(t)
+    local base = { reportId = 1, citizenid = 'ABC' }
+    local function lines(v)
+        local input = { reportId = base.reportId, citizenid = base.citizenid, lines = v }
+        return V.check('ApplyChargesInput', input)
+    end
+    t.eq(lines({ { code = 'X' } }).lines, { { code = 'X', quantity = 1 } })
+    t.eq(lines({ [1] = { code = 'X' }, [3] = { code = 'Y' } }), nil, 'hole')
+    t.eq(lines({ { code = 'X' }, extra = 1 }), nil, 'extra key')
+    t.eq(lines({ [0] = { code = 'X' } }), nil, 'index 0')
+    t.eq(lines({ [1.5] = { code = 'X' } }), nil, 'float key')
+    t.eq(lines({}), nil, 'min 1 ([] and {} alike)')
+    t.eq(lines('X'), nil)
+    t.eq(lines({ { code = 'X' }, { code = 'X', quantity = 0 } }), nil, 'one bad item refuses all')
+    local ten = {}
+    for i = 1, 10 do ten[i] = { code = 'C' .. i } end
+    t.eq(#V.check('IssueFineInput', { citizenid = 'ABC', lines = ten }).lines, 10)
+    ten[11] = { code = 'C11' }
+    t.eq(V.check('IssueFineInput', { citizenid = 'ABC', lines = ten }), nil, 'max 10')
+end
+
+tests['unions: the first option that parses wins, with only its keys'] = function(t)
+    local function to(v) local out = V.check('AddLinkInput', { fromId = 1, to = v, type = 'ab' }); return out and out.to end
+    t.eq(to({ id = 5, type = 'person', label = 'x' }), { id = 5 })
+    t.eq(to({ id = 0, type = 'person', label = ' x ' }), { type = 'person', label = 'x' })
+    t.eq(to({ id = '5', type = 'group', label = 'x', ref = ' r ' }), { type = 'group', label = 'x', ref = 'r' })
+    t.eq(to({ id = 0 }), nil)
+    t.eq(to({ { id = 1 } }), nil, 'an array is not an object')
+    t.eq(to(true), nil)
+end
+
+tests['long fields: the byte cap follows the field max (report body 100 000 code points)'] = function(t)
+    local body = ('ö'):rep(100000) -- 200 000 bytes, 100 000 code points
+    t.eq(#V.check('ReportSaveInput', { id = 1, title = 'Förhör', body = body, level = 0 }).body, 200000)
+    t.eq(V.check('ReportSaveInput', { id = 1, title = 'Förhör', body = body .. 'x', level = 0 }), nil, 'max')
+    t.eq(V.check('ReportDraftInput', { reportId = 1, body = ('😀'):rep(100000) }).reportId, 1, '4-byte code points fit')
+end
+
+tests['every RECORDS/INTEL action has a shape, and shared shapes are shared on purpose'] = function(t)
+    for _, name in ipairs({ 'getCase', 'getReport', 'getSource', 'getIntelReport', 'getEntity', 'getMission',
+        'closeMission' }) do
+        t.eq(V.ACTIONS[name], 'IdInput', name)
+    end
+    t.eq(V.ACTIONS.listSources, 'PageInput')
+    t.eq(V.ACTIONS.listMissions, 'PageInput')
+    t.eq(V.ACTIONS.listReportTemplates, 'Empty')
+    t.eq(#V.actionNames(), 52)
 end
 
 return tests

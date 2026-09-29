@@ -4,7 +4,7 @@
 The police tablet: the `pd_tablet` item and the vehicle terminal, the NUI host (the `apps/nui` bundle), the one
 server callback every tablet action goes through, Hem data (`getHome`) and the tablet registry (`fredpd_tablets`,
 Ledning page "Surfplattor"). Implements IMPLEMENTATION.md §4.3, §4.6, §4.7, §5.2, §8.3, §8.4, §8.12 and
-docs/contracts.md §C1, §C6, §C12 (plus the §C13/§C16 action merges).
+docs/contracts.md §C1, §C6, §C12 (plus the §C13/§C14/§C15/§C16 action merges).
 
 ## Files
 
@@ -12,7 +12,7 @@ docs/contracts.md §C1, §C6, §C12 (plus the §C13/§C16 action merges).
 |---|---|
 | `fxmanifest.lua` | deps ox_lib, oxmysql, ox_inventory, ox_target, qbx_core, fredpd_core; `ui_page 'web/build/index.html'`; `files` = web/build, locales, `config.lua`, `shared/validate.lua` |
 | `config.lua` | item name, prop/anim, terminal models and seats, `requireOwner`, serial format, rate limits, page size (client-readable, nothing secret) |
-| `shared/validate.lua` | Lua mirror of the tablet input shapes (table-driven), `ACTIONS` = action → shape |
+| `shared/validate.lua` | Lua mirror of the tablet input shapes (table-driven, incl. nested objects, unions, arrays, refines), `ACTIONS` = action → shape (52 actions, 40 shapes) |
 | `server/main.lua` | registers the callbacks, `fredpd:mdt:closed`, exports, the close-on-event handlers, `/surfplatta` |
 | `server/open.lua` | open flow, `Open[src]` sessions, pushes, forced closes |
 | `server/dispatch.lua` | the §C12 dispatcher and its action table |
@@ -83,28 +83,47 @@ throttled per resource and function).
 | listTablets | perm:tablets.manage | read | local `tablets.lua` |
 | setTabletRevoked | perm:tablets.manage | write | local `tablets.lua` |
 | listAlerts / getUnits | mdt_page:alerts | read | fredpd_dispatch (§C13) |
-| takeAlert / leaveAlert / closeAlert | mdt_page:alerts | write | fredpd_dispatch |
+| takeAlert | mdt_page:alerts | write | fredpd_dispatch:**assignSelf** (§C13 name; `takeAlert` is an alias there) |
+| leaveAlert / closeAlert | mdt_page:alerts | write | fredpd_dispatch |
 | listEvidence / getEvidence | mdt_page:evidence | read | fredpd_forensics (§C16) |
 | linkEvidence | perm:evidence.link | write | fredpd_forensics |
+| listCases / getCase / getReport / listReportTemplates | mdt_page:cases | read | fredpd_records:<same name> (§C14) |
+| updateCase / assignCase / unassignCase / addCaseSubject / closeCase / createReport / saveReport | mdt_page:cases | write | fredpd_records |
+| saveReportDraft | mdt_page:cases | **draft (5 s)** | fredpd_records |
+| createCase | perm:cases.create | write | fredpd_records |
+| listCharges | – (duty only) | read | fredpd_records |
+| applyCharges / issueFine | perm:charges.apply / perm:charges.fine | write | fredpd_records |
+| listSources / getSource / listIntelReports / getIntelReport / getGraph | perm:intel.read | read | fredpd_intel:<same name> (§C15) |
+| searchEntities / getEntity / listMissions / getMission | mdt_page:intel | read | fredpd_intel |
+| createSource / updateSource | perm:intel.handler | write | fredpd_intel |
+| createIntelReport / ensureEntity / addLink / addMissionMember / closeMission | perm:intel.read | write | fredpd_intel |
+| createMission | perm:intel.command | write | fredpd_intel |
 
-Limits (config): lookup 500 ms and write 2 s (§C12), **read 250 ms** (our choice for list/get/home reads, which
-§C12 leaves open). The grant column is the same as MDT_ACTIONS / DISPATCH_ACTIONS / EVIDENCE_ACTIONS: the fixture
-file records it, vitest compares it with the TS registries and `mdt_dispatch_test` with this table.
-
-**Not merged yet:** RECORDS_ACTIONS (§C14) and INTEL_ACTIONS (§C15): their exports do not exist. Adding them is one
-row here, one shape in `validate.lua` and fixtures.
+Limits (config, per player per action): lookup 500 ms and write 2 s (§C12); **read 500 ms** and **draft 5 s** are
+our choice (§C12 leaves them open; the NUI debounces autosave ≥ 10 s anyway, §C14). The grant column is the same as
+MDT_ACTIONS / DISPATCH_ACTIONS / EVIDENCE_ACTIONS / RECORDS_ACTIONS / INTEL_ACTIONS: the fixture file records it,
+vitest compares it with the TS registries (and that no name is in two registries) and `mdt_dispatch_test` with this
+table. Every export call is `pcall`ed: a resource not `started`, a missing export (FiveM raises "No such export"), a
+raise or an answer without `{ ok }` → `unavailable` (logged, throttled per resource/function). Fine-grained rules
+(owner/lead/records.admin, canView, handler/command, audits) stay in the owning resource.
 
 ## Validation (`shared/validate.lua`)
 
-Shapes mirror zod 4.6 exactly: JS `trim` white space set (incl. U+00A0, U+2000–200A, U+3000, U+FEFF), **string
+Shapes mirror zod 4.6 exactly (field kinds: string, int, bool, enum, number literal, nested object, union of
+objects — first option that parses wins, as zod — and array of a kind, which must be a Lua sequence 1..n with no
+other keys): JS `trim` white space set (incl. U+00A0, U+2000–200A, U+3000, U+FEFF), **string
 lengths in code points** (zod ≥ 4.6 counts code points, not UTF-16 units: an emoji is 1), ints must be integral
 numbers within ±(2^53 − 1) (1.0 is accepted and becomes 1), defaults filled, unknown keys dropped (strict `Empty`
-refuses them), BoloCreate refine. Checked twice against `packages/types/test/fixtures/mdt-inputs.fixtures.json`
-(15 shapes, 19 actions, 52 valid samples with zod's output, 86 invalid) and, in vitest, a generated corpus of ~675
-inputs run through zod and Lua must give the same decision and cleaned value.
-Known, harmless differences: invalid UTF-8 and strings over 64 KiB are refused by Lua only (JS cannot hold the
-first; nothing legitimate reaches the second); JSON `null` arrives in Lua as an absent field, so an optional field
-sent as `null` is accepted as absent (zod refuses); `[]` and `{}` are the same Lua table.
+refuses them), BoloCreate and CaseSubject refines (reported on `kind` / `type`). Checked twice against
+`packages/types/test/fixtures/mdt-inputs.fixtures.json` (40 shapes, 52 actions — every action has valid and invalid
+samples —, 113 valid samples with zod's output, 186 invalid) and, in vitest, a generated corpus of ~1800 inputs
+(incl. nested `to` / `lines` values) run through zod and Lua must give the same decision and cleaned value.
+Known differences: invalid UTF-8 and strings over max(64 KiB, 4 × the field's max) bytes are refused by Lua only (JS
+cannot hold the first; the second can only be hit by whitespace that trim would remove); `[]` and `{}` are the same
+Lua table (arrays here all have `min(1)`, so both are refused). JSON `null` arrives in Lua as an absent field, so an
+optional field sent as `null` is accepted as absent (zod refuses). **This matters for the `.nullable().optional()`
+fields** `updateCase.summary` and `updateSource.notes`: `null` ("clear it") reaches fredpd_records / fredpd_intel as
+"no change". Integration request below: clear with `''` instead.
 
 ## Pushes (exports)
 
@@ -117,6 +136,10 @@ sent as `null` is accepted as absent (zod refuses); `[]` and `{}` are the same L
   `fredpd:client:grantsChanged` → push topic `grants` while open.
 
 ## getHome (`server/home.lua`)
+
+**Open alerts count: not added.** HomeOutput.counts is `{ activeBolos, myOpenCases, onDuty }`; an extra key would be
+stripped by the NUI's zod parse and is not in the type, so getHome does not call fredpd_dispatch (integration
+request 1 below).
 
 `me` = OfficerRef (as above, with `unit`); `variant` = `config/units.json` `home` of the primary unit (first of
 `getUnits`), read once from `fredpd_core/config/units.json`; no unit, unknown unit or unreadable file → `igv`
@@ -203,17 +226,21 @@ New keys in `locales/pending/mdt.json` (8): `tablet.unregistered`, `tablet.issue
 `tablet.issueCannotCarry`, `tablet.issueFailed`, `tablet.received`, `tablet.itemSerial`,
 `audit.action.tablet.reinstate`. Everything else reuses existing `tablet.*` / `errors.*` keys and core's pending
 `officer.unnamed`. `mdt_locale_test` checks every key the code uses exists in sv and en with equal placeholders.
+The Phase 3–5b wiring adds no player-facing text (errors are codes; the NUI localises them), so there is no
+`locales/pending/mdt-wiring.json`.
 Note: `tablet.issued` ends with "." after `{name}`, so a name ending in "." shows two dots.
 
 ## Tests
 
-- `lua5.4 tests/lua/run.lua mdt_` — 59 tests: `mdt_validate` (fixtures, JS trim, code points, ints, defaults,
+- `lua5.4 tests/lua/run.lua mdt_` — 68 tests: `mdt_validate` (fixtures, JS trim, code points, ints, defaults,
   refine), `mdt_dispatch` (order, grants vs fixtures, limits, routing with cleaned input, unwrap, close, main.lua
-  wiring), `mdt_open` (every refusal with its Swedish text, payload, slot/serial choice, requireOwner, fail closed,
+  wiring; RECORDS/INTEL: every valid fixture sample routed to the same-named export with zod's cleaned value, limit
+  class and window per action, each grant column removed → unauthorized and not routed, listCharges duty-only,
+  stopped resource / missing export / raise / malformed → unavailable, union/array/refine cleaning), `mdt_open` (every refusal with its Swedish text, payload, slot/serial choice, requireOwner, fail closed,
   rate limit, terminal incl. signed/unsigned model hashes, sessions, forced closes, pushes), `mdt_home`,
   `mdt_tablets` (MariaDB `fredpd_test_mdt_lua`, sessions at `+02:00`: issue/row/metadata/audit, collisions,
   rollback, command, list/paging/ISO UTC, revoke/force-close/reinstate), `mdt_client`, `mdt_locale`.
-- `pnpm exec vitest run --project resources fredpd_mdt` — 42 tests (`validate.test.ts`: fixtures vs zod, grant
+- `pnpm exec vitest run --project resources fredpd_mdt` — 92 tests (`validate.test.ts`: fixtures vs zod, grant
   columns vs registries, zod/Lua corpus parity; `contract.test.ts`: golden open payload, Hem, tablet list/row vs
   the zod schemas after restoring Lua's absent nulls).
 - `pnpm exec tsc -p "resources/[fredpd]/fredpd_mdt/test/tsconfig.json"` (resources/ is not a workspace package; the
@@ -229,6 +256,9 @@ Note: `tablet.issued` ends with "." after `{name}`, so a name ending in "." show
 5. `CEventNetworkEntityDamage` argument 1 = victim; the qbx death state bag key `isDead`.
 6. `lib.callback.await` inside `RegisterNUICallback` handlers; `SetNuiFocus` being per resource.
 7. Open → first paint < 300 ms and resmon idle 0.00 / open ≤ 0.05 ms (no threads or timers exist, only handlers).
+8. `exports.<res>:<fn>` for an export the (started) resource does not register raises (caught → `unavailable`),
+   and nested arrays/objects (`lines`, `to`) survive NUI → client → server msgpack as Lua sequences/tables.
+9. A 100 000-code-point report body through `lib.callback` (≈ 400 KB worst case) within ox_lib/FiveM event limits.
 
 ## Decisions and questions for the contract owner
 
@@ -244,3 +274,18 @@ Note: `tablet.issued` ends with "." after `{name}`, so a name ending in "." show
    `pd_tablet`) that force-closes when the serial leaves the inventory. The terminal is re-checked per action.
 7. `pushToOpenTablets` gained the duty/topic-grant rules dispatch.md asked for and an optional filter argument.
 8. §C12 names no Hem variant for officers without a unit: `igv` is used.
+9. RECORDS_ACTIONS and INTEL_ACTIONS merged (fredpd_records exports coded against §C14's convention — same names —
+   while that module is being written; until an export exists the action answers `unavailable`).
+10. `takeAlert` routes to `assignSelf` (§C13's export name).
+
+## Integration requests (Phase 3–5b wiring)
+
+1. **Contract owner (mdt.ts HomeOutput):** add `counts.openAlerts: z.number().int().optional()` (open alerts for
+   holders of `mdt_page:alerts`, else absent). fredpd_mdt would fill it from one
+   `fredpd_dispatch:listAlerts(src, { filter = 'open', page = 1 })` (`data.total`, pcall'd, 0 on failure); a
+   cheaper `countOpenAlerts(src)` export in fredpd_dispatch would avoid building 50 Alert rows.
+2. **NUI / fredpd_records / fredpd_intel:** `updateCase.summary` and `updateSource.notes` cannot be cleared with
+   `null` through the tablet (Lua has no null); treat `''` (valid in zod: trimmed, no min) as "clear".
+3. **fredpd_records:** export every RECORDS_ACTIONS name with `(src, input) → { ok, data | error }`; the
+   dispatcher already checked grant/duty/limit, but re-validate (any resource can call exports).
+4. **Contract owner:** record in §C12 the read (500 ms) and draft (5 s) limit classes.

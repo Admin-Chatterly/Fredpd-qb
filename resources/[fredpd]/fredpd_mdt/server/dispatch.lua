@@ -5,11 +5,13 @@
 --   2. unknown action / input not matching the shape (shared/validate.lua)     -> { error = 'validation' }
 --   3. the action's grant (exports.fredpd_core:hasGrant)                       -> { error = 'unauthorized' }
 --      on duty for every action except `close`                                 -> { error = 'unauthorized', reason = 'off_duty' }
---   4. rate limit per src per action (lookup 500 ms, write 2 s, read 250 ms)   -> { error = 'rate_limited' }
+--   4. rate limit per src per action (lookup/read 500 ms, write 2 s, draft 5 s) -> { error = 'rate_limited' }
 --   5. route: the owning resource's export (src, input) or a local handler; { ok, data } is unwrapped to data,
 --      { ok = false, error } to { error } (an unknown code or a raise -> 'unavailable').
--- The action table merges MDT_ACTIONS (mdt.ts), DISPATCH_ACTIONS (dispatch.ts, §C13) and EVIDENCE_ACTIONS
--- (evidence.ts, §C16); their grant columns are checked against packages/types by the fixtures (mdt_dispatch_test).
+-- The action table merges MDT_ACTIONS (mdt.ts), DISPATCH_ACTIONS (dispatch.ts, §C13), EVIDENCE_ACTIONS
+-- (evidence.ts, §C16), RECORDS_ACTIONS (records.ts, §C14) and INTEL_ACTIONS (intel.ts, §C15); their grant columns are
+-- checked against packages/types by the fixtures (mdt_dispatch_test, validate.test.ts). Every routed export is called
+-- under pcall; a stopped resource, a missing export or a raise answers { error = 'unavailable' } (common.lua).
 
 local C = require 'server.common'
 local Open = require 'server.open'
@@ -23,8 +25,21 @@ local M = {}
 local SEARCH = { 'mdt_page', 'search' }
 local ALERTS = { 'mdt_page', 'alerts' }
 local EVIDENCE = { 'mdt_page', 'evidence' }
+local CASES = { 'mdt_page', 'cases' }
+local INTEL_PAGE = { 'mdt_page', 'intel' }
+local INTEL_READ = { 'perm', 'intel.read' }
+local INTEL_HANDLER = { 'perm', 'intel.handler' }
 
---- name -> { grant = { type, key } | nil, limit = 'lookup'|'write'|'read'|nil, route = { resource, export } |
+--- Route helpers: the export has the action's own name (RECORDS_ACTIONS -> fredpd_records, INTEL_ACTIONS ->
+--- fredpd_intel; docs/modules/records.md, docs/modules/intel.md).
+local function records(name, grant, limit)
+    return name, { grant = grant, limit = limit, route = { 'fredpd_records', name } }
+end
+local function intel(name, grant, limit)
+    return name, { grant = grant, limit = limit, route = { 'fredpd_intel', name } }
+end
+
+--- name -> { grant = { type, key } | nil, limit = 'lookup'|'write'|'read'|'draft'|nil, route = { resource, export } |
 --- handler = function(src, input) -> { ok, data | error } }. Every name must also be a Validate.ACTIONS key.
 M.ACTIONS = {
     -- MDT_ACTIONS
@@ -44,7 +59,8 @@ M.ACTIONS = {
     setTabletRevoked = { grant = { 'perm', 'tablets.manage' }, limit = 'write', handler = Tablets.setRevoked },
     -- DISPATCH_ACTIONS (§C13)
     listAlerts = { grant = ALERTS, limit = 'read', route = { 'fredpd_dispatch', 'listAlerts' } },
-    takeAlert = { grant = ALERTS, limit = 'write', route = { 'fredpd_dispatch', 'takeAlert' } },
+    -- §C13 names the export assignSelf (= takeAlert); fredpd_dispatch exports both.
+    takeAlert = { grant = ALERTS, limit = 'write', route = { 'fredpd_dispatch', 'assignSelf' } },
     leaveAlert = { grant = ALERTS, limit = 'write', route = { 'fredpd_dispatch', 'leaveAlert' } },
     closeAlert = { grant = ALERTS, limit = 'write', route = { 'fredpd_dispatch', 'closeAlert' } },
     getUnits = { grant = ALERTS, limit = 'read', route = { 'fredpd_dispatch', 'getUnits' } },
@@ -53,6 +69,46 @@ M.ACTIONS = {
     getEvidence = { grant = EVIDENCE, limit = 'read', route = { 'fredpd_forensics', 'getEvidence' } },
     linkEvidence = { grant = { 'perm', 'evidence.link' }, limit = 'write', route = { 'fredpd_forensics', 'linkEvidence' } },
 }
+
+for _, entry in ipairs({
+    -- RECORDS_ACTIONS (§C14): fine rules (owner, lead, records.admin, canView) are enforced in fredpd_records.
+    { records('listCases', CASES, 'read') },
+    { records('getCase', CASES, 'read') },
+    { records('createCase', { 'perm', 'cases.create' }, 'write') },
+    { records('updateCase', CASES, 'write') },
+    { records('assignCase', CASES, 'write') },
+    { records('unassignCase', CASES, 'write') },
+    { records('addCaseSubject', CASES, 'write') },
+    { records('closeCase', CASES, 'write') },
+    { records('getReport', CASES, 'read') },
+    { records('createReport', CASES, 'write') },
+    { records('saveReport', CASES, 'write') },
+    { records('saveReportDraft', CASES, 'draft') },
+    { records('listReportTemplates', CASES, 'read') },
+    { records('listCharges', nil, 'read') },
+    { records('applyCharges', { 'perm', 'charges.apply' }, 'write') },
+    { records('issueFine', { 'perm', 'charges.fine' }, 'write') },
+    -- INTEL_ACTIONS (§C15): canView, handler/command rules and audits live in fredpd_intel.
+    { intel('listSources', INTEL_READ, 'read') },
+    { intel('getSource', INTEL_READ, 'read') },
+    { intel('createSource', INTEL_HANDLER, 'write') },
+    { intel('updateSource', INTEL_HANDLER, 'write') },
+    { intel('listIntelReports', INTEL_READ, 'read') },
+    { intel('getIntelReport', INTEL_READ, 'read') },
+    { intel('createIntelReport', INTEL_READ, 'write') },
+    { intel('searchEntities', INTEL_PAGE, 'read') },
+    { intel('ensureEntity', INTEL_READ, 'write') },
+    { intel('getEntity', INTEL_PAGE, 'read') },
+    { intel('addLink', INTEL_READ, 'write') },
+    { intel('getGraph', INTEL_READ, 'read') },
+    { intel('listMissions', INTEL_PAGE, 'read') },
+    { intel('getMission', INTEL_PAGE, 'read') },
+    { intel('createMission', { 'perm', 'intel.command' }, 'write') },
+    { intel('addMissionMember', INTEL_READ, 'write') },
+    { intel('closeMission', INTEL_READ, 'write') },
+}) do
+    M.ACTIONS[entry[1]] = entry[2]
+end
 
 local REASON_PATTERN = '^[%a_]+$'
 
