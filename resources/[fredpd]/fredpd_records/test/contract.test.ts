@@ -20,6 +20,15 @@ import {
   SearchOutputSchema,
   VehicleSummarySchema,
 } from '../../../../packages/types/src/mdt';
+import {
+  ApplyChargesOutputSchema,
+  CaseDetailSchema,
+  CaseListOutputSchema,
+  ChargeListOutputSchema,
+  RECORDS_ACTIONS,
+  ReportDetailSchema,
+} from '../../../../packages/types/src/records';
+import { PoiViewSchema, ReleaseRequestSchema } from './proposed';
 
 const here = dirname(fileURLToPath(import.meta.url));
 const GOLDEN = join(here, 'golden');
@@ -46,7 +55,26 @@ const SCHEMAS: Record<string, Schema> = {
   'vehicle.summary': as(VehicleSummarySchema),
   'vehicle.unregistered': as(VehicleSummarySchema),
   'home.cases': as(HomeOutputSchema.shape.myCases),
+  // Phase 5 (§C14)
+  'case.full': as(CaseDetailSchema),
+  'case.masked': as(CaseDetailSchema),
+  'case.notice': as(CaseDetailSchema),
+  'cases.list': as(CaseListOutputSchema),
+  'report.detail': as(ReportDetailSchema),
+  'templates.list': as(RECORDS_ACTIONS.listReportTemplates.output),
+  'charges.list': as(ChargeListOutputSchema),
+  'charges.applied': as(ApplyChargesOutputSchema),
+  // Phase 5 additions without a contract schema yet (test/proposed.ts; docs/modules/records.md)
+  'poi.full': as(PoiViewSchema),
+  'poi.notice': as(PoiViewSchema),
+  'release.decided': as(ReleaseRequestSchema),
 };
+
+/** Golden files whose CaseRefs (objects with `visibility`) are the §C12 CaseRef shape. */
+const CASEREF_FILES = new Set([
+  'search.name', 'search.person-id', 'search.plate', 'search.case-full', 'search.case-notice', 'search.empty',
+  'person.summary', 'person.minimal', 'vehicle.summary', 'vehicle.unregistered', 'home.cases', 'cases.list',
+]);
 
 type Json = null | boolean | number | string | Json[] | { [k: string]: Json };
 
@@ -145,7 +173,7 @@ describe('fredpd_records golden JSON vs packages/types/src/mdt.ts', () => {
   }
 
   it('CaseRef variants carry exactly their fields: notice has no id, number, title or level', () => {
-    const refs = files.flatMap((name) => caseRefs(read(name)));
+    const refs = files.filter((name) => CASEREF_FILES.has(name)).flatMap((name) => caseRefs(read(name)));
     const seen = new Set<string>();
     for (const ref of refs) {
       const keys = Object.keys(ref).sort();
@@ -189,5 +217,42 @@ describe('fredpd_records golden JSON vs packages/types/src/mdt.ts', () => {
     expect([...times].sort().reverse()).toEqual(times);
     const person = read('person.summary') as { records: { createdAt: string }[] };
     expect(person.records[0]?.createdAt).toBe('2026-09-04T12:00:00Z');
+  });
+});
+
+describe('fredpd_records Phase 5 golden JSON: visibility shapes carry only what they may', () => {
+  it('a notice CaseDetail is exactly { visibility, contact }', () => {
+    const notice = read('case.notice') as Record<string, unknown>;
+    expect(Object.keys(notice).sort()).toEqual(['contact', 'visibility']);
+  });
+
+  it('masked CaseDetail: reports above the viewer tier have no title; the full view has them all', () => {
+    const masked = read('case.masked') as { visibility: string; reports: { level: number; title?: string }[] };
+    expect(masked.visibility).toBe('masked');
+    for (const r of masked.reports) {
+      if (r.level > 0) expect(r).not.toHaveProperty('title');
+      else expect(typeof r.title).toBe('string');
+    }
+    const full = read('case.full') as { reports: { title?: string }[]; timeline: unknown[] };
+    expect(full.reports.every((r) => typeof r.title === 'string')).toBe(true);
+    expect(full.timeline.length).toBeGreaterThan(0);
+  });
+
+  it('a notice POI sheet carries only its contact', () => {
+    const view = read('poi.notice') as { poi: Record<string, unknown> };
+    expect(Object.keys(view.poi).sort()).toEqual(['contact', 'visibility']);
+  });
+
+  it('a released export has no officer, subject or level > 0 content (§5.3 acceptance)', () => {
+    const text = JSON.stringify(read('release.decided'));
+    const released = JSON.stringify((read('release.decided') as { released: unknown }).released);
+    for (const banned of ['BEGRANSAD', 'HEMLIG', 'uppgiftslämnare']) expect(text).not.toContain(banned);
+    for (const field of ['author', 'subjects', 'evidence', 'citizenid', 'REC100']) expect(released).not.toContain(field);
+  });
+
+  it('charges totals add up', () => {
+    const applied = read('charges.applied') as { records: { fine: number; jailMinutes: number }[]; totals: { fine: number; jailMinutes: number } };
+    expect(applied.totals.fine).toBe(applied.records.reduce((sum, r) => sum + r.fine, 0));
+    expect(applied.totals.jailMinutes).toBe(applied.records.reduce((sum, r) => sum + r.jailMinutes, 0));
   });
 });

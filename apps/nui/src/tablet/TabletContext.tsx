@@ -123,7 +123,7 @@ export function TabletProvider({ queryClient, onReady, children }: TabletProvide
         const refetchType = visibleRef.current ? 'active' : 'none';
         void queryClient.invalidateQueries({ queryKey: [message.topic], refetchType });
         // alerts/units carry the new state: written into the cache (src/api/pushes.ts), never refetched.
-        if (!applyPushToCache(queryClient, message.topic, message.payload, state.session?.me.citizenid ?? null, refetchType)) {
+        if (!applyPushToCache(queryClient, message.topic, message.payload, state.session?.me.citizenid ?? null)) {
           void invalidateForPush(queryClient, message.topic, refetchType);
         }
         listeners.get(message.topic)?.forEach((listener) => listener(message.payload));

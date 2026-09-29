@@ -70,9 +70,9 @@ describe('header search', () => {
     typeAndEnter('abc 12d');
     expect(await screen.findByRole('heading', { level: 1, name: /ABC12D/ })).toBeTruthy();
     typeAndEnter('K-1042-26');
-    // /arende/:id is the Phase 5 placeholder: its subtitle is the id.
-    expect(await screen.findByRole('heading', { level: 1, name: 'Ärendenummer' })).toBeTruthy();
-    expect(screen.getByText('1042')).toBeTruthy();
+    // /arende/:id: the case page (full view) with its number and title.
+    expect(await screen.findByRole('heading', { level: 1, name: /K-1042-26/ })).toBeTruthy();
+    expect(screen.getByText('Grovt rån mot värdetransport, Legion Square')).toBeTruthy();
   });
 
   it('a kontaktnotis top hit is not opened: the results page shows only the notice', async () => {

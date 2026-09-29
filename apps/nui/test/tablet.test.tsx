@@ -178,7 +178,7 @@ describe('navigation', () => {
     expect(screen.queryByRole('button', { name: 'Meny' })).toBeNull();
   });
 
-  it('caps the sidebar at 6 entries and puts the rest behind Meny', () => {
+  it('caps the sidebar at 6 entries and puts the rest behind Meny', async () => {
     mount();
     send(openMessage(['mdt_page:*']));
     expect(navLabels()).toEqual(['Hem', 'Larm', 'Sök', 'Efterlysningar', 'Ärenden']);
@@ -187,17 +187,17 @@ describe('navigation', () => {
     fireEvent.click(menu);
     expect(navLabels()).toHaveLength(10);
     fireEvent.click(screen.getByRole('link', { name: 'Bevis' }));
-    expect(screen.getByRole('heading', { name: 'Bevis' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Bevis' })).toBeTruthy();
     // Navigating from the menu folds it again; Meny is highlighted as holding the active page.
     expect(navLabels()).toHaveLength(5);
     expect(screen.getByRole('button', { name: 'Meny' }).className).toContain('bg-accent-soft');
   });
 
-  it('follows a grants push while open and guards routes without the grant', () => {
+  it('follows a grants push while open and guards routes without the grant', async () => {
     mount();
     send(openMessage(['mdt_page:search', 'mdt_page:alerts']));
     fireEvent.click(screen.getByRole('link', { name: 'Larm' }));
-    expect(screen.getByRole('heading', { name: 'Larm' })).toBeTruthy();
+    expect(await screen.findByRole('heading', { level: 1, name: 'Larm' })).toBeTruthy();
     send({ action: 'push', topic: 'grants', payload: grantSet(['mdt_page:search']) });
     expect(navLabels()).toEqual(['Hem', 'Sök']);
     expect(screen.getByText('Du har inte behörighet att göra det här.')).toBeTruthy();

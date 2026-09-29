@@ -1,0 +1,18 @@
+{
+  "audit.action.case.subject": { "sv": "Inblandad tillagd i ärendet", "en": "Party added to the case" },
+  "audit.action.case.unassign": { "sv": "Handläggare borttagen", "en": "Case officer removed" },
+  "audit.action.case.update": { "sv": "Ärende ändrat", "en": "Case updated" },
+  "audit.action.charges.apply": { "sv": "Brott registrerade", "en": "Charges recorded" },
+  "audit.action.lookup.flag": { "sv": "Möjlig obehörig sökning flaggad", "en": "Possible unauthorised search flagged" },
+  "audit.action.poi.create": { "sv": "POI-blad upprättat", "en": "POI sheet created" },
+  "audit.action.poi.update": { "sv": "POI-blad ändrat", "en": "POI sheet updated" },
+  "audit.action.release.create": { "sv": "Begäran om allmän handling mottagen", "en": "Request for an official document received" },
+  "audit.action.report.save": { "sv": "Rapport sparad", "en": "Report saved" },
+  "audit.action.share.revoke": { "sv": "Delningslänk återkallad", "en": "Share link revoked" },
+  "audit.flag.unauthorizedSearchNotify": {
+    "sv": "Möjlig obehörig sökning: {officer} har slagit på {count} personer utan koppling till sina ärenden.",
+    "en": "Possible unauthorised search: {officer} looked up {count} people with no link to their cases."
+  },
+  "poi.warning.flight_risk": { "sv": "Rymningsbenägen", "en": "Flight risk" },
+  "poi.warning.gang": { "sv": "Kopplad till kriminellt nätverk", "en": "Linked to a criminal network" }
+}

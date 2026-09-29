@@ -1,8 +1,10 @@
 <!-- SPDX-License-Identifier: GPL-3.0-only -->
-# Module: fredpd_records (Phase 2 read paths)
+# Module: fredpd_records (Phase 2 read paths, Phase 5 writes)
 
 Tasks 2.3/2.4/2.5 server side and the "my cases" part of 2.7 (IMPLEMENTATION.md §5.3, §4.2, §4.5–§4.7, §8.6;
-docs/contracts.md §C3, §C7, §C12; shapes in `packages/types/src/mdt.ts`). Read only: no case writes until Phase 5.
+docs/contracts.md §C3, §C7, §C12; shapes in `packages/types/src/mdt.ts`), and Phase 5 tasks 5.1, 5.3 server, 5.4
+catalogue read, 5.5 server, 5.6 server (§C14; `packages/types/src/records.ts`). Phase 5 is described in
+["Phase 5 writes"](#phase-5-writes) at the end.
 
 ## Files
 
@@ -148,10 +150,243 @@ created (Phase 5), so this should not occur; the NUI restore step should map `[]
 
 ## Open questions
 
-1. No new locale keys: nothing here is player-facing (codes only), so no `locales/pending/records.json`.
+1. Phase 2 added no locale keys (codes only); Phase 5 adds `locales/pending/records-writes.json` (see below).
 2. **Contract request** (contract owner): add `countMyOpenCases(src) -> { ok, data = integer }` to §C12 (exported
    here, used by fredpd_mdt/server/home.lua) and `exports.fredpd_bolo:hasVisibleBolo(src, kind, id) -> boolean`
    (used by `server/common.lua` `boloFlag`; §C12 still lists only checkPlate/checkPerson/getBolosFor). The bolo owner
    should also list `hasVisibleBolo` in docs/modules/bolo.md. fredpd_records owns neither file.
 3. Should the person page also refresh a missing `fredpd_persons` row from `players` (like `refreshPlate`)? Today a
    character never mirrored (backfill not run) is `not_found`.
+
+---
+
+# Phase 5 writes
+
+Tasks 5.1, 5.3 (server), 5.4 (catalogue read), 5.5 (server), 5.6 (server). Contract §C14 +
+`packages/types/src/records.ts` `RECORDS_ACTIONS`; the fredpd_mdt dispatcher already routes every RECORDS_ACTIONS name
+to the export of the same name (fredpd_mdt `server/dispatch.lua`).
+
+## Files (Phase 5)
+
+| File | Role |
+|---|---|
+| `server/cases.lua` | listCases, getCase, createCase, updateCase, assignCase, unassignCase, addCaseSubject, closeCase; CaseDetail shaping, timeline, pushes |
+| `server/reports.lua` | getReport, createReport, saveReport, saveReportDraft, listReportTemplates |
+| `server/charges.lua` | listCharges, applyCharges (+ prison adapter), issueFine (billing) |
+| `server/poi.lua` | getPoi, updatePoi |
+| `server/shares.lua` + `server/random.js` | createShare, revokeShare, viewShare; CSPRNG export `randomToken` |
+| `server/releases.lua` | createReleaseRequest (+ lib.callback `fredpd:records:releaseRequest`), createReleaseRequestPortal, listReleaseRequests, decideReleaseRequest |
+| `server/export.lua` | masked exports (release: public tier-0 viewer; shares: max_level) |
+| `server/lookupflag.lua` | obehörig sökning, evaluated on each person lookup |
+| `db/migrations/013_records.sql` | additive: `fredpd_cases.resolution`, `fredpd_shares.max_level`, `fredpd_release_requests.channel` |
+| `db/seed/report_templates_sv.sql` | templates Anmälan, PM, Beslagsprotokoll, Förhör (ids 1-4, unit NULL) |
+| `test/contract.test.ts`, `test/proposed.ts`, `test/random.test.ts` | zod check of the new golden files; proposed schemas; random.js |
+| `tests/lua/records_{cases,reports,charges,access}_test.lua` | Lua tests (MariaDB) |
+| `locales/pending/records-writes.json` | 13 new keys (audit action labels, POI warnings, the Ledning flag notification) |
+
+## Common rules (every Phase 5 export)
+
+`(src, input)` → `{ ok = true, data }` | `{ ok = false, error, reason? }` (reason `^[%a_]+$`, forwarded by the
+dispatcher). Each export re-checks: src is a player id; the RECORDS_ACTIONS grant (`listCharges`, shares: any
+`mdt_page` grant); **on duty** (`reason = 'off_duty'`); a loaded character (the actor citizenid comes from
+`exports.fredpd_core:getCitizenId(src)`, never the input); input shapes re-validated (trimmed, lengths in code points,
+integers, enums, no unknown `type`s). Errors: `validation`, `unauthorized`, `not_found`, `rate_limited`,
+`unavailable` (Lua error / DB). Reads follow canView: `none` → `not_found` (never `unauthorized`), so existence
+does not leak; a `notice` viewer that tries to write gets `unauthorized` (existence is already known to it).
+Reasons used: `off_duty`, `level_above_tier`, `lowering_needs_admin`, `unit`, `case_closed`, `unknown_officer`,
+`not_assigned`, `person`, `vehicle`, `template`, `notice`, `unknown_charge`, `not_ordningsbot`, `target_offline`,
+`target_too_far`, `insufficient_funds`, `payment_failed`, `self`, `zero_fine`, `already_decided`, `no_target`,
+`nothing_releasable`.
+
+Roles on a case: **editor** = owner, lead assignee or `records.admin` (update, assign, unassign, close, and edit
+of any report); **contributor** = editor or any assignee (add subjects). createReport needs canView `full` on an open
+case (owner, assignees, the owning unit, records.admin). Report edit (save, draft, charges) = author, case editor;
+case open; report level ≤ actor tier.
+
+Level rules (cases, reports, POI): never above the actor's tier (`level_above_tier`); lowering needs `records.admin`
+(`lowering_needs_admin`); closing keeps the level.
+
+Every write is audited via `exports.fredpd_core:audit` with `meta.label` = a short safe label used as the timeline
+`detail` (case number, report number, officer display name, subject label, formatted amount). Actions:
+`case.create|update|assign|unassign|subject|close`, `report.create|save`, `charges.apply`, `fine.issue`,
+`poi.create|update`, `share.create|revoke|view`, `release.create|decide`, `lookup.flag`. Not audited (§C7): drafts,
+`fredpd_sequences`. Case writes push topic `case` `{ type = 'caseUpdated', caseId }` to the open tablets of the
+owner/assignees only (filter function passed to `pushToOpenTablets`) and fire `TriggerEvent('fredpd:caseUpdated', id)`.
+
+## Cases
+
+- **Numbering**: `seq` from `fredpd_sequences` (`seq_type 'case'`, Stockholm year via `formatId('{{yyyy}}')`)
+  with `INSERT … VALUES (?, ?, LAST_INSERT_ID(1)) ON DUPLICATE KEY UPDATE value = LAST_INSERT_ID(value + 1)` (the
+  insert id is the allocated value; same SQL as fredpd_core `db.NEXT_SEQ_SQL`), then
+  `formatId(caseNumber, { seq, date })`, then the insert. Deviation from §C14's "same transaction": oxmysql's
+  `transaction.await` is a fixed batch and `startTransaction` is experimental (docs/deps-verification.md §10); the
+  atomic counter can never hand out a value twice, a failed insert leaves a gap. A number that is already taken (a
+  hand-made row) is skipped with a warning (≤ 3 attempts). Tests: 3 interleaved creates and 6 parallel clients × 8
+  allocations (48 distinct values 1..48).
+- **CaseDetail**: full / masked / notice per §C14. `masked` shows title/summary/subjects/timeline only when the case
+  level ≤ tier. Report refs use the report's own canView (type `report`: report level, case status/unit/owner, case
+  assignees + author): `none` → omitted, `notice` / masked above tier → `title` null. Evidence from
+  `exports.fredpd_forensics:listCaseEvidence(src, { caseId })` (fallback `listEvidence`; pcall, `[]` when stopped);
+  items without a tag are skipped. Timeline: `fredpd_audit` rows of the case, its reports and its evidence ids, newest
+  first, max 100, without view rows (`lookup.*`, `search`, `share.view`, `report.read`); `detail` = `meta.label`
+  (or `meta.tag`), dropped if it is not safe text. The audit insert is asynchronous in fredpd_core, so the detail
+  returned right after a write may not yet contain that write's timeline entry.
+- `updateCase`: `summary = ''` clears it (JSON `null` cannot cross into Lua). `closeCase` stores `resolution` (013),
+  `closed_by`, `closed_at`. `assignCase` needs a `fredpd_officers` row; re-assigning changes the role; the assignee
+  gets `case.assignedToYou` (ox_lib notify) when online. `addCaseSubject`: person in `fredpd_persons`, plate in
+  `fredpd_vehicles_idx` (refreshPlate on a miss); re-adding updates the role.
+- `listCases`: filter `mine` (owner/assignee), `unit` (case unit ∈ actor units), `open`, `closed`, `all`; `query`
+  = case number or title (LIKE, wildcards escaped). At most 500 candidates are read (open first, newest first), then
+  canView; only `full`/`masked` refs are listed and counted (kontaktnotiser belong on person/vehicle pages; counting
+  them would reveal how many cases a unit has); a title match on a masked case whose title is hidden is dropped.
+  Page size 50; `total` = visible candidates (≤ 500).
+
+## Reports
+
+- `n` = `MAX(n)+1` read before a batch `[SELECT id FROM fredpd_cases WHERE id = ? FOR UPDATE; INSERT … SELECT … FROM
+  fredpd_cases WHERE id = ? AND status = 'open']`; a concurrent report with the same n fails the batch on
+  `uq_case_n`/`uq_report_number` and is retried with a fresh n (≤ 5; tested with two interleaved creates → exactly
+  one retry). A closed case inserts nothing → `case_closed`. `reportNumber = formatId(reportNumber, { case, n })`.
+- Body: markdown-lite stored as given; CRLF → LF; control characters except LF/TAB removed; invalid UTF-8 refused;
+  ≤ 100 000 code points. `saveReport` deletes the actor's draft for that report. Drafts: one per author and report
+  (`uq_author_report`), not audited, `savedAt` read back from the DB (UTC). Draft of a *new* report (report_id NULL)
+  is not offered: the NUI creates the report first.
+- `getReport` for a `notice` viewer → `unauthorized`/`notice` (ReportDetail has no kontaktnotis shape).
+- Templates: active, `unit IS NULL` or one of the actor's units, shared first; createReport with a template the actor
+  may not use → `template`.
+
+## Charges
+
+- `listCharges`: active rows; `query` on code, title or law ref; `class` filter; ≤ 500, `category, code` order.
+- `applyCharges`: report editable; person in `fredpd_persons`; every code active (`unknown_charge`); one batch:
+  subject `INSERT IGNORE … 'suspect'` when not yet a subject (an existing role is kept) + one `fredpd_records` row per
+  line (title/class/fine × quantity/jail × quantity snapshots, status `issued`, note). Returns the rows just inserted
+  and their totals. **Jail**: when the lines carry prison time and the person is online within 5 m of the officer (in
+  custody), `getAdapter('prison').jail(targetSrc, minutes, { { code, label } })`; the result goes into the audit meta
+  `jailed`. The shipped prison adapter is `none` (config/integrations.json): it logs and returns false, so nobody is
+  jailed until an xt-prison adapter exists (docs/modules/police.md request 2).
+- `issueFine`: every line class `ordningsbot` (`not_ordningsbot`); target online (`GetPlayerByCitizenId`), not the
+  officer, same routing bucket and ≤ 5 m (server-side ped coords) → else `target_offline` / `target_too_far`;
+  1 fine per 2 s per officer. Billing mirrors qbx_police's `police:server:IssueFine` (qbx_policejob
+  server/main.lua:596-657; its net event cannot be raised server-side with the officer as `source`):
+  `Player.Functions.RemoveMoney('bank', total, 'police-fine')` (`insufficient_funds`), then
+  `exports['Renewed-Banking']:addAccountMoney('police', total)` when Renewed-Banking runs (failure → refund,
+  `payment_failed`; not running → one warning, money is only taken). Rows are stored `paid` after the money moved;
+  a failed insert refunds. The target gets `charge.ordningsbot.received` with the formatted amount. Optional `caseId`
+  needs canView full on an open case; the audit then targets the case (timeline).
+
+## POI
+
+`getPoi(src, { citizenid })` → `{ citizenid, name, poi: PoiSheet | null }`; `updatePoi(src, { citizenid, summary?,
+warnings?, level?, status?, photoUrl? })` → same. canView type `poi` (default rules: records.admin, owner, unit,
+tier ≥ level → full, else kontaktnotis). Edit: full + (owner, member of the sheet's unit, records.admin); the first
+update creates the sheet (owner = actor, unit = primary unit). Warnings: `armed`, `violent`, `flight_risk`, `gang`
+(deduplicated, ≤ 8). `photoUrl`: `https://…` or `/uploads/<file>` (the service's upload path), ≤ 255; `''` clears.
+Shapes: `test/proposed.ts` `PoiViewSchema`.
+
+## Share links
+
+`createShare(src, { targetType: 'poi'|'case'|'report', targetId, expiresInHours: 1..168 })` → `{ id, token, path:
+'/share/<token>', expiresAt, maxLevel }`. Needs canView `full` on the target. Token = 32 bytes from Node
+`crypto.randomBytes` (this resource's JS export `randomToken`, base64url, 43 chars); if the export is missing the
+call fails `unavailable` (never `math.random`). Only `sha256_hex(token)` is stored (`fredpd_core/shared/sha256.lua`);
+the token is never logged or audited. `max_level` (013) = the creator's tier: a link never shows text above it, even
+when the creator could read more through an assignment. `revokeShare(src, { id })`: creator or records.admin
+(others get `not_found`). `viewShare(token)`: callable only from `fredpd_core` / this resource / the console
+(`GetInvokingResource`); unknown, expired or revoked → `not_found`; each view increments `view_count`, sets
+`last_viewed_at` and is audited `share.view`; content = `server/export.lua` at `max_level` (case: number, status,
+title, summary, dates, reports ≤ max_level; report; POI: name, level, status, summary, warnings, photo) — never
+officers, subjects, charges or evidence; `content` absent when the target is now above `max_level`.
+
+## Release requests (Begär ut allmän handling)
+
+- `createReleaseRequest(src, { description (3-2000), reference? (≤ 48) })`: any player with a character (the
+  station ox_target client is an integration request; the lib.callback `fredpd:records:releaseRequest` calls the
+  same function). 1 per 60 s per player. The reference is matched to a case/report number and stored; the requester
+  learns nothing about it. `createReleaseRequestPortal({ discordId, name, description, reference? })`: only via the
+  fredpd_core bridge (service). Both audit `release.create`, push `{ type = 'releaseRequest', id }` (topic `case`) to
+  open tablets with records.admin.
+- `listReleaseRequests(src, { status?, page })` and `decideReleaseRequest(src, { id, decision:
+  'approved'|'partial'|'denied', note?, targetType?, targetId? })`: perm records.admin. A pending request only
+  (`already_decided`, race-safe `WHERE status = 'pending'`). approved/partial need a target (`no_target`) and a
+  non-empty export (`nothing_releasable`), stored as JSON in `released_body`.
+- **Masking** (`server/export.lua`): canView (`shared/canview.lua` with the rules from `fredpd_visibility_rules`,
+  reloaded on `fredpd:rulesChanged`) for a public viewer (no character, tier 0, no units, no grants). Default rules:
+  a closed level-0 case → masked (releasable), an open case or a level ≥ 1 case → kontaktnotis (withheld). Content:
+  case number, status, level-0 title/summary, dates and the title/body of level-0 reports the public viewer may see.
+  No officers, subjects, charges, evidence, intel or resolution ("source fields"). Nothing above level 0 is ever read
+  into the export, so no Begränsad/Hemlig text can be released (test `access 04`, golden `release.decided`).
+- Shapes: `test/proposed.ts` `ReleaseRequestSchema`, `ReleasedContentSchema`.
+
+## Obehörig sökning
+
+On every `getPersonSummary` (after its `lookup.person` audit, also for `not_found`): count = distinct persons the
+officer looked up within `unauthorizedLookupWindowMinutes` (integrations.json, default 60) that are not a subject of
+a case the officer owns or is assigned to, plus the current person when unlinked. Distinct persons, not rows, because
+the audit insert of the current lookup is asynchronous. At `unauthorizedLookupThreshold` (default 3) → audit
+`lookup.flag` (target `officer`, meta `{ count, windowMinutes, threshold, persons ≤ 20 }`), push `{ type = 'lookupFlag',
+officer, count }` (topic `case`) to open tablets with records.admin, and `audit.flag.unauthorizedSearchNotify` to
+on-duty records.admin players. One flag per officer per window (in memory; no timers). Two indexed queries per
+lookup (`fredpd_audit (actor_citizenid, created_at)`, `fredpd_case_subjects idx_subject`). Alerts are not linked to
+persons in the schema, so "koppling till larm" is not counted.
+
+## Person page: intel notices
+
+`getPersonSummary` merges `exports.fredpd_intel:getPersonNotices(src, citizenid)` (pcall, only while fredpd_intel is
+started; plain array or `{ ok, data }` accepted; only `{ displayName, unit }` strings taken) into `cases[]` as notice
+CaseRefs, deduplicated by contact and re-sorted with the case notices (`caserefs.order`), so an intel notice cannot
+be told apart from a case notice.
+
+## Tests (Phase 5)
+
+- `lua5.4 tests/lua/run.lua records_` → **53 tests** (24 Phase 2 + cases 10, reports 7, charges 5, access 7).
+  The harness now also mocks qbx_core (players, bank), fredpd_mdt pushes, fredpd_forensics, fredpd_intel,
+  Renewed-Banking, the prison adapter, ped coords/buckets, `GetInvokingResource`, and can write audit rows to
+  `fredpd_audit` (`env.auditDb`). `H.interleave` runs functions as coroutines that yield before every SQL statement
+  (each shim statement is its own client session = a pool connection).
+- `pnpm exec vitest run --project resources fredpd_records` → **33 tests** (contract 31 incl. 12 new golden files,
+  random.js 2); `pnpm exec tsc -p "resources/[fredpd]/fredpd_records/test/tsconfig.json"`.
+
+## UNVERIFIED (Phase 5, needs FXServer)
+
+1. `exports.fredpd_records:randomToken(32)` from this resource's Lua into its own JS runtime (same-resource export
+   across runtimes) and Node's `base64url` encoding in FXServer's Node 22.
+2. oxmysql `MySQL.insert.await` returning the `LAST_INSERT_ID(expr)` value for `INSERT … ON DUPLICATE KEY UPDATE`
+   (MySQL protocol: the OK packet carries it; tested with the mariadb client here). A duplicate-key error from
+   `MySQL.insert.await` is caught either way (raise or nil + read-back).
+3. qbx_core `GetPlayerByCitizenId`/`GetPlayer` objects across the export boundary: `Functions.RemoveMoney` /
+   `AddMoney` callable as function references; `exports['Renewed-Banking']:addAccountMoney`.
+4. `GetEntityCoords(GetPlayerPed(src))` on the server under OneSync for the 5 m checks.
+5. The filter function passed to `exports.fredpd_mdt:pushToOpenTablets` arrives as a callable function reference.
+6. `GetInvokingResource()` in `viewShare`/`createReleaseRequestPortal` when called through the fredpd_core JS bridge
+   (expected `'fredpd_core'`).
+
+## Integration requests (Phase 5)
+
+1. **packages/types / contract owner**: add POI, share and release-request shapes and actions (proposed in
+   `test/proposed.ts`: `PoiViewSchema`, `PoiUpdateInputSchema`, `ShareCreateInputSchema`, `ShareCreatedSchema`,
+   `ReleaseRequestSchema`, `ReleasedContentSchema`, `ReleaseDecideInputSchema`) — suggested actions and grants:
+   `getPoi`/`updatePoi`/`createShare`/`revokeShare` (`mdt_page:search`), `listReleaseRequests`/
+   `decideReleaseRequest` (`perm:records.admin`). Record in §C14: the case-number deviation (atomic counter before the
+   insert, gaps allowed), `summary: ''` clears, the reasons list above, `listCases` omits notices, the new perm-free
+   exports `viewShare`/`createReleaseRequestPortal` (bridge only), 013 columns.
+2. **fredpd_mdt** (dispatcher): once 1 lands, route the POI/share/release actions to the same-named exports (write
+   limit for updatePoi/createShare/revokeShare/decideReleaseRequest). Push payloads on topic `case` now include
+   `{ type = 'releaseRequest', id }` and `{ type = 'lookupFlag', officer, count }` besides `caseUpdated`; a dedicated
+   topic (e.g. `ledning`) would be cleaner (`PUSH_TOPICS` owner).
+3. **fredpd_core (HTTP bridge owner)**: add signed routes for the service: `GET /share/:token` →
+   `exports.fredpd_records:viewShare(token)` and `POST /release` → `createReleaseRequestPortal(body)`. Optionally
+   export a `randomBytes`/`randomToken` from `http.js` (then fredpd_records can drop `random.js`), and a `billing`
+   adapter kind so issueFine does not hard-code Renewed-Banking.
+4. **apps/service**: `/share/:token` page (portal renders `ReleasedContent`-like content with `t()` labels; show
+   "innehållet är inte längre tillgängligt" when `content` is absent; 404 for `not_found`); release form →
+   bridge; Ledning release queue uses the records.admin actions.
+5. **Station ox_target client** ("Begär ut allmän handling", `release.target` key exists): an `lib.inputDialog` with
+   `release.field.description` / `release.field.reference` → `lib.callback.await('fredpd:records:releaseRequest', false,
+   { description, reference })`. Owner: whoever owns station zones (fredpd_police/mdt client); needs station
+   coordinates in config.
+6. **Locale owner**: merge `locales/pending/records-writes.json` (13 keys).
+7. **NUI**: CaseDetail `notice` shows only the contact; `reports[].title` may be null; ReportDetail errors with reason
+   `notice`; restore absent nullable keys as for Phase 2.
+8. **Prison**: until an xt-prison adapter exists, `applyCharges` records prison time but jails nobody (audit
+   `jailed = false`).

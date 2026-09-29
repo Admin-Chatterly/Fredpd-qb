@@ -247,7 +247,7 @@ tests['access 06 obehörig sökning: unlinked lookups reach the threshold -> loo
         t.eq(flags[1].meta.persons, { 'RP502', 'RP503', 'RP504' })
         t.eq(#env.notifies, 1, 'one Ledning notification')
         t.eq(env.notifies[1].target, 3)
-        t.ok(env.notifies[1].data.description:find('records.flag.lookups', 1, true) == 1)
+        t.ok(env.notifies[1].data.description:find('audit.flag.unauthorizedSearchNotify', 1, true) == 1)
         t.ok(env.notifies[1].data.description:find('Anna Patrull', 1, true) ~= nil)
         local pushed = env.pushes[#env.pushes]
         t.eq(pushed.payload.type, 'lookupFlag')

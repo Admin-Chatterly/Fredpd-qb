@@ -128,12 +128,12 @@ export function createSectionMocks(db: MockDb): SectionHandlers {
     closedBy: null, closedAt: null, ...a,
   });
   const alerts: Alert[] = [
-    alert({ id: 306, code: '10-10', title: 'Slagsmål', street: 'Vespucci Beach', priority: 2, createdAt: at(-95), status: 'closed', units: [], closedBy: helena, closedAt: at(-60), coords: { x: -1310.2, y: -1560.4, z: 4.3 } }),
-    alert({ id: 305, code: '10-66', title: 'Misstänkt person vid bankomat', street: 'Vinewood Boulevard', priority: 3, createdAt: at(-40), description: 'Person i mörk luvtröja står länge vid bankomaten och tittar på förbipasserande.' }),
-    alert({ id: 304, code: 'BOLO', title: 'Efterlyst fordon ABC12D kontrollerat', street: 'Legion Square', priority: 2, source: 'bolo', createdAt: at(-22), description: 'Skylten kontrollerades av IGV-12. Svart Sultan med skadad bakruta.' }),
-    alert({ id: 303, code: '10-50', title: 'Trafikolycka med personskada', street: 'Great Ocean Highway', priority: 2, createdAt: at(-15), status: 'assigned', units: [me()], coords: { x: -2150.1, y: -380.6, z: 13.2 } }),
-    alert({ id: 302, code: '10-90', title: 'Butiksrån pågår', street: 'Innocence Boulevard', priority: 1, createdAt: at(-8), status: 'assigned', units: [karl], coords: { x: 25.7, y: -1347.3, z: 29.5 }, description: 'Larmknapp utlöst i butiken. Två gärningspersoner, en med kniv.' }),
-    alert({ id: 301, code: '10-71', title: 'Skottlossning', street: 'Grove Street', priority: 1, createdAt: at(-3), coords: { x: 104.2, y: -1938.9, z: 20.8 }, description: 'Flera skott hörda enligt inringare. Ungefärlig plats (inom 110 m).' }),
+    alert({ id: 301, code: '10-10', title: 'Slagsmål', street: 'Vespucci Beach', priority: 2, createdAt: at(-95), status: 'closed', units: [], closedBy: helena, closedAt: at(-60), coords: { x: -1310.2, y: -1560.4, z: 4.3 } }),
+    alert({ id: 302, code: '10-66', title: 'Misstänkt person vid bankomat', street: 'Vinewood Boulevard', priority: 3, createdAt: at(-40), description: 'Person i mörk luvtröja står länge vid bankomaten och tittar på förbipasserande.' }),
+    alert({ id: 303, code: 'BOLO', title: 'Efterlyst fordon ABC12D kontrollerat', street: 'Legion Square', priority: 2, source: 'bolo', createdAt: at(-22), description: 'Skylten kontrollerades av IGV-12. Svart Sultan med skadad bakruta.' }),
+    alert({ id: 304, code: '10-50', title: 'Trafikolycka med personskada', street: 'Great Ocean Highway', priority: 2, createdAt: at(-15), status: 'assigned', units: [me()], coords: { x: -2150.1, y: -380.6, z: 13.2 } }),
+    alert({ id: 305, code: '10-90', title: 'Butiksrån pågår', street: 'Innocence Boulevard', priority: 1, createdAt: at(-8), status: 'assigned', units: [karl], coords: { x: 25.7, y: -1347.3, z: 29.5 }, description: 'Larmknapp utlöst i butiken. Två gärningspersoner, en med kniv.' }),
+    alert({ id: 306, code: '10-71', title: 'Skottlossning', street: 'Grove Street', priority: 1, createdAt: at(-3), coords: { x: 104.2, y: -1938.9, z: 20.8 }, description: 'Flera skott hörda enligt inringare. Ungefärlig plats (inom 110 m).' }),
   ];
   const onAlert = (a: Alert, cid: string) => a.units.some((u) => u.citizenid === cid);
   const units = (): { units: UnitStatus[] } => ({
@@ -294,7 +294,7 @@ export function createSectionMocks(db: MockDb): SectionHandlers {
     },
     {
       id: 57, tag: null, type: 'dna', caseId: null, caseNumber: null, level: 0,
-      result: { dna: 'DNA-0B21-77E4', match: null, crimeScene: 'Grove Street' }, collectedBy: karl, collectedAt: at(-90),
+      result: { dna: 'DNA-0B21-77E4', crimeScene: 'Grove Street' }, collectedBy: karl, collectedAt: at(-90),
       chain: [custody(-90, karl, 'collect', 'Grove Street'), custody(-70, karl, 'handin', 'evidence_locker_mrpd'), custody(-30, mats, 'analyse')],
     },
     {
@@ -304,7 +304,7 @@ export function createSectionMocks(db: MockDb): SectionHandlers {
     },
     {
       id: 59, tag: null, type: 'projectile', caseId: null, caseNumber: null, level: 0,
-      result: { serial: null, weaponType: 'Pistol', kind: 'projectile' }, collectedBy: mats, collectedAt: at(-20),
+      result: { weaponType: 'Pistol', kind: 'projectile' }, collectedBy: mats, collectedAt: at(-20),
       chain: [custody(-20, mats, 'collect', 'Grove Street'), custody(-15, mats, 'analyse')],
     },
     {

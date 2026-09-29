@@ -59,7 +59,7 @@ local function tellLedning(officer, count)
     for _, p in ipairs(players) do
         local target = C.playerSrc(p)
         if target and C.perm(target, 'records.admin') and C.onDuty(target) then
-            C.notify(target, 'warning', 'records.flag.lookups', { officer = label, count = count })
+            C.notify(target, 'warning', 'audit.flag.unauthorizedSearchNotify', { officer = label, count = count })
         end
     end
 end
