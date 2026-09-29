@@ -434,3 +434,26 @@ Format: **id · model · what · inputs → outputs · acceptance**. Agent-hour 
 | Currency | `kr`, no decimals, thousands space | `formats.json → currency` | |
 
 Adapters live in `resources/[fredpd]/fredpd_core/adapters/<kind>/<name>.lua` and export one interface per kind (`housing: getDoorForProperty, unlock`, `garage: onParked, onTakenOut`, `prison: jail(src, minutes, charges)`). Adding a script = adding one file and one config value. Task 0.3 verifies each default's exports; if a default is not installed on Rami's server, the adapter is a no-op and logs one warning at start.
+
+---
+
+## Appendix — Deviations (recorded during Phases 0–7)
+
+The plan above is kept as written. These are the places where the built system differs from it; each is decided and
+documented in the linked module note or contract section, which win over the text above.
+
+| # | Plan text | Built | Where recorded |
+|---|---|---|---|
+| D1 | Qbox stack: qbx_core, ox_inventory, ox_target, ox_doorlock, qbx_police (§1, §3, §5, §9 "on a Qbox stack") | Target server runs **qb-core** with qb-inventory, qb-target, qb-doorlock; every FredPD resource goes through fredpd_core's framework bridge, selected in `config/integrations.json` (qb default, ox/qbx still supported). **qb-policejob** is the primary police patch; the qbx_policejob patches stay for Qbox servers | docs/contracts.md §C17, docs/modules/bridge.md, docs/modules/police-qb.md, docs/SETUP.md |
+| D2 | Evidence always through `evidences` + fredpd_forensics (§5.7) | `evidences` needs ox_inventory + ox_target: on the qb stack fredpd_forensics stays idle and qb-policejob's own evidence stays on; chain-of-custody hand-in hook is ox-only | docs/contracts.md §C17 "Degradation", docs/modules/forensics.md "Framework bridge" |
+| D3 | Garage `qbx_garages`, prison `qbx_prison` (§9) | qb adapters: garage `qb-garages` (patched copy for park/take-out events) and prison `xt-prison` (its confiscation/prison break need the ox stack); `config/integrations.json` selects them (`"prison": "none"` as shipped) | docs/modules/adapters-qb.md, docs/SETUP.md |
+| D4 | NUI as one file (`vite-plugin-singlefile`, §2 "single-file Vite build") | **Code split**: `index.html` + hashed chunks, every section page a lazy chunk, Cytoscape only in the graph chunk; `@vitejs/plugin-react` dropped (esbuild JSX) | docs/modules/ui.md "Build", "Deviations" 1–2 |
+| D5 | One event `fredpd:alertCreated` from the ps-dispatch patch (§5.5) | **Split**: the patch fires inbound `fredpd:dispatch:incoming(data, src)`; fredpd_dispatch validates, stores and fires outbound `fredpd:alertCreated(alert)` (one name for both directions would loop) | docs/contracts.md §C13 |
+| D6 | Case number allocated in the same transaction as the insert (§C14) | Atomic `fredpd_sequences` counter (`LAST_INSERT_ID`) before the insert; a failed insert leaves a gap, a value is never handed out twice (oxmysql transactions are fixed batches) | docs/modules/records.md "Cases" |
+| D7 | Short name terms via `LIKE 'x%'` on lastname/firstname | Word-start `REGEXP` on `CONCAT_WS(' ', firstname, lastname)` for terms FULLTEXT cannot hold (shorter than `innodb_ft_min_token_size`, stopwords) | docs/modules/records.md "Search" |
+| D8 | Release-queue and lookup-flag pushes on topic `case` | Own push topic **`ledning`** (`releaseRequest`, `lookupFlag`) to open tablets holding `records.admin`; the NUI refreshes the release queue on it | docs/modules/records.md "Push topics", apps/nui/src/api/client.ts |
+| D9 | ANPR hit validated as "officer on duty" | No `officer` field: the reporting client is the wanted car's driver, so the camera is the reporter | docs/modules/police.md, docs/modules/police-qb.md |
+| D10 | canView rule text (§C3, ASSUMED) | `intel.command → full` also for intel reports/sources; `records.admin` still hard-capped by tier; missions count as intel (no `records.admin` rule) | docs/modules/grants-canview.md |
+| D11 | Rate limit clock `os.clock()` | `GetGameTimer()` (wall time; `os.clock` is CPU time on Linux) | docs/modules/core.md "Core helpers" |
+| D12 | All `config/*.json` in fxmanifest `files` (§C1) | Only the two display configs a client may need; `integrations.json` stays server-only | docs/modules/core.md |
+| D13 | ps-housing raid via FredPD | MLO property doors are ordinary doorlock doors ("Forcera dörr" covers them); shell properties have no doorlock door and stay on ps-housing's own raid (not audited by FredPD) | docs/modules/breach.md |

@@ -243,7 +243,7 @@ tests['04 offer while the laptop has focus: waits as a laptop option; cancel kee
         env.focused = true
         env.netEvents['fredpd:forensics:client:offerLink']({ id = 8, type = 'casing' })
         t.eq(#env.dialogs, 0)
-        t.eq(env.lastNotify().description, 'Beviset är analyserat. Stäng laptopen och välj Koppla till ärende på den.')
+        t.eq(env.lastNotify().description, 'Beviset är analyserat. Stäng laptopen och välj ”Koppla till ärende” på den.')
         local link = env.option('fredpd_forensics:link')
         t.eq(link.canInteract(), true)
         env.focused = false
