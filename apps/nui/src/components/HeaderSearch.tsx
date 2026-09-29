@@ -9,13 +9,14 @@ import type { KeyboardEvent } from 'react';
 import { useNavigate } from 'react-router';
 import { useQueryClient } from '@tanstack/react-query';
 import { Badge, Button, SearchInput, Spinner, useI18n } from '@fredpd/ui';
-import { mdtQueryOptions } from '../api/hooks';
+import { mdtQueryOptions, useTransport } from '../api/hooks';
 import { SEARCH_MIN_LENGTH, SEARCH_TYPE_KEYS, cleanQuery, detectQueryType, hitPath, searchInput, searchPath } from '../search';
 
 export function HeaderSearch() {
   const { t } = useI18n();
   const navigate = useNavigate();
   const queryClient = useQueryClient();
+  const transport = useTransport();
   const [query, setQuery] = useState('');
   const [pending, setPending] = useState(false);
   const detected = detectQueryType(query);
@@ -31,7 +32,7 @@ export function HeaderSearch() {
     const input = searchInput(q);
     setPending(true);
     try {
-      const result = await queryClient.fetchQuery(mdtQueryOptions('search', input));
+      const result = await queryClient.fetchQuery(mdtQueryOptions('search', input, transport));
       const top = result.hits[0];
       const path = top ? hitPath(top) : null;
       void navigate(path ?? searchPath(q));

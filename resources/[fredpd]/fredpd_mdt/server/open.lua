@@ -62,6 +62,27 @@ function M.closeBySerial(serial, reasonKey)
     return #hit
 end
 
+--- Does the player still hold the tablet the session was opened with (§4.6: the tablet requires the item)? Item
+--- sessions, and terminal sessions when Config.terminal.requireItem, need a pd_tablet with the session's serial (any
+--- pd_tablet when it had none). true / false, or nil when the inventory cannot be asked (down or raising): the caller
+--- refuses the action then but keeps the session. Checked by the dispatcher before write-class actions (8.3 review).
+function M.holdsTablet(src)
+    local session = Open[src]
+    if not session then return false end
+    if session.mode ~= 'item' and not Config.terminal.requireItem then return true end
+    local list = C.findItems(src, Config.item)
+    if not list then return nil end
+    for _, s in ipairs(list) do
+        if type(s) == 'table' then
+            if session.serial == nil then return true end
+            if type(s.metadata) == 'table' and s.metadata.serial == session.serial then return true end
+        end
+    end
+    -- The bridge answers an empty list while the inventory is down: that is not "no tablet".
+    if not C.inventoryUp() then return nil end
+    return false
+end
+
 function M.openSources()
     local out = {}
     for src in pairs(Open) do out[#out + 1] = src end

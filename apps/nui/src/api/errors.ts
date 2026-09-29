@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Errors of tablet actions. fredpd_mdt answers `{ error = <MDT_ERROR_CODES>, reason? }` (docs/contracts.md §C12;
 // `reason` is additive, docs/modules/bolo.md); a failed NUI callback (non-2xx) is a network error. Every one maps
-// to an `errors.*` text (reason first when it has its own text).
+// to an `errors.*` text (reason first when it has its own text). The portal transport's failures (MdtTransportError)
+// are network errors too; its `{ error }` bodies take the dispatcher's path.
 import { useCallback } from 'react';
 import { MDT_ERROR_CODES } from '@fredpd/types/mdt';
 import type { MdtError } from '@fredpd/types/mdt';
 import type { LocaleKey } from '@fredpd/types/locale-keys';
-import { useI18n } from '@fredpd/ui';
+import { MdtTransportError, useI18n } from '@fredpd/ui';
 import { NuiRequestError } from '../utils/fetchNui';
 import { isRecord } from './wire';
 
@@ -35,7 +36,7 @@ export function readErrorResponse(action: string, value: unknown): MdtClientErro
 
 export function toMdtClientError(action: string, err: unknown): MdtClientError {
   if (err instanceof MdtClientError) return err;
-  if (err instanceof NuiRequestError) return new MdtClientError(action, 'network');
+  if (err instanceof NuiRequestError || err instanceof MdtTransportError) return new MdtClientError(action, 'network');
   return new MdtClientError(action, 'unknown');
 }
 

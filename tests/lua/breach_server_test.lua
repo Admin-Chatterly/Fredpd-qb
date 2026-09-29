@@ -42,7 +42,7 @@ local function setup(opts)
             [7] = { cid = 'CIV00007', grant = false, duty = false, ram = 0, pos = vec(0.0, 0.0, 0.0) },
         },
         doors = {
-            [12] = { id = 12, name = 'mrpd_cells', state = 1, coords = DOOR_POS },
+            [12] = { id = 12, name = 'house_12_front', state = 1, coords = DOOR_POS },
             [13] = { id = 13, name = 'open_door', state = 0, coords = DOOR_POS },
         },
         itemKnown = opts.itemKnown ~= false,
@@ -235,7 +235,7 @@ tests['success: start → 4 s → finish unlocks through the bridge setLocked an
         if env.stack == 'qb' then t.eq(env.setSources, { 1 }, 'qb-doorlock gets the officer (door animation)') end
         t.eq(#env.audits, 1)
         t.eq(env.audits[1], { src = 1, action = 'breach.door', targetType = 'door', targetId = 12,
-            meta = { doorId = 12, name = 'mrpd_cells', coords = { x = 100.0, y = 200.0, z = 30.0 } } })
+            meta = { doorId = 12, name = 'house_12_front', coords = { x = 100.0, y = 200.0, z = 30.0 } } })
     end)
 
 tests['door id from the client may be a numeric string; the server reads the door itself'] = case(nil,
@@ -403,6 +403,20 @@ tests['finish: per-player rate limit (4/s) before the token lookup; the token is
         env.now = env.now + 250
         t.ok(finish(env, 1, r.data.token).ok, 'token still valid after the rate-limited attempt')
         t.eq(#env.setStates, 1)
+    end)
+
+tests['denyDoors default (config.lua): station, armory, evidence, vault and bank doors are denied (8.3 review)'] = case(nil,
+    function(t, env)
+        local denied = { 'mrpd armoury', 'mrpd cells main', 'community_mrpd 7', 'Fleeca Bank Vault', 'Evidence Locker',
+            'Sandy Armory', 'pacific_bank_door' }
+        for i, name in ipairs(denied) do
+            env.doors[30 + i] = { id = 30 + i, name = name, state = 1, coords = DOOR_POS }
+            env.now = env.now + 1000
+            t.eq(start(env, 1, 30 + i), { ok = false, error = 'validation', reason = 'denied' }, name)
+        end
+        t.eq(#env.setStates, 0)
+        env.now = env.now + 1000
+        t.ok(start(env, 1, 12).ok, 'an ordinary door (house_12_front) can still be breached')
     end)
 
 tests['denyDoors: listed ids, names and name patterns cannot be breached (start and finish)'] = case(nil,

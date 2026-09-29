@@ -246,11 +246,16 @@ export function createSectionMocks(db: MockDb): SectionHandlers {
     return c;
   };
   const isErr = (v: unknown): v is MockError => typeof v === 'object' && v !== null && 'error' in v;
+  // The mock viewer's own autosaved drafts (fredpd_report_drafts keyed on author + report; the viewer is always `me`).
+  const drafts = new Map<number, { title: string | null; body: string; savedAt: string }>();
   const reportDetail = (r: MockReport): TabletOutput<'getReport'> => {
     const c = visibleCase(r.caseId)!;
+    const editable = c.status === 'open';
+    const draft = editable ? drafts.get(r.id) : undefined;
     return {
       id: r.id, reportNumber: reportNumber(r, c), caseId: c.id, caseNumber: c.caseNumber, title: r.title, body: r.body, level: r.level,
-      author: r.author, createdAt: r.createdAt, updatedAt: r.updatedAt, charges: r.charges, editable: c.status === 'open',
+      author: r.author, createdAt: r.createdAt, updatedAt: r.updatedAt, charges: r.charges, editable,
+      draft: draft ? { ...draft } : null,
     };
   };
   const readableReport = (id: number): MockReport | MockError => {
@@ -624,13 +629,18 @@ export function createSectionMocks(db: MockDb): SectionHandlers {
       if (visibleCase(r.caseId)?.status !== 'open') return fail('validation', 'closed');
       if (input.level > db.tier) return fail('validation', 'level');
       Object.assign(r, { title: input.title, body: input.body, level: input.level, updatedAt: isoUtc(now()) });
+      drafts.delete(r.id);
       return reportDetail(r);
     },
     saveReportDraft: (raw) => {
       const input = parse('saveReportDraft', raw);
       if (!input) return fail('validation');
       const r = readableReport(input.reportId);
-      return isErr(r) ? r : { savedAt: isoUtc(now()) };
+      if (isErr(r)) return r;
+      if (visibleCase(r.caseId)?.status !== 'open') return fail('validation', 'closed');
+      const savedAt = isoUtc(now());
+      drafts.set(r.id, { title: input.title ?? null, body: input.body, savedAt });
+      return { savedAt };
     },
     listReportTemplates: () => ({ items: templates.filter((x) => x.unit === null || x.unit === db.unit || db.unit === null).map((x) => ({ ...x })) }),
     listCharges: (raw) => {

@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { useQueryClient } from '@tanstack/react-query';
 import { PAGE_SIZE } from '@fredpd/types/mdt';
 import type { Alert, UnitStatus } from '@fredpd/types/dispatch';
-import { Badge, Button, Card, EmptyState, PageHeader, Pagination, Tabs, useI18n } from '@fredpd/ui';
+import { Badge, Button, Card, EmptyState, PageHeader, Pagination, Tabs, useActionAvailable, useI18n } from '@fredpd/ui';
 import { useMdtMutation, useMdtQuery } from '../api/hooks';
 import { applyAlertChangeToCache } from '../api/pushes';
 import { ALERT_FILTERS, ALERT_FILTER_KEYS, ALERT_STATUS_KEYS, PRIORITY_KEYS, PRIORITY_TONES, isOnAlert, sortUnits } from '../alerts';
@@ -17,7 +17,7 @@ import { QueryView } from '../components/Common';
 import { MutationError } from '../components/Fields';
 import { fmtDateTime, fmtTime, officerLabel, unitLabel } from '../format';
 import { PERMS, usePerm } from '../perms';
-import { useSession } from '../tablet/TabletContext';
+import { useSession } from '../session';
 
 /** "Tilldelad: IGV-07 · Anna Berg" (alert.assigned), or the name alone without a callsign. */
 function useAssignedText() {
@@ -26,7 +26,8 @@ function useAssignedText() {
     unit.callsign ? i18n.t('alert.assigned', { callsign: unit.callsign, name: unit.displayName }) : i18n.tx('alert.assignedNoCallsign', { name: unit.displayName });
 }
 
-function AlertRow({ alert, citizenid, canManage }: { alert: Alert; citizenid: string; canManage: boolean }) {
+/** One alert. Take / leave / close are tablet actions (waypoint, unit status): the portal shows the row read-only. */
+export function AlertRow({ alert, citizenid, canManage }: { alert: Alert; citizenid: string; canManage: boolean }) {
   const i18n = useI18n();
   const { t } = i18n;
   const queryClient = useQueryClient();
@@ -39,6 +40,7 @@ function AlertRow({ alert, citizenid, canManage }: { alert: Alert; citizenid: st
   const closed = alert.status === 'closed';
   const busy = take.isPending || leave.isPending || close.isPending;
   const error = take.error ?? leave.error ?? close.error;
+  const canAct = useActionAvailable('takeAlert');
 
   return (
     <li data-alert-id={alert.id} data-status={alert.status} className="flex flex-col gap-1.5 px-4 py-3">
@@ -65,17 +67,17 @@ function AlertRow({ alert, citizenid, canManage }: { alert: Alert; citizenid: st
         )}
         {alert.closedBy && <span className="text-muted">{t('alert.closedBy', { name: officerLabel(alert.closedBy) })}</span>}
         <span className="flex-1" />
-        {!closed && !mine && (
+        {canAct && !closed && !mine && (
           <Button size="sm" variant="primary" loading={take.isPending} disabled={busy} onClick={() => take.mutate({ id: alert.id })}>
             {t('alert.action.take')}
           </Button>
         )}
-        {!closed && mine && (
+        {canAct && !closed && mine && (
           <Button size="sm" loading={leave.isPending} disabled={busy} onClick={() => leave.mutate({ id: alert.id })}>
             {t('alert.action.leave')}
           </Button>
         )}
-        {!closed && (mine || canManage) && (
+        {canAct && !closed && (mine || canManage) && (
           <Button size="sm" variant="danger" loading={close.isPending} disabled={busy} onClick={() => close.mutate({ id: alert.id })}>
             {t('alert.action.close')}
           </Button>
@@ -86,7 +88,7 @@ function AlertRow({ alert, citizenid, canManage }: { alert: Alert; citizenid: st
   );
 }
 
-function UnitsPanel({ units }: { units: readonly UnitStatus[] }) {
+export function UnitsPanel({ units }: { units: readonly UnitStatus[] }) {
   const i18n = useI18n();
   const { t, tx } = i18n;
   const shown = sortUnits(units);

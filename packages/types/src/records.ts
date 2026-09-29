@@ -136,6 +136,13 @@ export const AppliedChargeSchema = z.object({
   status: z.enum(['issued', 'paid', 'served', 'revoked']),
 });
 
+export const ReportDraftSchema = z.object({
+  title: z.string().nullable(),
+  body: z.string(),
+  savedAt: IsoUtcSchema,
+});
+export type ReportDraft = z.infer<typeof ReportDraftSchema>;
+
 export const ReportDetailSchema = z.object({
   id: z.number().int(),
   reportNumber: z.string(),
@@ -151,6 +158,12 @@ export const ReportDetailSchema = z.object({
   charges: z.array(AppliedChargeSchema),
   /** True when the viewer may edit (author, case owner/lead, records.admin) and the case is open. */
   editable: z.boolean(),
+  /**
+   * The viewer's own autosaved draft (fredpd_report_drafts; only ever the draft's author, only while `editable`),
+   * else null. The editor offers "Återställ utkast" when `savedAt` is newer than `updatedAt`. `title` is null when the
+   * autosave carried none. Lua sends a missing draft as an absent key (restored to null by the NUI's wire layer).
+   */
+  draft: ReportDraftSchema.nullable(),
 });
 export type ReportDetail = z.infer<typeof ReportDetailSchema>;
 

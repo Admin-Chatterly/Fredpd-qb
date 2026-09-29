@@ -149,7 +149,7 @@ describe('results page', () => {
     installMockRegister();
     renderAt('/sok?q=K-988-26');
     const option = await screen.findByRole('option');
-    expect(option.textContent).toBe('K-988-26AvslutatBegränsad insynBegränsad');
+    expect(option.textContent).toBe('K-988-26AvslutatDelvis maskeratBegränsad');
     expect(option.textContent).not.toContain('Narkotikabrott');
   });
 });

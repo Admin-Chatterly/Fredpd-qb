@@ -21,12 +21,12 @@ over realism. The notes say when FredPD deviates from real practice.
 | **Sentence case.** Capitalise only the first word and proper nouns. | "Ny efterlysning", not "Ny Efterlysning" |
 | **Status words agree with the noun's gender.** *Ett larm* and *ett ärende* are neuter; *en efterlysning*, *en surfplatta* and *en insats* are common gender. | Larm: Öppet · Tilldelat · Avslutat. Efterlysning: Aktiv · Återkallad |
 | Buttons start with a **verb in the imperative**. Status labels use the **past participle**. | "Återkalla efterlysning" → status "Återkallad" |
-| **Swedish quotation marks** ”…” on both sides. | Inga träffar på ”Andersson”. |
-| Put the **ellipsis** "…" directly after the word. It marks work in progress. | "Laddar…", "Forcerar dörren…" |
+| **Swedish quotation marks** ”…” on both sides. Also around a button or option name quoted in running text. | Inga träffar på ”Andersson”. Välj ”Koppla till ärende”. |
+| Put the **ellipsis** "…" directly after the word, with no space. It marks work in progress only. | "Laddar…", "Forcerar dörren…" |
 | Write **i dag, i går, i morgon** as two words. Write times as **kl. 14:05**. Write dates as **2026-09-29**, using `formatDate`. | "Utkast sparat kl. {time}" |
 | Write **amounts** with `formatCurrency`, which gives a thousands space and "kr". Never write "SEK" or "$". | "Ordningsbot på 1 500 kr" |
-| Use a **middle dot** "·" to join short facts and an **en dash** "–" for ranges and grades. | "Tilldelad: IGV-07 · Anna B.", "A – Alltid tillförlitlig" |
-| **No plural machinery.** Phrase counts so that the same wording works for 1 and for many. Never put `{count}` before a plural noun. | "Träffar: {count}", "{count} min", "{count} d sedan", not "{count} dagar sedan" |
+| Use a **middle dot** "·" to join short facts (not "|" or "•") and an **en dash** "–" for ranges and grades. | "Tilldelad: IGV-07 · Anna B.", "A – Alltid tillförlitlig" |
+| **No plural machinery.** Phrase counts so that the same wording works for 1 and for many. Never put `{count}` before a plural noun. The one exception is a config value that is never 1 in practice, such as `{days}` for log retention ("sparas i {days} dagar"). | "Träffar: {count}", "{count} min", "{count} d sedan", not "{count} dagar sedan" |
 | **Whole sentences in one key.** Never build a sentence from fragments. Use named `{placeholders}`. | "Det finns uppgifter som rör {subject}. Kontakta {owner}." |
 | Officer jargon is fine inside the MDT. Don't use it on the public portal pages (login, allmän handling). | MDT: "slagning", "regnummer". Portal: "sökning", "registreringsnummer" |
 | English fallback (`en.json`) uses **British spelling**. | authorised, licence, armoury, offence, analyse |
@@ -93,7 +93,7 @@ over realism. The notes say when FredPD deviates from real practice.
 | **Begränsad** | restricted | Requires clearance Begränsad or Hemlig. A viewer below that who is not assigned, owner or handler (and lacks `intel.command`) gets at most a kontaktnotis. |
 | **Hemlig** | secret | Requires clearance Hemlig. Other viewers get at most a kontaktnotis, with the same exceptions as Begränsad. |
 | **kontaktnotis** | contact notice | The `notice` result: the viewer learns that the record exists and whom to ask. The fixed text is "Det finns uppgifter som rör {subject}. Kontakta {owner}." |
-| **maskera · maskerad · [Maskerat]** | mask / redact | The `masked` result. Parts above the viewer's level and all source fields are removed. |
+| **maskera · maskerad · [Maskerat]** | mask / redact | The `masked` result. Parts above the viewer's level and all source fields are removed. The badge on a masked record says **Delvis maskerat**. Don't write *begränsad insyn*: it reads like the level Begränsad. |
 | **full insyn** | full access | The `full` result. |
 | **dold** | hidden | The `none` result. The UI behaves as if the record does not exist. |
 
@@ -133,7 +133,9 @@ hemlig*. FredPD's three levels are its own scale. Don't mix the real names into 
 | **fingeravtryck** | fingerprint | |
 | **DNA** | DNA | |
 | **blod** | blood | |
-| **hylsa** · **projektil** | cartridge case · projectile (bullet) | From shootings. Casings are generated automatically by the evidences resource. |
+| **hylsa** · **projektil** | cartridge case · projectile (bullet) | From shootings. Casings are generated automatically by the evidences resource. Write *projektil*, not *kula*, in labels (the evidences locale follows this). |
+| **krutstänk** | gunshot residue | Also in the qbx_policejob status text ("Krutstänk på kläderna"). Don't write *krutrester*. |
+| **laptop** · **bevislaptop** | evidence laptop | The evidences resource's analysis laptop. Its ox_target option is **Använd laptop**. Everyday Swedish; don't write *bärbar dator* in the game. |
 | **verktygsspår** | tool mark | For example at a forced door. |
 | **beslag** · **ta i beslag** | seizure · seize | Property seized by the police. It may also be evidence, but beslag is a legal act and not a type of evidence. Not modelled before Phase 4+. Don't use it as a synonym for *bevis*. |
 
@@ -177,7 +179,7 @@ hemlig*. FredPD's three levels are its own scale. Don't mix the real names into 
 | **personnummer** | personal identity number | Format `YYMMDD-XXXX` or `YYYYMMDD-XXXX`. The search box accepts either form, with or without the dash (§4.8). |
 | **registreringsnummer** · colloquial **regnummer**, **regnr** | registration number | Swedish format **ABC 12D** (`formats.json → plate`). A **skylt** is a plate. |
 | **fordonsägare** · UI label **Ägare** | registered owner | "Ägare saknas i registret" for unregistered vehicles. |
-| **Ute · I garage · Bärgad** | out · garaged · impounded | qbx_vehicles state 0 / 1 / 2. |
+| **Ute · I garage · Bärgad** | out · garaged · impounded | qbx_vehicles state 0 / 1 / 2. The police impound menu says **Bärgade fordon** and the lot is the **uppställningsplats**. *Ta i beslag* is only for a real seizure. |
 | **körkort** · **vapenlicens** | driving licence · firearms licence | The formal Swedish term is *vapentillstånd*. The UI uses the everyday word *vapenlicens*. Status words follow the gender: *ett körkort* is **Giltigt** / **Återkallat**, *en vapenlicens* is **Giltig** / **Återkallad**, so each licence type has its own status keys. |
 | **karaktär** · **rollspelskaraktär** | character, roleplay character | The in-game identity (citizenid). An officer's *displayed* name comes from Discord, not from the character (§4.9). |
 
@@ -219,6 +221,9 @@ hemlig*. FredPD's three levels are its own scale. Don't mix the real names into 
 | polisman | polis | Gender-neutral. |
 | case, dispatch, callout | ärende, larm | Swedish product language. |
 | tabletten, paddan | surfplattan | Consistent item name. |
+| dörrkross | murbräcka | Consistent item name (`pd_ram`). |
+| begränsad insyn (for masking) | delvis maskerat | Clashes with the level Begränsad. |
+| synka, synkad | synkronisera, synkroniserad | Informal. |
 | raid | insats, dörrforcering | English jargon. |
 | felony, misdemeanour, infraction (as a charge class) | the påföljd: ordningsbot, böter, fängelse | FredPD classes charges by påföljd; the grade (ringa, grov) is part of the offence's name. |
 | real classification names (konfidentiell, kvalificerat hemlig) | Standard, Begränsad, Hemlig | FredPD's own three-level scale. |

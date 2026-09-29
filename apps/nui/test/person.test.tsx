@@ -50,7 +50,7 @@ describe('person page', () => {
     renderAt('/person/FPD00001');
     await screen.findByRole('heading', { level: 1, name: /Erik Nilsson/ });
     const masked = document.querySelector('[data-case-visibility="masked"]');
-    expect(masked?.textContent).toBe('K-988-26MisstänktAvslutatBegränsad insynBegränsad');
+    expect(masked?.textContent).toBe('K-988-26MisstänktAvslutatDelvis maskeratBegränsad');
     expect(document.body.textContent).not.toContain('Narkotikabrott');
     const full = document.querySelector('[data-case-visibility="full"]');
     expect(full?.textContent).toBe('K-1042-26Grovt rån mot värdetransport, Legion SquareMisstänktÖppet');
@@ -73,7 +73,7 @@ describe('person page', () => {
     renderAt('/person/X1');
     await screen.findByRole('heading', { level: 1, name: /Test Person/ });
     const rows = [...document.querySelectorAll('[data-case-visibility="masked"]')].map((e) => e.textContent);
-    expect(rows).toEqual(['K-7-26AvslutatBegränsad insyn', 'K-8-26StöldVittneAvslutatBegränsad insyn']);
+    expect(rows).toEqual(['K-7-26AvslutatDelvis maskerat', 'K-8-26StöldVittneAvslutatDelvis maskerat']);
   });
 
   it('records: fines formatted with formatCurrency and summed; a notice case number is never shown', async () => {
@@ -94,7 +94,7 @@ describe('person page', () => {
     installMockRegister();
     renderAt('/person/FPD00001');
     await screen.findByRole('heading', { level: 1, name: /Erik Nilsson/ });
-    for (const name of ['Lägg i ärende', 'Ny rapport', 'POI-blad']) {
+    for (const name of ['Lägg till i ärende', 'Ny rapport', 'POI-blad']) {
       const button = screen.getByRole('button', { name }) as HTMLButtonElement;
       expect(button.disabled).toBe(true);
       expect(button.closest('[data-coming-soon]')?.getAttribute('title')).toBe('Kommer i fas 5');

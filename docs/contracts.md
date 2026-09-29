@@ -129,6 +129,10 @@ FXServer (`SetHttpHandler` in fredpd_core, reached at `http://127.0.0.1:30120/fr
 | POST | `/officer` | `{ discordId, displayName, avatarUrl }` | refresh the in-memory officer name used for rosters |
 | POST | `/rules` | `{}` | reload `fredpd_visibility_rules` (fires `fredpd:rulesChanged`); sent by the service after a rule edit |
 
+Every route answers 404 to a peer that is not loopback (the service reaches FXServer at 127.0.0.1), and every POST body
+must hold exactly the keys listed above (unknown key → 400 `invalid_body`): §C5 signs only ts + body, so a body signed
+for another route (e.g. `POST /fredpd_mdt/portal`) must never be accepted here.
+
 Service (Fastify, `FREDPD_SERVICE_URL`, default `http://127.0.0.1:3000`; convar `fredpd_service_url` on FXServer):
 
 | Method | Path | Auth | Purpose |
@@ -267,6 +271,10 @@ Do not edit `docs/contracts.md` from a module task; record module-level decision
   the level (sekretess after close stays, §8.7), but canView's closed-case rules then give `masked` Standard parts.
 - Reports: markdown-lite rendered as text (no HTML passthrough, no links/images). Autosave writes only
   `fredpd_report_drafts`, debounced in the NUI (≥ 10 s after the last keystroke, only while focused and dirty).
+  Read-back (Phase 8 open item): `getReport` answers `draft: { title | null, body, savedAt } | null` — the
+  viewer's own draft row (`author_citizenid` = the actor, never anyone else's), sent only while `editable`. The
+  editor offers "Återställ utkast" when `draft.savedAt` is newer than the report's `updatedAt`; `saveReport` deletes
+  the actor's draft.
 - Charges: catalogue read-only in game (`fredpd_charges`, seeded); `applyCharges` copies title/class/fine/jail into
   `fredpd_records` rows (history stays stable if the catalogue changes). `issueFine` accepts only class `ordningsbot`
   and bills through the prison/billing adapter (qbx_police `police:server:BillPlayer` path verified in

@@ -60,12 +60,14 @@ Error codes (`{ ok = false, error, reason }`): `unauthorized` (grant/off_duty), 
 `validation` (door/denied/no_item/not_locked/too_far/too_early/token), `not_found` (door/token), `expired`, `unavailable`.
 The client maps each to Swedish text (`breach.*`, `errors.*`; `denied` → `breach.notSupported`).
 
-**Deny list.** By default every door of the doorlock resource can be breached, including the station's own cell, armory and
-evidence doors (a `tool:ram` holder could force them). `config.denyDoors` lists doors that can never be breached: a
-door id (number; qb-doorlock string keys too), an exact door name (string; qb-doorlock: `doorLabel`) or a Lua pattern
-on the name (`{ pattern = '^mrpd_evidence' }`).
-It is checked on the server at start and again at finish. It is empty by default because door names are
-server-specific; server owners should add their station's secure doors. The client still shows the option on a
+**Deny list.** `config.denyDoors` lists doors that can never be breached: a door id (number; qb-doorlock string keys
+too), an exact door name (string; qb-doorlock: `doorLabel`) or a Lua pattern on the name, also tried on the lower-cased
+name (`{ pattern = '^mrpd_evidence' }`). It is checked on the server at start and again at finish. Without it a
+`tool:ram` holder could force every door of the doorlock resource, the station's own cell, armory and evidence doors
+included. The default denies the Mission Row PD doors of ox_doorlock's `sql/default.sql` and `sql/community_mrpd.sql`
+(`^mrpd`, `^community_mrpd`) and every door whose name mentions `armory`/`armoury`, `evidence`, `vault`, `bank` or
+`fleeca`. **Required setup step:** door names are server-specific, so server owners must add their own stations' and
+other scripts' secure doors (qb-doorlock ships no default doors). The client still shows the option on a
 denied door (the list is not used as a client hint); selecting it answers "Dörren kan inte forceras."
 
 **Item missing.** `Breach.checkItem()` at start (and once on the first `no_item`): the item definition files of the

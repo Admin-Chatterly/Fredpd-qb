@@ -86,8 +86,19 @@ function M.actorOf(src)
     return pd and pd.citizenid or nil, Perms.getDiscordId(src)
 end
 
---- export audit(src, action, targetType, targetId, meta). src 0 = system.
+--- meta of a portal actor's entry: a copy with via = 'portal' (the actor is the character; the channel is the portal).
+function M.portalMeta(meta)
+    if meta ~= nil and type(meta) ~= 'table' then return meta end -- buildRow refuses it
+    local out = {}
+    for k, v in pairs(meta or {}) do out[k] = v end
+    out.via = 'portal'
+    return out
+end
+
+--- export audit(src, action, targetType, targetId, meta). src 0 = system. A portal actor (server/virtual.lua) is
+--- recorded with its character and Discord id and meta.via = 'portal'.
 function M.audit(src, action, targetType, targetId, meta)
+    if Core.isVirtual(src) then meta = M.portalMeta(meta) end
     local citizenid, discordId = M.actorOf(src)
     return M.write({
         actorCitizenid = citizenid, actorDiscord = discordId, action = action,

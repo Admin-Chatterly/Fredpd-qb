@@ -164,7 +164,7 @@ local function distance(a, b)
 end
 
 --- true when config.denyDoors excludes the door: an entry is a door id (number, or a qb-doorlock string key), an
---- exact door name (string) or a Lua pattern on the name ({ pattern = '^mrpd_' }).
+--- exact door name (string) or a Lua pattern on the name or on the lower-cased name ({ pattern = '^mrpd_' }).
 function M.isDenied(doorId, name)
     for _, d in ipairs(type(M.cfg.denyDoors) == 'table' and M.cfg.denyDoors or {}) do
         if d == doorId then return true end
@@ -172,6 +172,8 @@ function M.isDenied(doorId, name)
             if type(d) == 'string' and d == name then return true end
             if type(d) == 'table' and type(d.pattern) == 'string' then
                 local okMatch, hit = pcall(string.find, name, d.pattern)
+                if okMatch and hit then return true end
+                okMatch, hit = pcall(string.find, name:lower(), d.pattern)
                 if okMatch and hit then return true end
             end
         end

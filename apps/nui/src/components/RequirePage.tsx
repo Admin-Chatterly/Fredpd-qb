@@ -5,7 +5,7 @@ import type { ReactNode } from 'react';
 import { EmptyState, IconShield, useT } from '@fredpd/ui';
 import type { MdtPageKey } from '@fredpd/ui';
 import { canSeePage } from '../nav';
-import { useSession } from '../tablet/TabletContext';
+import { useSession } from '../session';
 
 export function RequirePage({ page, children }: { page: MdtPageKey; children: ReactNode }) {
   const t = useT();

@@ -12,6 +12,7 @@ local C = require 'server.common'
 local Open = require 'server.open'
 local Dispatch = require 'server.dispatch'
 local Tablets = require 'server.tablets'
+local Portal = require 'server.portal'
 local Config = require 'config'
 
 C.L = L
@@ -40,6 +41,9 @@ end)
 exports('isTabletOpen', Open.isOpen)
 exports('pushToOpenTablets', Open.pushToOpenTablets)
 exports('pushTo', Open.pushTo)
+-- Portal mode (server/portal.lua; server/http.js calls portalRequest for POST /fredpd_mdt/portal).
+Portal.register()
+
 exports('closeTablet', function(src, reasonKey)
     if reasonKey ~= nil and (type(reasonKey) ~= 'string' or not reasonKey:find('^[%w_.]+$')) then reasonKey = nil end
     return Open.forceClose(src, reasonKey)

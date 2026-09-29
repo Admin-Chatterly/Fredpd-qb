@@ -7,7 +7,7 @@ import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import type { Bolo, PersonSummary } from '@fredpd/types/mdt';
 import type { LocaleKey } from '@fredpd/types/locale-keys';
-import { Badge, Button, Card, EmptyState, IconFlag, PageHeader, Table, useI18n } from '@fredpd/ui';
+import { Badge, Button, Card, EmptyState, IconFlag, PageHeader, Table, buttonClass, useI18n, useMdtMode } from '@fredpd/ui';
 import type { TableColumn } from '@fredpd/ui';
 import { useMdtQuery } from '../api/hooks';
 import { BoloCreateDialog, BoloList, BoloResolveDialog } from '../components/Bolos';
@@ -15,8 +15,8 @@ import { CaseRefList } from '../components/CaseRefs';
 import { Callout, ComingSoonButton, Facts, QueryView } from '../components/Common';
 import { fmtCurrency, fmtDate } from '../format';
 import { PERMS, usePerm } from '../perms';
-import { vehiclePath } from '../search';
-import { useSession } from '../tablet/TabletContext';
+import { personPath, vehiclePath } from '../search';
+import { useSession } from '../session';
 
 type RecordRow = PersonSummary['records'][number];
 
@@ -62,6 +62,7 @@ export function PersonView({ data }: { data: PersonSummary }) {
   const [resolving, setResolving] = useState<Bolo | null>(null);
   const [message, setMessage] = useState<string | null>(null);
 
+  const mode = useMdtMode();
   const { person } = data;
   const name = `${person.firstname} ${person.lastname}`.trim();
   const wanted = data.bolos.some((b) => b.active);
@@ -87,7 +88,14 @@ export function PersonView({ data }: { data: PersonSummary }) {
             )}
             <ComingSoonButton>{t('person.action.addToCase')}</ComingSoonButton>
             <ComingSoonButton>{t('person.action.newReport')}</ComingSoonButton>
-            <ComingSoonButton>{t('person.action.poiSheet')}</ComingSoonButton>
+            {mode === 'portal' ? (
+              // The portal has the POI sheet with its print view (apps/portal PoiPage); the tablet gets it later.
+              <Link to={`${personPath(person.citizenid)}/poi`} className={buttonClass('secondary', 'md')} data-poi-link>
+                {t('person.action.poiSheet')}
+              </Link>
+            ) : (
+              <ComingSoonButton>{t('person.action.poiSheet')}</ComingSoonButton>
+            )}
           </>
         }
       />

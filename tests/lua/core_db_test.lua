@@ -244,6 +244,40 @@ tests['08 identities: last_seen on join, character + license on load (NULL licen
     end)
 end
 
+tests['08b identities: a license recorded for one Discord user is taken from every other one (8.3 review)'] = function(t)
+    withDb(t, function()
+        q("DELETE FROM fredpd_identities WHERE discord_id IN ('9110', '9111', '9112')")
+        q("DELETE FROM fredpd_sessions WHERE discord_id IN ('9110', '9111', '9112')")
+        q("INSERT INTO fredpd_identities (discord_id, license) VALUES ('9110', 'license2:shared'), ('9112', 'license2:own')")
+        q("INSERT INTO fredpd_sessions (id, discord_id, citizenid, csrf_token, expires_at) VALUES "
+            .. "(REPEAT('a', 64), '9110', 'FPD10010', 'c', UTC_TIMESTAMP() + INTERVAL 1 DAY), "
+            .. "(REPEAT('b', 64), '9112', 'FPD10012', 'c', UTC_TIMESTAMP() + INTERVAL 1 DAY)")
+        local savedId = Perms.getDiscordId
+        Perms.getDiscordId = function() return '9111' end
+        Perms.recordCharacter(6, { citizenid = 'FPD10010', license = 'license2:shared' })
+        Perms.getDiscordId = savedId
+        local function license(id)
+            local row = q(("SELECT license FROM fredpd_identities WHERE discord_id = '%s'"):format(id))[1]
+            return row and row.license
+        end
+        local function session(id)
+            local row = q(("SELECT citizenid FROM fredpd_sessions WHERE discord_id = '%s'"):format(id))[1]
+            return row and row.citizenid
+        end
+        t.eq(license('9111'), 'license2:shared', 'the new Discord user has the license')
+        t.eq(license('9110'), nil, 'the old Discord user lost it')
+        t.eq(session('9110'), nil, 'and the character picked in its portal session')
+        t.eq(license('9112'), 'license2:own', 'other licenses untouched')
+        t.eq(session('9112'), 'FPD10012')
+        -- the same user loading again keeps it
+        Perms.getDiscordId = function() return '9111' end
+        Perms.recordCharacter(6, { citizenid = 'FPD10011', license = 'license2:shared' })
+        Perms.getDiscordId = savedId
+        t.eq(license('9111'), 'license2:shared')
+        q("DELETE FROM fredpd_sessions WHERE discord_id IN ('9110', '9111', '9112')")
+    end)
+end
+
 ---------------------------------------------------------------------------------------------------------------
 -- Visibility rules from the seed
 

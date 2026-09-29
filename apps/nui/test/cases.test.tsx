@@ -88,7 +88,7 @@ describe('case page', () => {
     installMockRegister();
     renderAt('/arende/988');
     expect(await screen.findByRole('heading', { level: 1, name: 'K-988-26' })).toBeTruthy();
-    expect(screen.getByText('Begränsad insyn')).toBeTruthy();
+    expect(screen.getByText('Delvis maskerat')).toBeTruthy();
     expect(document.body.textContent).not.toContain('Narkotikabrott');
     expect(document.body.textContent).not.toContain('null');
     expect(document.body.textContent).not.toContain('undefined');

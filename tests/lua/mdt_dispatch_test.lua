@@ -483,4 +483,34 @@ tests['16 nested inputs: union, array defaults and refines are cleaned before ro
     end)
 end
 
+tests['17 item session: a write after the tablet left the inventory force-closes the MDT (8.3 review)'] = function(t)
+    H.with(function(env, mods)
+        local D, Open = mods['server.dispatch'], mods['server.open']
+        H.openTablet(mods, 1)
+        local create = { action = 'createBolo', input = valid('createBolo') }
+        t.eq(D.handle(1, create).error, nil, 'tablet held: routed')
+        -- Another pd_tablet (other serial) does not count: the session's tablet is gone.
+        env.players[1].items = { { slot = 4, name = 'pd_tablet', count = 1, metadata = { serial = 'SP-AAAA-0099' } } }
+        env.now = env.now + 10000
+        local search = { action = 'search', input = { query = 'Anna' } }
+        t.eq(D.handle(1, search).error, nil, 'reads are not re-checked')
+        local before = #env.callsTo('fredpd_bolo', 'createBolo')
+        t.eq(D.handle(1, create), { error = 'unauthorized' })
+        t.eq(Open.isOpen(1), false)
+        t.eq(env.sent(1, 'fredpd:client:forceClose')[1].args, { 'tablet.noItem' })
+        t.eq(#env.callsTo('fredpd_bolo', 'createBolo'), before, 'not routed')
+        -- Inventory stopped: refused as unavailable, the session stays open.
+        env.players[1].items = { { slot = 3, name = 'pd_tablet', count = 1, metadata = { serial = 'SP-AAAA-0001' } } }
+        env.now = env.now + 10000
+        H.openTablet(mods, 1)
+        env.resources[env.inventory] = 'stopped'
+        env.now = env.now + 10000
+        t.eq(D.handle(1, create), { error = 'unavailable' })
+        t.eq(Open.isOpen(1), true)
+        env.resources[env.inventory] = 'started'
+        env.now = env.now + 10000
+        t.eq(D.handle(1, create).error, nil)
+    end)
+end
+
 return tests

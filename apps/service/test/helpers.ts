@@ -75,7 +75,8 @@ export type FxCall =
   | { kind: 'grants'; discordId: string; grants: GrantSet }
   | { kind: 'recompute'; discordIds: string[] | undefined }
   | { kind: 'officer'; discordId: string; displayName: string; avatarUrl: string | null }
-  | { kind: 'rules' };
+  | { kind: 'rules' }
+  | { kind: 'portal'; body: Record<string, unknown> };
 
 export class FakeFx implements FxClient {
   calls: FxCall[] = [];
@@ -104,6 +105,13 @@ export class FakeFx implements FxClient {
   async pushRulesChanged() {
     this.calls.push({ kind: 'rules' });
     return this.result({ ok: true });
+  }
+  /** Answer of POST /fredpd_mdt/portal; tests replace it (a fake FXServer running fredpd_mdt in portal mode). */
+  portalAnswer: (body: Record<string, unknown>) => FxResult | Promise<FxResult> = () => ({ ok: true, status: 200, body: { ok: true, data: {} } });
+  async portal(body: Record<string, unknown>) {
+    this.calls.push({ kind: 'portal', body });
+    if (!this.ok) return { ok: false as const, status: 0, error: 'network' };
+    return this.portalAnswer(body);
   }
   of<K extends FxCall['kind']>(kind: K): Extract<FxCall, { kind: K }>[] {
     return this.calls.filter((c): c is Extract<FxCall, { kind: K }> => c.kind === kind);

@@ -45,6 +45,13 @@ M.IDENTITY_SEEN_SQL = 'INSERT INTO fredpd_identities (discord_id, last_seen) VAL
 M.IDENTITY_CHARACTER_SQL = 'INSERT INTO fredpd_identities (discord_id, license, last_citizenid, last_seen) '
     .. 'VALUES (%s, UTC_TIMESTAMP()) ON DUPLICATE KEY UPDATE license = COALESCE(VALUES(license), license), '
     .. 'last_citizenid = VALUES(last_citizenid), last_seen = VALUES(last_seen)'
+-- A license belongs to the Discord account that last played it (license is not unique: discord_id is the key). Before
+-- the license is recorded for Discord user D, every other Discord user loses it (a relinked Discord, a shared PC, a
+-- handed-over account), so the portal no longer lists its characters for them, and their portal sessions drop the
+-- character they picked from it. Same transaction as IDENTITY_CHARACTER_SQL. Params: (license, discord_id).
+M.IDENTITY_SESSIONS_UNLINK_SQL = 'UPDATE fredpd_sessions SET citizenid = NULL WHERE citizenid IS NOT NULL AND discord_id IN '
+    .. '(SELECT discord_id FROM fredpd_identities WHERE license = ? AND discord_id <> ?)'
+M.IDENTITY_UNLINK_SQL = 'UPDATE fredpd_identities SET license = NULL WHERE license = ? AND discord_id <> ?'
 
 ---------------------------------------------------------------------------------------------------------------
 -- Pure helpers (tests/lua/core_perms_test.lua)
@@ -156,7 +163,7 @@ end
 local function store(src, set, notify)
     Cache[src] = set
     Served[src] = nil
-    if notify then
+    if notify and not Core.isVirtual(src) then
         TriggerClientEvent('fredpd:client:grantsChanged', src, M.copySet(set))
     end
     -- Server-side hook for other FredPD resources (for example to close pages the player lost access to).
@@ -345,6 +352,16 @@ function M.getDiscordId(src)
     return DiscordOf[src] or Core.discordIdOf(src)
 end
 
+--- Portal actors (server/virtual.lua): the set the service resolved for this portal request, held like a player's
+--- so every export above answers for the actor. A /grants push for the same Discord user also updates it (sourcesOf).
+function M.setVirtual(src, discordId, set)
+    Cache[src], DiscordOf[src], Served[src] = set, discordId, nil
+end
+
+function M.clearVirtual(src)
+    Cache[src], DiscordOf[src], Loading[src], Again[src], Served[src] = nil, nil, nil, nil, nil
+end
+
 ---------------------------------------------------------------------------------------------------------------
 -- fredpd_identities (Discord user <-> game account), fire-and-forget from event handlers
 
@@ -354,8 +371,18 @@ function M.recordCharacter(src, playerData)
     if not discordId or type(playerData) ~= 'table' or type(playerData.citizenid) ~= 'string' then return end
     local license = type(playerData.license) == 'string' and playerData.license or nil
     local marks, params = Core.bindRow({ discordId, license, playerData.citizenid }, 3)
+    local upsert = M.IDENTITY_CHARACTER_SQL:format(marks)
     Core.async('identity write', function()
-        MySQL.update.await(M.IDENTITY_CHARACTER_SQL:format(marks), params)
+        if not license then
+            MySQL.update.await(upsert, params)
+            return
+        end
+        local ok = MySQL.transaction.await({
+            { query = M.IDENTITY_SESSIONS_UNLINK_SQL, values = { license, discordId } },
+            { query = M.IDENTITY_UNLINK_SQL, values = { license, discordId } },
+            { query = upsert, values = params },
+        })
+        if not ok then error('identity transaction failed', 0) end
     end)
 end
 

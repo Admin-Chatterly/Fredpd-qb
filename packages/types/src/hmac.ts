@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // HMAC contract between FXServer (fredpd_core/server/http.js) and fredpd_service. See docs/contracts.md §C5.
 import { createHmac, timingSafeEqual } from 'node:crypto';
 

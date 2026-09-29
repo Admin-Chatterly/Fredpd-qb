@@ -195,4 +195,43 @@ tests['reports 07 templates (unit filtered) and golden ReportDetail'] = function
     end)
 end
 
+tests['reports 08 getReport reads back the viewer\'s own draft (only the author, only while editable)'] = function(t)
+    H.with(t, function(_, env, mods)
+        local c = newCase(env, mods, 2)
+        Cs(mods).assignCase(2, { id = c.id, citizenid = 'REC10003' })
+        local rep = R(mods).createReport(2, { caseId = c.id, title = 'Förhör med vittne' }).data
+        t.eq(rep.draft, nil, 'no draft yet (absent = null on the wire)')
+        t.eq(R(mods).getReport(2, { id = rep.id }).data.draft, nil)
+        local saved = R(mods).saveReportDraft(2, { reportId = rep.id, body = 'Vittnet uppger att…' }).data
+        local d = R(mods).getReport(2, { id = rep.id }).data.draft
+        t.eq(d, { body = 'Vittnet uppger att…', savedAt = saved.savedAt }, 'title nil when the autosave carried none')
+        R(mods).saveReportDraft(2, { reportId = rep.id, title = 'Förhör (utkast)', body = 'andra' })
+        t.eq(R(mods).getReport(2, { id = rep.id }).data.draft.title, 'Förhör (utkast)')
+        -- another editor (admin 3) with no draft of their own gets none: never someone else's draft
+        t.eq(R(mods).getReport(3, { id = rep.id }).data.editable, true)
+        t.eq(R(mods).getReport(3, { id = rep.id }).data.draft, nil, 'drafts are per author')
+        R(mods).saveReportDraft(3, { reportId = rep.id, body = 'admins utkast' })
+        t.eq(R(mods).getReport(3, { id = rep.id }).data.draft.body, 'admins utkast')
+        t.eq(R(mods).getReport(2, { id = rep.id }).data.draft.body, 'andra')
+        -- saveReport clears only the saver's draft; its answer carries none
+        local after = R(mods).saveReport(2, { id = rep.id, title = 'Förhör med vittne', body = 'andra', level = 0 }).data
+        t.eq(after.draft, nil)
+        t.eq(R(mods).getReport(3, { id = rep.id }).data.draft.body, 'admins utkast')
+        -- a golden with a draft (the contract test parses it; savedAt pinned for a stable file)
+        H.run("UPDATE fredpd_report_drafts SET updated_at = '2026-09-05 21:15:00', body = 'Utkasttext' "
+            .. "WHERE author_citizenid = 'REC10003';")
+        H.run("UPDATE fredpd_reports SET created_at = '2026-09-05 20:00:00', updated_at = '2026-09-05 20:30:00';")
+        local withDraft = R(mods).getReport(3, { id = rep.id }).data
+        t.eq(withDraft.draft, { body = 'Utkasttext', savedAt = '2026-09-05T21:15:00Z' })
+        -- closed case: nothing editable, so no draft is sent even though the row still exists
+        Cs(mods).closeCase(2, { id = c.id, resolution = 'Klart' })
+        t.eq(R(mods).getReport(3, { id = rep.id }).data.editable, false)
+        t.eq(R(mods).getReport(3, { id = rep.id }).data.draft, nil, 'not editable -> no draft')
+        t.eq(tonumber(MySQL.scalar.await('SELECT COUNT(*) FROM fredpd_report_drafts WHERE report_id = ?', { rep.id })), 1)
+        -- ids and the (year-dependent) numbers pinned so the file does not change with the clock
+        withDraft.id, withDraft.caseId, withDraft.caseNumber, withDraft.reportNumber = 1, 1, 'K-1-26', 'K-1-26/1'
+        H.golden(t, 'report.with-draft', withDraft)
+    end)
+end
+
 return tests

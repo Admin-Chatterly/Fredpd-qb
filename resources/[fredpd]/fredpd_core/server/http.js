@@ -110,6 +110,28 @@ function lowerHeaders(headers) {
   return out;
 }
 
+/**
+ * The peer of an FXServer HTTP request ("ip:port", "[v6]:port" or a bare address). The service reaches these routes
+ * at 127.0.0.1 (§C6), so anything that is clearly not loopback is refused (same rule as fredpd_mdt/server/http.js).
+ * An address we cannot parse is let through: the HMAC check stays the authoritative one.
+ */
+function isRemotePeer(address) {
+  if (typeof address !== 'string' || address === '') return false;
+  let host = address.trim();
+  const v6 = /^\[([^\]]+)\](?::\d+)?$/.exec(host);
+  if (v6) host = v6[1];
+  else if (/^[\d.]+:\d+$/.test(host)) host = host.slice(0, host.lastIndexOf(':'));
+  if (/^127\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(host) || host === '::1' || /^::ffff:127\./i.test(host)) return false;
+  if (/^[\d.]+$/.test(host) || /^[0-9a-f:]+$/i.test(host) || /^::ffff:/i.test(host)) return true;
+  return false;
+}
+
+/** The first key of `body` that is not in `allowed` (§C5 signs only ts + body: a body signed for another route must
+ * not pass here), or undefined. */
+function unknownKey(body, allowed) {
+  return Object.keys(body).find((k) => !allowed.includes(k));
+}
+
 function sendJson(res, status, obj, extraHeaders) {
   res.writeHead(status, Object.assign({ 'Content-Type': 'application/json; charset=utf-8' }, extraHeaders || {}));
   res.send(JSON.stringify(obj));
@@ -132,6 +154,10 @@ const ROUTES = {
     method: 'POST',
     memo: true,
     run(body, deps) {
+      // Only the §C6 keys, so a captured signed POST /fredpd_mdt/portal body ({ requestId, discordId, citizenid,
+      // grants, ... }) cannot be replayed here to re-apply an older grant set (8.3 review).
+      const unknown = unknownKey(body, ['discordId', 'grants']);
+      if (unknown !== undefined) return [400, { error: 'invalid_body', detail: `unknown key ${unknown.slice(0, 32)}` }];
       if (!isDiscordId(body.discordId)) return [400, { error: 'invalid_body', detail: 'discordId' }];
       const problem = grantSetProblem(body.grants);
       if (problem) return [400, { error: 'invalid_body', detail: problem }];
@@ -167,6 +193,8 @@ const ROUTES = {
     method: 'POST',
     memo: true,
     run(body, deps) {
+      const unknown = unknownKey(body, ['discordId', 'displayName', 'avatarUrl']);
+      if (unknown !== undefined) return [400, { error: 'invalid_body', detail: `unknown key ${unknown.slice(0, 32)}` }];
       if (!isDiscordId(body.discordId)) return [400, { error: 'invalid_body', detail: 'discordId' }];
       const name = typeof body.displayName === 'string' ? body.displayName.trim() : '';
       // Count code points like utf8.len in Lua and VARCHAR(100) utf8mb4 (String#length counts UTF-16 units).
@@ -211,7 +239,7 @@ const ROUTES = {
  *   emitEvent(name, ...args)  fires a server-local event (FiveM `emit`, i.e. TriggerEvent)
  *   playerCount()    online players
  *   log(level, msg)
- * Order of checks: route (404/405) -> size (413) -> signature (401) -> duplicate of a memo route (cached answer) ->
+ * Order of checks: route (404/405) -> peer (404, not loopback) -> size (413) -> signature (401) -> duplicate of a memo route (cached answer) ->
  * JSON (400) -> body shape (400) -> Lua.
  */
 function createHandler(deps) {
@@ -266,6 +294,7 @@ function createHandler(deps) {
     const route = Object.prototype.hasOwnProperty.call(ROUTES, path) ? ROUTES[path] : null;
     if (!route) return reply(404, { error: 'not_found' });
     if (method !== route.method) return reply(405, { error: 'method_not_allowed' }, { Allow: route.method });
+    if (isRemotePeer(req.address)) return reply(404, { error: 'not_found' });
     if (!deps.secret) return reply(503, { error: 'bridge_disabled' });
 
     const headers = lowerHeaders(req.headers);
@@ -522,7 +551,7 @@ function createBridge(fivem) {
 
 const api = {
   MAX_BODY_BYTES, MAX_RESPONSE_BYTES, MAX_SKEW_SECONDS, MIN_SECRET_LENGTH, FETCH_TIMEOUT_MS, REJECT_LOG_INTERVAL_S, RULES_CHANGED_EVENT,
-  signBody, verifySignature, secretProblem, grantSetProblem, createHandler, createSignedFetch, createBridge,
+  signBody, verifySignature, secretProblem, grantSetProblem, isRemotePeer, createHandler, createSignedFetch, createBridge,
 };
 
 // FiveM: the natives and `exports` are globals of the resource's JS context. Outside FiveM (tests) nothing is wired

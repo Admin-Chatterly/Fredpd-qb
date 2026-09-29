@@ -9,7 +9,7 @@
 -- tier at creation (not what an assignment let them see) and never officers, subjects, charges or evidence
 -- (server/export.lua). Every view is counted (view_count, last_viewed_at) and audited 'share.view'.
 -- viewShare is for the service's GET /share/:token (via the fredpd_core HTTP bridge; integration request): callable
--- only from fredpd_core, this resource or the console.
+-- only from fredpd_core, fredpd_mdt (portal route), this resource or the console.
 
 local C = require 'server.common'
 local Cases = require 'server.cases'
@@ -25,7 +25,8 @@ M.TOKEN_PATTERN = '^[%w_%-]+$'
 M.TOKEN_LENGTH = 43
 M.MAX_HOURS = 168
 M.TARGETS = { 'poi', 'case', 'report' }
-M.VIEW_CALLERS = { fredpd_core = true, fredpd_records = true }
+-- fredpd_mdt: its portal route (server/portal.lua) serves GET /share/:token for the service (docs/modules/portal-api.md).
+M.VIEW_CALLERS = { fredpd_core = true, fredpd_records = true, fredpd_mdt = true }
 
 --- A fresh token from the JS CSPRNG, or nil (never a fallback to math.random).
 function M.randomToken()

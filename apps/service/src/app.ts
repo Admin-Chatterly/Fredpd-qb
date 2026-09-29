@@ -36,6 +36,8 @@ import { registerAlertRoutes } from './routes/alerts';
 import { registerAuthRoutes } from './routes/auth';
 import { registerAvatarRoutes } from './routes/avatar';
 import { registerInternalRoutes } from './routes/internal';
+import { registerPortalRoutes } from './routes/portal';
+import { isSpaRequest, registerPortalStatic, sendPortalIndex } from './routes/static';
 import { registerUploadRoutes } from './routes/upload';
 import { registerWsRoutes } from './routes/ws';
 import { loadUnitCodes } from './units';
@@ -70,6 +72,29 @@ function sessionRateKey(token: string): string {
   return createHash('sha256').update(token).digest('hex').slice(0, 32);
 }
 
+/**
+ * Content-Security-Policy of every answer (task 7.2 review of helmet's defaults). Same-origin only: the portal's
+ * scripts, styles, fonts, lazy chunks, /avatar images and the /ws socket; images also from data:/blob: (upload
+ * previews); style-src keeps 'unsafe-inline' for React style attributes; no frames, no plugins, no <base>, forms
+ * only to us. upgrade-insecure-requests only behind HTTPS (COOKIE_SECURE), so plain-http development still loads.
+ */
+export function cspDirectives(https: boolean): Record<string, string[] | null> {
+  return {
+    'default-src': ["'self'"],
+    'script-src': ["'self'"],
+    'script-src-attr': ["'none'"],
+    'style-src': ["'self'", "'unsafe-inline'"],
+    'img-src': ["'self'", 'data:', 'blob:'],
+    'font-src': ["'self'", 'data:'],
+    'connect-src': ["'self'"],
+    'object-src': ["'none'"],
+    'base-uri': ["'none'"],
+    'form-action': ["'self'"],
+    'frame-ancestors': ["'none'"],
+    'upgrade-insecure-requests': https ? [] : null,
+  };
+}
+
 /** Default JSON body limit; /upload raises it for base64 images. */
 const BODY_LIMIT = 256 * 1024;
 export const RATE_LIMIT_PER_MINUTE = 60;
@@ -92,11 +117,7 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   app.decorateRequest('portalSession', null);
   app.decorateRequest('rawBody', undefined);
   app.setErrorHandler(errorHandler);
-  app.setNotFoundHandler((_request, reply) => {
-    void reply.code(404).send({ error: 'not_found' });
-  });
-
-  await app.register(helmet);
+  await app.register(helmet, { contentSecurityPolicy: { directives: cspDirectives(config.COOKIE_SECURE) } });
   await app.register(cookie, { secret: config.SESSION_SECRET });
 
   // The session cookie is only unsigned here (no I/O): a validly signed token keys the rate limiter (whose hooks are
@@ -188,6 +209,20 @@ export async function buildApp(deps: AppDeps): Promise<FastifyInstance> {
   registerUploadRoutes(app, ctx);
   registerAvatarRoutes(app, ctx);
   registerWsRoutes(app, ctx);
+  registerPortalRoutes(app, ctx);
+  await registerPortalStatic(app, ctx);
+
+  // The SPA's client-side routes get index.html; everything else (API paths, missing files) the JSON 404.
+  app.setNotFoundHandler((request, reply) => {
+    if (isSpaRequest(request)) return sendPortalIndex(ctx, reply);
+    return reply.code(404).send({ error: 'not_found' });
+  });
+
+  // API answers are per user and never cached by a browser or proxy.
+  app.addHook('onSend', async (request, reply, payload) => {
+    if (request.url.startsWith('/api/') && !reply.hasHeader('cache-control')) reply.header('cache-control', 'no-store');
+    return payload;
+  });
 
   app.addHook('onClose', async () => {
     fxRetry.close();

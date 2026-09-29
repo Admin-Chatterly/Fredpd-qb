@@ -34,7 +34,7 @@ import { LevelSelect, MutationError, OfficerPicker } from '../components/Fields'
 import { evidenceTypeLabel } from '../evidence';
 import { fmtDateTime, officerLabel, unitLabel } from '../format';
 import { personPath, vehiclePath } from '../search';
-import { useSession } from '../tablet/TabletContext';
+import { useSession } from '../session';
 
 type Section = { title: string; actions?: ReactNode; children: ReactNode };
 function SectionCard({ title, actions, children }: Section) {

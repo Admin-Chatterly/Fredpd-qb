@@ -15,6 +15,8 @@ and docs/contracts.md §C8 (t()) and §C10 (permissions admin API, client side).
 | `src/components/` (Phase 2) | `Dialog` (modal; `absolute inset-0` over the nearest positioned ancestor, which is the tablet frame in the NUI, or `position="fixed"`; focuses the first field, gives focus back on close; Esc is left to the tablet; `dismissOnBackdrop={false}` keeps a backdrop click from closing it, used by the BOLO create/resolve forms so a stray click does not discard typed text), `Pagination` (prev / "Sida x av y" / next, hidden for one page), `Textarea`, `VirtualListbox` (keyboard-navigable windowed `role="listbox"` with `aria-activedescendant`: ↑/↓, Home/End, PageUp/PageDown, Enter or click activates, `isDisabled` rows can be selected but not activated). |
 | `src/mdtPages.ts` | Re-exports `MDT_PAGE_KEYS`, `MdtPageKey`, `MDT_PAGE_LABEL_KEYS` and `isMdtPageKey` from `@fredpd/types/mdtPages` (docs/contracts.md §C12), so the apps keep importing them from `@fredpd/ui` (see below). |
 | `src/icons.tsx` | A small stroke icon set drawn for FredPD (`aria-hidden`). |
+| `src/mdtHost.tsx` (7.1) | `MdtTransport`, `MdtHostProvider`, `useMdtHost/useMdtTransport/useMdtMode`, `PORTAL_BLOCKED_ACTIONS`, `useActionAvailable` (docs/modules/portal.md). |
+| `src/components/PoiSheet.tsx` (7.1) | Presentational POI-blad for NUI and portal; renders only the fields given, only known warnings. |
 
 `cn()` only joins class names, and Tailwind orders utilities in its stylesheet, not by class order. So never
 override a utility with another one for the same property (`px-0` over `px-3.5`, `w-52` over `w-full`): add a
@@ -266,6 +268,12 @@ output schemas lazily (normalizeWire/devValidate only need the called action's s
 or imports a lazy page / GraphView statically.
 
 ## apps/portal
+
+**Task 7.1 (portal pages): see docs/modules/portal.md.** The tablet pages now read their data through the host's
+`MdtTransport` (`packages/ui/src/mdtHost.tsx`; the tablet's is `apps/nui/src/api/transport.ts`, fetchNui) and their
+session through `apps/nui/src/session.ts`; the portal hosts the same pages on `POST /api/mdt/:action`. The notes
+below describe the Phase 1 portal shell (login, session, Behörigheter), which is unchanged except that `/` is now the
+character picker or the tablet's Hem, and the nav lists the MDT sections.
 
 - **Routes.** `BrowserRouter` serves `/` (Hem) and `/behorigheter`. The Behörigheter nav item and route appear only
   with `perm:admin.permissions`. Without it, the route shows "not found" and never calls the admin API. Logged-out

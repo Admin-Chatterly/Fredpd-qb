@@ -4,7 +4,7 @@
 import { useState } from 'react';
 import { Link, useParams } from 'react-router';
 import type { Bolo, PlateCheckResult, VehicleSummary } from '@fredpd/types/mdt';
-import { Badge, Button, Card, EmptyState, IconFlag, IconSearch, PageHeader, useI18n } from '@fredpd/ui';
+import { Badge, Button, Card, EmptyState, IconFlag, IconSearch, PageHeader, useActionAvailable, useI18n } from '@fredpd/ui';
 import { useMdtMutation, useMdtQuery } from '../api/hooks';
 import { useErrorText } from '../api/errors';
 import { BoloCreateDialog, BoloList, BoloResolveDialog } from '../components/Bolos';
@@ -13,7 +13,7 @@ import { Callout, Facts, QueryView } from '../components/Common';
 import { fmtDateTime, officerLabel } from '../format';
 import { PERMS, usePerm } from '../perms';
 import { personPath } from '../search';
-import { useSession } from '../tablet/TabletContext';
+import { useSession } from '../session';
 
 function CheckResult({ result }: { result: PlateCheckResult }) {
   const i18n = useI18n();
@@ -52,6 +52,8 @@ export function VehicleView({ data }: { data: VehicleSummary }) {
   const [resolving, setResolving] = useState<Bolo | null>(null);
   const [message, setMessage] = useState<string | null>(null);
   const check = useMdtMutation('checkPlate');
+  // A plate check happens at the car (fredpd_bolo records it and alerts on a hit): tablet only, never in the portal.
+  const canCheck = useActionAvailable('checkPlate');
 
   const { vehicle, owner } = data;
   const wanted = data.bolos.some((b) => b.active);
@@ -69,9 +71,11 @@ export function VehicleView({ data }: { data: VehicleSummary }) {
         subtitle={vehicle.model ?? undefined}
         actions={
           <>
-            <Button variant="primary" icon={<IconSearch size={16} />} loading={check.isPending} onClick={() => check.mutate({ plate: vehicle.plate })}>
-              {t('vehicle.check')}
-            </Button>
+            {canCheck && (
+              <Button variant="primary" icon={<IconSearch size={16} />} loading={check.isPending} onClick={() => check.mutate({ plate: vehicle.plate })}>
+                {t('vehicle.check')}
+              </Button>
+            )}
             {canCreate && (
               <span title={wanted ? t('bolo.create.duplicate', { subject: vehicle.plate }) : undefined} className="inline-flex">
                 <Button variant="danger" icon={<IconFlag size={16} />} disabled={wanted} onClick={() => setCreating(true)}>

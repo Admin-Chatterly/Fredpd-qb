@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Runs the plain-Lua test suite in tests/lua with a local Lua 5.4 interpreter.
 import { spawnSync } from 'node:child_process';
 

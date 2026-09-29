@@ -87,7 +87,7 @@ export function installMockRegister(opts: { tier?: 0 | 1 | 2; unit?: string | nu
       }),
     );
   }
-  return { db, calls, unregister: () => unregister.forEach((u) => u()) };
+  return { db, calls, handlers, unregister: () => unregister.forEach((u) => u()) };
 }
 
 /** jsdom has no layout: TanStack Virtual reads the viewport from offsetHeight/offsetWidth. */

@@ -4,6 +4,9 @@
 // (fetstil, rubrik, punktlista) over a plain textarea, a live preview rendered as TEXT by MarkdownLite (no HTML, no
 // dangerouslySetInnerHTML), "Spara" (saveReport) and the draft autosave: saveReportDraft ≥ 10 s after the last
 // keystroke, only while the editor is focused and has unsaved input (src/autosave.ts; a debounce, no interval).
+// getReport carries the viewer's own draft (`draft`, §C14): when it is newer than the report the editor offers
+// "Återställ utkast" (loads the draft's title/body into the editor; Spara then stores it) or "Släng utkastet" (hides
+// the offer; the stale draft row is deleted by the next Spara).
 // Below it the charge picker (person, charges, sums, Registrera brott / Utfärda ordningsbot) and the applied charges.
 // Read-only reports show the rendered text and the charges.
 import { useEffect, useRef, useState } from 'react';
@@ -21,9 +24,18 @@ import { LevelSelect, MutationError } from '../components/Fields';
 import { fmtCurrency, fmtDateTime, fmtTime, officerLabel } from '../format';
 import { applyBold, applyHeading, applyList } from '../markdown';
 import type { TextEdit } from '../markdown';
-import { useSession } from '../tablet/TabletContext';
+import { useSession } from '../session';
 
 export const REPORT_BODY_MAX = 100_000;
+
+/** The viewer's draft when it was saved after the report itself (else null: nothing worth offering). */
+export function newerDraft(report: Pick<ReportDetail, 'draft' | 'updatedAt'>): NonNullable<ReportDetail['draft']> | null {
+  const draft = report.draft;
+  if (!draft) return null;
+  const draftAt = Date.parse(draft.savedAt);
+  const reportAt = Date.parse(report.updatedAt);
+  return Number.isFinite(draftAt) && Number.isFinite(reportAt) && draftAt > reportAt ? draft : null;
+}
 
 function AppliedCharges({ report }: { report: ReportDetail }) {
   const { t } = useI18n();
@@ -83,6 +95,9 @@ function ReportEditor({ report }: { report: ReportDetail }) {
   const [level, setLevel] = useState<Level>(report.level);
   const [draftAt, setDraftAt] = useState<string | null>(null);
   const [savedAt, setSavedAt] = useState<string | null>(null);
+  // "Återställ utkast" offer: shown once per mount while a newer draft exists and the officer has not chosen.
+  const [offer, setOffer] = useState(() => newerDraft(report));
+  const [restored, setRestored] = useState(false);
   const textarea = useRef<HTMLTextAreaElement>(null);
   // The latest values for the autosave callback (it runs from a timeout, after renders).
   const latest = useRef({ title, body });
@@ -107,9 +122,36 @@ function ReportEditor({ report }: { report: ReportDetail }) {
     });
   };
 
+  const restore = () => {
+    if (!offer) return;
+    if (offer.title !== null && offer.title.trim() !== '') setTitle(offer.title);
+    setBody(offer.body.slice(0, REPORT_BODY_MAX));
+    setDraftAt(offer.savedAt);
+    setOffer(null);
+    setRestored(true);
+  };
+
   const valid = title.trim().length >= 3;
   return (
     <div className="flex flex-col gap-4">
+      {offer && (
+        <Card>
+          <div className="flex flex-wrap items-center gap-2" role="status" data-draft-offer>
+            <span className="flex-1 text-sm">{t('report.draft.available', { time: fmtDateTime(i18n, offer.savedAt) })}</span>
+            <Button size="sm" variant="primary" onClick={restore}>
+              {t('report.draft.restore')}
+            </Button>
+            <Button size="sm" variant="ghost" onClick={() => setOffer(null)}>
+              {t('report.draft.discard')}
+            </Button>
+          </div>
+        </Card>
+      )}
+      {restored && (
+        <p className="text-sm text-muted" role="status" data-draft-restored>
+          {t('report.draft.restored')}
+        </p>
+      )}
       <Card>
         <div className="flex flex-col gap-3" data-report-editor onFocus={autosave.onFocus} onBlur={autosave.onBlur}>
           <div className="grid gap-3 md:grid-cols-[minmax(0,1fr)_14rem]">

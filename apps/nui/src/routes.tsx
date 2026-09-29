@@ -6,13 +6,15 @@
 import { lazy } from 'react';
 import type { ReactNode } from 'react';
 import { Route, Routes } from 'react-router';
-import { useT } from '@fredpd/ui';
+import { MdtHostProvider, useT } from '@fredpd/ui';
 import type { MdtPageKey } from '@fredpd/ui';
 import type { LocaleKey } from '@fredpd/types/locale-keys';
 import { RequirePage } from './components/RequirePage';
 import { TabletLayout } from './components/TabletLayout';
 import { HomePage } from './pages/HomePage';
 import { NotFoundPage, PlaceholderPage } from './pages/PlaceholderPage';
+import { nuiTransport } from './api/transport';
+import { useTablet } from './tablet/TabletContext';
 
 const SearchPage = lazy(() => import('./pages/SearchPage').then((m) => ({ default: m.SearchPage })));
 const PersonPage = lazy(() => import('./pages/PersonPage').then((m) => ({ default: m.PersonPage })));
@@ -34,8 +36,20 @@ function Section({ title }: { title: LocaleKey }) {
 
 const guard = (page: MdtPageKey, element: ReactNode) => <RequirePage page={page}>{element}</RequirePage>;
 
+/** The pages' host (packages/ui mdtHost.tsx): the NUI transport and the open payload. */
+function TabletHost({ children }: { children: ReactNode }) {
+  const { session } = useTablet();
+  if (!session) return null;
+  return (
+    <MdtHostProvider transport={nuiTransport} session={session}>
+      {children}
+    </MdtHostProvider>
+  );
+}
+
 export function TabletRoutes() {
   return (
+    <TabletHost>
     <Routes>
       <Route element={<TabletLayout />}>
         <Route index element={<HomePage />} />
@@ -55,5 +69,6 @@ export function TabletRoutes() {
         <Route path="*" element={<NotFoundPage />} />
       </Route>
     </Routes>
+    </TabletHost>
   );
 }

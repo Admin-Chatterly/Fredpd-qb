@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-only
-// Typed tablet actions (docs/contracts.md §C12, packages/types/src/mdt.ts): callMdt(action, input) posts through
-// fetchNui, turns `{ error }` answers into MdtClientError, restores Lua's absent nulls (src/api/wire.ts) and, in
+// Typed tablet actions (docs/contracts.md §C12, packages/types/src/mdt.ts): callMdt(action, input, transport) posts
+// through the host's MdtTransport (the tablet: fetchNui, api/transport.ts; the portal: POST /api/mdt/:action), turns `{ error }` answers into MdtClientError, restores Lua's absent nulls (src/api/wire.ts) and, in
 // dev builds only, validates the answer against the action's zod output schema so contract drift shows up at once.
 //
 // Query keys are ['mdt', action, input]. Server pushes (`fredpd:client:push` → NUI `{ action: 'push', topic }`)
@@ -9,7 +9,8 @@ import type { QueryClient } from '@tanstack/react-query';
 import { TABLET_ACTIONS } from './actions';
 import type { TabletActionName as MdtActionName, TabletInput as MdtInput, TabletOutput as MdtOutput } from './actions';
 import { IS_DEV_BUILD } from '../utils/env';
-import { fetchNui } from '../utils/fetchNui';
+import type { MdtTransport } from '@fredpd/ui';
+import { nuiTransport } from './transport';
 import { MdtClientError, readErrorResponse, toMdtClientError } from './errors';
 import { normalizeWire } from './wire';
 
@@ -30,10 +31,10 @@ function devValidate(action: MdtActionName, value: unknown): void {
   }
 }
 
-export async function callMdt<A extends MdtActionName>(action: A, input: MdtInput<A>): Promise<MdtOutput<A>> {
+export async function callMdt<A extends MdtActionName>(action: A, input: MdtInput<A>, transport: MdtTransport = nuiTransport): Promise<MdtOutput<A>> {
   let raw: unknown;
   try {
-    raw = await fetchNui<unknown>(action, input ?? {});
+    raw = await transport.call(action, input ?? {});
   } catch (err) {
     throw toMdtClientError(action, err);
   }
@@ -145,7 +146,37 @@ export function invalidateActions(queryClient: QueryClient, actions: readonly Md
   });
 }
 
+/**
+ * Topic `ledning` (fredpd_records, docs/modules/records.md "Push topics"; sent only to open tablets holding
+ * perm:records.admin): `{ type: 'releaseRequest', id }` when the release queue changed (created, decided) and
+ * `{ type: 'lookupFlag', officer, count }` when an obehörig sökning was flagged. Ids and counts only, so the push
+ * only marks queries stale. The query names are plain strings because the release-queue actions are not in the
+ * typed registries yet (the portal's src/mdt/extra.ts calls them with the same ['mdt', action, input] keys):
+ * `listReleaseRequests` is the Utlämningskö. A flagged lookup has no list query of its own (it is an audit row,
+ * `lookup.flag`); it refreshes the Ledning Hem (`getHome`) and reaches pages that show it live through
+ * usePush('ledning'). An unknown or malformed payload refreshes all of them.
+ */
+export const LEDNING_PUSH_QUERIES: Readonly<Record<'releaseRequest' | 'lookupFlag', readonly string[]>> = {
+  releaseRequest: ['listReleaseRequests'],
+  lookupFlag: ['getHome'],
+};
+export const LEDNING_TOPIC = 'ledning';
+
+/** The query names a `ledning` push refreshes (see LEDNING_PUSH_QUERIES). */
+export function ledningPushQueries(payload: unknown): readonly string[] {
+  const type = typeof payload === 'object' && payload !== null ? (payload as { type?: unknown }).type : undefined;
+  if (type === 'releaseRequest' || type === 'lookupFlag') return LEDNING_PUSH_QUERIES[type];
+  return [...new Set(Object.values(LEDNING_PUSH_QUERIES).flat())];
+}
+
 /** Called by TabletContext for every push (closed tablet: refetchType 'none', only marked stale). */
-export function invalidateForPush(queryClient: QueryClient, topic: string, refetchType: RefetchType): Promise<void> {
+export function invalidateForPush(queryClient: QueryClient, topic: string, refetchType: RefetchType, payload?: unknown): Promise<void> {
+  if (topic === LEDNING_TOPIC) {
+    const names = ledningPushQueries(payload);
+    return queryClient.invalidateQueries({
+      predicate: (query) => query.queryKey[0] === MDT_QUERY_ROOT && names.includes(query.queryKey[1] as string),
+      refetchType,
+    });
+  }
   return invalidateActions(queryClient, PUSH_INVALIDATES[topic] ?? [], refetchType);
 }

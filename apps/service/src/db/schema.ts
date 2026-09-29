@@ -1,10 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // drizzle-orm view of the fredpd_* tables the service uses. The SQL in db/migrations is the source of truth
-// (001_core.sql, 005_dispatch.sql, 009_service.sql); this file only mirrors it, and test/schema.test.ts compares every column here
+// (001_core.sql, 002_index.sql, 005_dispatch.sql, 009_service.sql); this file only mirrors it, and test/schema.test.ts compares every column here
 // with information_schema. Never generate migrations from this file (drizzle-kit is not used for DDL).
 import { sql } from 'drizzle-orm';
 import {
-  bigint, boolean, char, customType, datetime, index, int, mysqlEnum, mysqlTable, primaryKey, smallint, text, tinyint,
+  bigint, boolean, char, customType, date, datetime, index, int, mysqlEnum, mysqlTable, primaryKey, smallint, text, tinyint,
   uniqueIndex, varchar,
 } from 'drizzle-orm/mysql-core';
 import { GRANT_TYPES } from '@fredpd/types/grants';
@@ -75,6 +75,25 @@ export const identities = mysqlTable(
     createdAt: createdAt(),
   },
   (t) => [index('idx_license').on(t.license), index('idx_last_citizenid').on(t.lastCitizenid)],
+);
+
+// 002_index.sql (read only here: fredpd_core's mirror owns the rows; the portal lists a user's characters) ------
+
+export const persons = mysqlTable(
+  'fredpd_persons',
+  {
+    citizenid: varchar('citizenid', { length: 50 }).notNull().primaryKey(),
+    firstname: varchar('firstname', { length: 64 }).notNull().default(''),
+    lastname: varchar('lastname', { length: 64 }).notNull().default(''),
+    birthdate: date('birthdate', { mode: 'string' }),
+    personnummer: varchar('personnummer', { length: 13 }),
+    gender: tinyint('gender', { unsigned: true }),
+    phone: varchar('phone', { length: 20 }),
+    license: varchar('license', { length: 64 }),
+    updatedAt: updatedAt(),
+    createdAt: createdAt(),
+  },
+  (t) => [index('idx_name').on(t.lastname, t.firstname), index('idx_personnummer').on(t.personnummer)],
 );
 
 export const grantCache = mysqlTable('fredpd_grant_cache', {
@@ -191,4 +210,4 @@ export const uploads = mysqlTable(
   ],
 );
 
-export const schema = { roles, roleGrants, identities, grantCache, audit, units, officers, alerts, alertUnits, sessions, uploads };
+export const schema = { roles, roleGrants, identities, persons, grantCache, audit, units, officers, alerts, alertUnits, sessions, uploads };

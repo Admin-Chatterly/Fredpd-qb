@@ -282,4 +282,31 @@ describe('push', () => {
     expect(queryFn).toHaveBeenCalledTimes(3);
     unsubscribe();
   });
+
+  it("a 'ledning' push (records: release queue changed) refetches an open release-queue query, once", async () => {
+    const { queryClient } = mount();
+    const queryFn = vi.fn(async () => ({ items: [], total: 0, page: 1 }));
+    const otherFn = vi.fn(async () => 'x');
+    const queue = new QueryObserver(queryClient, { queryKey: ['mdt', 'listReleaseRequests', { page: 1 }], queryFn });
+    const other = new QueryObserver(queryClient, { queryKey: ['mdt', 'listTablets', { page: 1 }], queryFn: otherFn });
+    const u1 = queue.subscribe(() => {});
+    const u2 = other.subscribe(() => {});
+    await act(async () => {});
+    send(openMessage(['mdt_page:*']));
+    await act(async () => {});
+    const before = queryFn.mock.calls.length;
+    const otherBefore = otherFn.mock.calls.length;
+    send({ action: 'push', topic: 'ledning', payload: { type: 'releaseRequest', id: 12 } });
+    await act(async () => {});
+    expect(queryFn).toHaveBeenCalledTimes(before + 1);
+    expect(otherFn).toHaveBeenCalledTimes(otherBefore);
+    // closed: marked stale only, fetched on the next open
+    send({ action: 'close' });
+    send({ action: 'push', topic: 'ledning', payload: { type: 'releaseRequest', id: 13 } });
+    await act(async () => {});
+    expect(queryFn).toHaveBeenCalledTimes(before + 1);
+    expect(queryClient.getQueryState(['mdt', 'listReleaseRequests', { page: 1 }])?.isInvalidated).toBe(true);
+    u1();
+    u2();
+  });
 });

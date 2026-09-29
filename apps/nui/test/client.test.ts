@@ -7,7 +7,7 @@ import { CaseRefSchema, HomeOutputSchema, PersonSummarySchema, SearchOutputSchem
 import { NuiRequestError, clearNuiMocks, registerNuiMock } from '../src/utils/fetchNui';
 import { acceptsNull, normalizeWire } from '../src/api/wire';
 import { MdtClientError, errorLocaleKey } from '../src/api/errors';
-import { PUSH_INVALIDATES, callMdt, invalidateForPush, mdtQueryKey } from '../src/api/client';
+import { LEDNING_PUSH_QUERIES, PUSH_INVALIDATES, callMdt, invalidateForPush, ledningPushQueries, mdtQueryKey } from '../src/api/client';
 import { pendingMessages } from '../src/i18n';
 
 afterEach(() => {
@@ -129,6 +129,33 @@ describe('invalidation', () => {
     await invalidateForPush(qc, 'grants', 'none');
     expect(qc.getQueryState(keys[5] ?? [])?.isInvalidated).toBe(true);
     await expect(invalidateForPush(qc, 'unknown-topic', 'none')).resolves.toBeUndefined();
+  });
+
+  it("push topic ledning: releaseRequest refreshes the release queue, lookupFlag the Ledning Hem; nothing else", async () => {
+    const qc = new QueryClient();
+    const queue = ['mdt', 'listReleaseRequests', { status: 'pending', page: 1 }] as const;
+    const home = mdtQueryKey('getHome', {});
+    const others = [mdtQueryKey('listCases', { scope: 'mine', page: 1 } as never), mdtQueryKey('getPerson', { citizenid: 'A' }), mdtQueryKey('listAlerts', { filter: 'open' } as never)];
+    const all = [queue, home, ...others];
+    const reset = () => {
+      for (const key of all) qc.setQueryData(key, { cached: true });
+    };
+    const invalidated = () => all.map((key) => qc.getQueryState(key)?.isInvalidated ?? false);
+
+    reset();
+    await invalidateForPush(qc, 'ledning', 'none', { type: 'releaseRequest', id: 7 });
+    expect(invalidated()).toEqual([true, false, false, false, false]);
+
+    reset();
+    await invalidateForPush(qc, 'ledning', 'none', { type: 'lookupFlag', officer: 'ABC12345', count: 3 });
+    expect(invalidated()).toEqual([false, true, false, false, false]);
+
+    // malformed / unknown payload: every ledning query, still nothing outside them
+    reset();
+    await invalidateForPush(qc, 'ledning', 'none', 'garbage');
+    expect(invalidated()).toEqual([true, true, false, false, false]);
+    expect(ledningPushQueries(undefined)).toEqual(expect.arrayContaining([...LEDNING_PUSH_QUERIES.releaseRequest, ...LEDNING_PUSH_QUERIES.lookupFlag]));
+    expect(PUSH_INVALIDATES.ledning).toBeUndefined(); // handled by payload type, not the generic table
   });
 });
 

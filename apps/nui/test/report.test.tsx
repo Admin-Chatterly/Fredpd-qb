@@ -6,11 +6,12 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { act, cleanup, fireEvent, renderHook, screen, waitFor, within } from '@testing-library/react';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { join } from 'node:path';
-import { RECORDS_ACTIONS } from '@fredpd/types/records';
+import { RECORDS_ACTIONS, ReportDetailSchema } from '@fredpd/types/records';
 import type { Charge } from '@fredpd/types/records';
 import { AUTOSAVE_DELAY_MS, useDraftAutosave } from '../src/autosave';
 import { addLine, canIssueFine, clampQuantity, filterCharges, removeLine, setQuantity, sumLines } from '../src/charges';
 import { applyBold, applyHeading, applyList } from '../src/markdown';
+import { newerDraft } from '../src/pages/ReportPage';
 import { fmtCurrency } from '../src/format';
 import { clearNuiMocks } from '../src/utils/fetchNui';
 import { installMockRegister, renderAt } from './helpers';
@@ -248,5 +249,68 @@ describe('report page', () => {
     const picker = document.querySelector('[data-charge-picker]') as HTMLElement;
     expect(within(picker).queryByRole('button', { name: 'Registrera brott' })).toBeNull();
     expect(within(picker).queryByRole('button', { name: 'Utfärda ordningsbot' })).toBeNull();
+  });
+
+  it('draft read-back: a draft newer than the report is offered; "Återställ utkast" loads it into the editor', async () => {
+    const { handlers, calls } = installMockRegister();
+    const saved = handlers.saveReportDraft({ reportId: 820, title: 'Anmälan: misshandel (utkast)', body: 'Utkasttext från förra passet' }) as { savedAt: string };
+    expect(saved.savedAt).toMatch(/Z$/);
+    renderAt('/rapport/820');
+    const offer = await waitFor(() => {
+      const el = document.querySelector('[data-draft-offer]');
+      expect(el).toBeTruthy();
+      return el as HTMLElement;
+    });
+    expect(offer.textContent).toContain('Det finns ett osparat utkast');
+    const body = screen.getByRole('textbox', { name: 'Rapporttext' }) as HTMLTextAreaElement;
+    expect(body.value).not.toContain('Utkasttext'); // nothing replaced until the officer chooses
+    fireEvent.click(within(offer).getByRole('button', { name: 'Återställ utkast' }));
+    expect(body.value).toBe('Utkasttext från förra passet');
+    expect((screen.getByRole('textbox', { name: 'Rubrik' }) as HTMLInputElement).value).toBe('Anmälan: misshandel (utkast)');
+    expect(document.querySelector('[data-draft-offer]')).toBeNull();
+    expect(document.querySelector('[data-draft-restored]')?.textContent).toBe('Ett sparat utkast har återställts.');
+    // Spara stores it; the mock (like fredpd_records) deletes the draft, so a reload offers nothing
+    fireEvent.click(screen.getByRole('button', { name: 'Spara' }));
+    await waitFor(() => expect(calls.mock.calls.some(([a]) => a === 'saveReport')).toBe(true));
+    expect(calls.mock.calls.find(([a]) => a === 'saveReport')?.[1]).toMatchObject({ id: 820, body: 'Utkasttext från förra passet' });
+    const after = handlers.getReport({ id: 820 }) as { draft: unknown };
+    expect(after.draft).toBeNull();
+  });
+
+  it('"Släng utkastet" hides the offer and keeps the saved report text', async () => {
+    const { handlers } = installMockRegister();
+    handlers.saveReportDraft({ reportId: 820, body: 'Gammalt utkast' });
+    renderAt('/rapport/820');
+    const body = (await screen.findByRole('textbox', { name: 'Rapporttext' })) as HTMLTextAreaElement;
+    const before = body.value;
+    const offer = document.querySelector('[data-draft-offer]') as HTMLElement;
+    fireEvent.click(within(offer).getByRole('button', { name: 'Släng utkastet' }));
+    expect(document.querySelector('[data-draft-offer]')).toBeNull();
+    expect(body.value).toBe(before);
+  });
+
+  it('no offer without a draft, for a draft older than the report, or on a read-only report', async () => {
+    const draft = { title: null, body: 'x', savedAt: '2026-09-29T09:00:00Z' };
+    expect(newerDraft({ draft: null, updatedAt: '2026-09-29T09:00:00Z' })).toBeNull();
+    expect(newerDraft({ draft, updatedAt: '2026-09-29T09:00:00Z' })).toBeNull(); // same second: not newer
+    expect(newerDraft({ draft, updatedAt: '2026-09-29T09:30:00Z' })).toBeNull();
+    expect(newerDraft({ draft, updatedAt: '2026-09-29T08:59:59Z' })).toBe(draft);
+    expect(newerDraft({ draft: { ...draft, savedAt: 'nonsense' }, updatedAt: '2026-09-29T08:00:00Z' })).toBeNull();
+
+    // the contract: draft is required-nullable, title nullable
+    const base = { id: 1, reportNumber: 'K-1-26/1', caseId: 1, caseNumber: 'K-1-26', title: 'Rapport', body: '', level: 0, author: null,
+      createdAt: '2026-09-29T08:00:00Z', updatedAt: '2026-09-29T08:00:00Z', charges: [], editable: true };
+    expect(ReportDetailSchema.safeParse({ ...base, draft: null }).success).toBe(true);
+    expect(ReportDetailSchema.safeParse({ ...base, draft }).success).toBe(true);
+    expect(ReportDetailSchema.safeParse(base).success).toBe(false);
+    expect(ReportDetailSchema.safeParse({ ...base, draft: { body: 'x', savedAt: 'igår' } }).success).toBe(false);
+
+    const { handlers, db } = installMockRegister();
+    handlers.saveReportDraft({ reportId: 820, body: 'Utkast' });
+    db.cases.find((x) => x.id === 1101)!.status = 'closed';
+    renderAt('/rapport/820');
+    expect(await screen.findByRole('heading', { level: 1, name: /Anmälan: misshandel/ })).toBeTruthy();
+    expect(document.querySelector('[data-draft-offer]')).toBeNull();
+    expect((handlers.getReport({ id: 820 }) as { draft: unknown }).draft).toBeNull();
   });
 });

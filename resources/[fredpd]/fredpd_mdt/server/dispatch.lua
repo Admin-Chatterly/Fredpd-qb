@@ -5,6 +5,7 @@
 --   2. unknown action / input not matching the shape (shared/validate.lua)     -> { error = 'validation' }
 --   3. the action's grant (exports.fredpd_core:hasGrant)                       -> { error = 'unauthorized' }
 --      on duty for every action except `close`                                 -> { error = 'unauthorized', reason = 'off_duty' }
+--      write/draft actions: the tablet item (with the session's serial) still held -> else force-close + 'unauthorized'
 --   4. rate limit per src per action (lookup/read 500 ms, write 2 s, draft 5 s) -> { error = 'rate_limited' }
 --   5. route: the owning resource's export (src, input) or a local handler; { ok, data } is unwrapped to data,
 --      { ok = false, error } to { error } (an unknown code or a raise -> 'unavailable').
@@ -169,6 +170,16 @@ function M.handle(src, req)
     -- 3. grant, then duty
     if def.grant and not C.hasGrant(src, def.grant[1], def.grant[2]) then return err('unauthorized') end
     if not isClose and not C.isOnDuty(src) then return err('unauthorized', 'off_duty') end
+    -- An item session is only valid while the tablet is still in the inventory (§4.6): a dropped, sold or handed-over
+    -- tablet closes the MDT at the next write-class action (no inventory hook needed; reads stay cheap).
+    if def.limit == 'write' or def.limit == 'draft' then
+        local held = Open.holdsTablet(src)
+        if held == nil then return err('unavailable') end
+        if not held then
+            Open.forceClose(src, 'tablet.noItem')
+            return err('unauthorized')
+        end
+    end
 
     -- 4. rate limit (per src per action)
     if def.limit and not C.allow(src, 'action:' .. action, Config.limits[def.limit]) then

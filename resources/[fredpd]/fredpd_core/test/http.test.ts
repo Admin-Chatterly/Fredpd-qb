@@ -41,6 +41,7 @@ interface HttpApi {
   signBody(secret: string, ts: string | number, rawBody: string): string;
   verifySignature(o: { secret: string; ts: string; sig: string; rawBody: string; nowSeconds: number }): VerifyResult;
   createHandler(deps: HandlerDeps): Handler;
+  isRemotePeer(address: unknown): boolean;
   createSignedFetch(deps: { secret: string | null; baseUrl: string; now(): number; fetch?: Fn; timeoutMs?: number; log(level: string, msg: string): void; invoker?: () => string | null }): SignedFetch;
 }
 
@@ -91,7 +92,7 @@ function load(opts: { secret?: string; serviceUrl?: string; fetch?: Fn } = {}): 
 interface Reply { status: number; headers: Record<string, string>; json: Record<string, unknown>; dataHandlerUsed: boolean }
 
 /** Drive a handler with a fake FiveM request; resolves when res.send is called. */
-function request(handler: Handler, o: { method?: string; path: string; body?: string; headers?: Record<string, string> }): Promise<Reply> {
+function request(handler: Handler, o: { method?: string; path: string; body?: string; headers?: Record<string, string>; address?: string }): Promise<Reply> {
   return new Promise((resolvePromise) => {
     let status = 0;
     let headers: Record<string, string> = {};
@@ -102,7 +103,7 @@ function request(handler: Handler, o: { method?: string; path: string; body?: st
       send(body) { resolvePromise({ status, headers, json: JSON.parse(body) as Record<string, unknown>, dataHandlerUsed }); },
     };
     const req: FakeReq = {
-      method: o.method ?? 'POST', path: o.path, address: '127.0.0.1:50000', headers: o.headers ?? {},
+      method: o.method ?? 'POST', path: o.path, address: o.address ?? '127.0.0.1:50000', headers: o.headers ?? {},
       setDataHandler(cb) { dataHandlerUsed = true; setImmediate(() => cb(o.body ?? '')); },
       setCancelHandler() {},
     };
@@ -430,6 +431,48 @@ describe('http.js routes (SetHttpHandler)', () => {
     lua.setOfficerIdentity.mockReturnValueOnce(false);
     const reply = await signed(handler!, 'POST', '/officer', { discordId: DISCORD, displayName: 'Anna' });
     expect(reply).toMatchObject({ status: 400, json: { error: 'invalid_body' } });
+  });
+});
+
+describe('http.js hardening (8.3 review)', () => {
+  it('a request from a non-loopback peer -> 404 even when correctly signed; Lua is not called', async () => {
+    const { handler, lua } = load();
+    for (const address of ['203.0.113.7:40000', '[2001:db8::1]:40000', '::ffff:198.51.100.2', '10.0.0.5']) {
+      const body = JSON.stringify({ discordId: DISCORD, grants: GRANTS });
+      const reply = await request(handler!, { method: 'POST', path: '/grants', body, headers: sign(body), address });
+      expect(reply.status, address).toBe(404);
+    }
+    expect(lua.applyGrants).not.toHaveBeenCalled();
+    for (const address of ['127.0.0.1:1', '[::1]:5', '::ffff:127.0.0.1', '']) {
+      const reply = await request(handler!, { method: 'GET', path: '/ping', headers: sign(''), address });
+      expect(reply.status, address).toBe(200);
+    }
+  });
+
+  it('isRemotePeer: loopback and unparseable addresses pass, other IPs do not', () => {
+    const { api } = load();
+    expect(api.isRemotePeer('127.0.0.1:30120')).toBe(false);
+    expect(api.isRemotePeer('[::1]:1')).toBe(false);
+    expect(api.isRemotePeer('192.168.1.2:1')).toBe(true);
+    expect(api.isRemotePeer('fe80::1')).toBe(true);
+    expect(api.isRemotePeer(undefined)).toBe(false);
+  });
+
+  it('a signed fredpd_mdt/portal body replayed on /grants is refused (unknown keys); Lua is not called', async () => {
+    const { handler, lua } = load();
+    const portalBody = { requestId: 'a'.repeat(32), discordId: DISCORD, citizenid: 'ABC123', grants: GRANTS, action: 'getHome', input: {} };
+    const reply = await signed(handler!, 'POST', '/grants', portalBody);
+    expect(reply.status).toBe(400);
+    expect(reply.json).toMatchObject({ error: 'invalid_body' });
+    expect(String(reply.json.detail)).toMatch(/^unknown key /);
+    expect(lua.applyGrants).not.toHaveBeenCalled();
+  });
+
+  it('POST /officer refuses unknown keys too', async () => {
+    const { handler, lua } = load();
+    const reply = await signed(handler!, 'POST', '/officer', { discordId: DISCORD, displayName: 'Anna', avatarUrl: null, grants: GRANTS });
+    expect(reply).toMatchObject({ status: 400, json: { error: 'invalid_body', detail: 'unknown key grants' } });
+    expect(lua.setOfficerIdentity).not.toHaveBeenCalled();
   });
 });
 

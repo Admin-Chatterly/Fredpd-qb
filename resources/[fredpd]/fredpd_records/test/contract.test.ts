@@ -61,6 +61,7 @@ const SCHEMAS: Record<string, Schema> = {
   'case.notice': as(CaseDetailSchema),
   'cases.list': as(CaseListOutputSchema),
   'report.detail': as(ReportDetailSchema),
+  'report.with-draft': as(ReportDetailSchema),
   'templates.list': as(RECORDS_ACTIONS.listReportTemplates.output),
   'charges.list': as(ChargeListOutputSchema),
   'charges.applied': as(ApplyChargesOutputSchema),

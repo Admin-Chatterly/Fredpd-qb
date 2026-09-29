@@ -37,10 +37,21 @@ return {
 
     -- Doors that can never be breached (checked on the server at start and finish). An entry is a door id (number;
     -- for qb-doorlock also its Config.DoorList string key), an exact door name (string; qb-doorlock: doorLabel) or a
-    -- Lua pattern on the name ({ pattern = '^mrpd_' }). Empty = every door of the doorlock resource can be breached,
-    -- including the station's own cell/armory/evidence doors; list those here.
-    -- Example: denyDoors = { 'mrpd_armory', { pattern = '^mrpd_evidence' }, 57 },
-    denyDoors = {},
+    -- Lua pattern on the name ({ pattern = '^mrpd_' }; tried on the name and on the lower-cased name). An empty list
+    -- would let every tool:ram holder force every door of the doorlock resource, the station's own included.
+    -- The default denies the Mission Row PD doors of ox_doorlock's sql/default.sql ('mrpd armoury', 'mrpd cells
+    -- main', ...) and sql/community_mrpd.sql, and any door whose name mentions an armory, evidence room, vault or
+    -- bank. REQUIRED SETUP: add your station's and other scripts' secure doors (docs/modules/breach.md "Deny list").
+    -- Example additions: 'sandy_armory', { pattern = '^paleto_pd' }, 57,
+    denyDoors = {
+        { pattern = '^mrpd' },
+        { pattern = '^community_mrpd' },
+        { pattern = 'armou?ry' },
+        { pattern = 'evidence' },
+        { pattern = 'vault' },
+        { pattern = 'bank' },
+        { pattern = 'fleeca' },
+    },
 
     -- Max distance (metres) between the player's ped (server-side position) and the door's coords (doorlock
     -- resource), at start and again at finish. The target option shows within targetDistance, on a box zone of

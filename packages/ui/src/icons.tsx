@@ -79,3 +79,6 @@ export const IconPlus = (p: IconProps) => (
 export const IconBan = (p: IconProps) => (
   <Icon {...p}><circle cx="12" cy="12" r="8" /><path d="m6.5 6.5 11 11" /></Icon>
 );
+export const IconPrint = (p: IconProps) => (
+  <Icon {...p}><path d="M7 9V3h10v6" /><rect x="3" y="9" width="18" height="8" rx="2" /><path d="M7 14h10v7H7z" /></Icon>
+);

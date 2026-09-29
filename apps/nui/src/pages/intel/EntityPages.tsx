@@ -16,7 +16,7 @@ import { LevelSelect, MutationError } from '../../components/Fields';
 import { fmtDateTime, noticeOwner, officerLabel } from '../../format';
 import { ENTITY_TYPE_KEYS, LINK_TYPES, entityPath, intelReportPath, linkTypeLabel } from '../../intel';
 import { PERMS, usePerm } from '../../perms';
-import { useSession } from '../../tablet/TabletContext';
+import { useSession } from '../../session';
 
 const GraphView = lazy(() => import('./GraphView'));
 

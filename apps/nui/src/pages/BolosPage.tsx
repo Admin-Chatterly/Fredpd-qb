@@ -14,7 +14,7 @@ import { BoloCreateDialog, BoloResolveDialog } from '../components/Bolos';
 import { Callout, QueryView } from '../components/Common';
 import { fmtDateTime, officerLabel } from '../format';
 import { PERMS, usePerm } from '../perms';
-import { useSession } from '../tablet/TabletContext';
+import { useSession } from '../session';
 
 export function BolosPage() {
   const i18n = useI18n();

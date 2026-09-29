@@ -6,7 +6,7 @@ import { useState } from 'react';
 import { Link, Route, Routes } from 'react-router';
 import { PAGE_SIZE } from '@fredpd/types/mdt';
 import type { MdtOutput } from '@fredpd/types/mdt';
-import { Badge, Button, Card, Dialog, EmptyState, IconKey, IconShield, PageHeader, Pagination, Table, useI18n } from '@fredpd/ui';
+import { Badge, Button, Card, Dialog, EmptyState, IconKey, IconShield, PageHeader, Pagination, Table, useActionAvailable, useI18n } from '@fredpd/ui';
 import type { TableColumn } from '@fredpd/ui';
 import { useMdtMutation, useMdtQuery } from '../api/hooks';
 import { useErrorText } from '../api/errors';
@@ -23,6 +23,8 @@ export function TabletsPage() {
   const { t } = i18n;
   const errorText = useErrorText();
   const canManage = usePerm(PERMS.tabletsManage);
+  // Revocation is a tablet write, not offered in the portal (the list stays readable there).
+  const canToggle = useActionAvailable('setTabletRevoked');
   const [page, setPage] = useState(1);
   const [confirm, setConfirm] = useState<Tablet | null>(null);
   const [message, setMessage] = useState<{ tone: 'success' | 'danger'; text: string } | null>(null);
@@ -73,7 +75,7 @@ export function TabletsPage() {
       header: <span className="sr-only">{t('common.actions')}</span>,
       className: 'text-right',
       cell: (tab) =>
-        tab.revoked ? (
+        !canToggle ? null : tab.revoked ? (
           <Button size="sm" variant="secondary" disabled={toggle.isPending} onClick={() => toggle.mutate({ serial: tab.serial, revoked: false })}>
             {t('tablet.reinstate')}
           </Button>

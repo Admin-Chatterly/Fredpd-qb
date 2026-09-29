@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- Assertion helpers for tests/lua/*_test.lua. `t` in each test is this module.
 local M = {}
 

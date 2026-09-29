@@ -1,6 +1,6 @@
 diff --git a/locales/sv.json b/locales/sv.json
 new file mode 100644
-index 0000000..55b5ae8
+index 0000000..fd5eec9
 --- /dev/null
 +++ b/locales/sv.json
 @@ -0,0 +1,460 @@
@@ -48,8 +48,8 @@ index 0000000..55b5ae8
 +            "destroying_label": "Ta bort hylsa"
 +        },
 +        "bullet": {
-+            "collecting_label": "Säkra kula",
-+            "destroying_label": "Ta bort kula"
++            "collecting_label": "Säkra projektil",
++            "destroying_label": "Ta bort projektil"
 +        },
 +        "gunshot_residue": {
 +            "collecting_label": "Säkra krutstänk",
@@ -132,7 +132,7 @@ index 0000000..55b5ae8
 +        "input_help": "Tryck %s för att avbryta",
 +        "scan_match": {
 +            "title": "Fingeravtryck läst",
-+            "description": "Träff i registret: %s (%s • %s)"
++            "description": "Träff i registret: %s (%s · %s)"
 +        },
 +        "scan_no_match": {
 +            "title": "Fingeravtryck läst",
@@ -170,7 +170,7 @@ index 0000000..55b5ae8
 +            },
 +            "error": {
 +                "title": "Bevis",
-+                "description": "Det lyckades inte"
++                "description": "Något gick fel"
 +            },
 +            "no_consent": {
 +                "title": "Bevis",
@@ -231,8 +231,8 @@ index 0000000..55b5ae8
 +                "fingerprint": "fingeravtryck",
 +                "dna": "DNA",
 +                "statuses": {
-+                    "search": "Sök …",
-+                    "loading": "Laddar …",
++                    "search": "Sök…",
++                    "loading": "Laddar…",
 +                    "error": "Fel",
 +                    "no_data": "Inga uppgifter",
 +                    "delete": "Ta bort",
@@ -240,11 +240,11 @@ index 0000000..55b5ae8
 +                    "cancel": "Avbryt",
 +                    "unknown": "okänd",
 +                    "analysed": "analyserat",
-+                    "no_selection": "Inget att välja …",
++                    "no_selection": "Inget att välja",
 +                    "select_evidence": "Välj ett bevis.",
 +                    "select_citizen": "Välj en person.",
 +                    "select_firearm": "Välj ett vapen.",
-+                    "fill_all_fields": "Fyll i alla fält!"
++                    "fill_all_fields": "Fyll i alla fält."
 +                },
 +                "dropdowns": {
 +                    "select_citizen": "Välj person",
@@ -271,19 +271,19 @@ index 0000000..55b5ae8
 +                    "select_evidence": "Välj bevis"
 +                },
 +                "status_messages": {
-+                    "citizen_creation_success": "Personen har lagts till!",
-+                    "citizen_creation_error": "Personen kunde inte läggas till!",
-+                    "citizen_update_success": "Personen har uppdaterats!",
-+                    "citizen_update_error": "Personen kunde inte sparas!",
-+                    "citizen_deletion_success": "Personen har tagits bort!",
-+                    "citizen_deletion_error": "Personen kunde inte tas bort!",
-+                    "note_save_success": "Anteckningen har sparats!",
-+                    "note_save_error": "Anteckningen kunde inte sparas!",
-+                    "note_deletion_success": "Anteckningen har tagits bort!",
-+                    "note_deletion_error": "Anteckningen kunde inte tas bort!",
-+                    "biometric_data_link_success": "%s har kopplats till den valda personen!",
-+                    "biometric_data_unlink_success": "%s har kopplats bort från den valda personen!",
-+                    "biometric_data_link_error": "%s kunde inte kopplas till personen!"
++                    "citizen_creation_success": "Personen har lagts till.",
++                    "citizen_creation_error": "Personen kunde inte läggas till.",
++                    "citizen_update_success": "Personen har uppdaterats.",
++                    "citizen_update_error": "Personen kunde inte sparas.",
++                    "citizen_deletion_success": "Personen har tagits bort.",
++                    "citizen_deletion_error": "Personen kunde inte tas bort.",
++                    "note_save_success": "Anteckningen har sparats.",
++                    "note_save_error": "Anteckningen kunde inte sparas.",
++                    "note_deletion_success": "Anteckningen har tagits bort.",
++                    "note_deletion_error": "Anteckningen kunde inte tas bort.",
++                    "biometric_data_link_success": "%s har kopplats till den valda personen.",
++                    "biometric_data_unlink_success": "%s har kopplats bort från den valda personen.",
++                    "biometric_data_link_error": "%s kunde inte kopplas till personen."
 +                },
 +                "gender": {
 +                    "header": "Välj kön",
@@ -302,14 +302,14 @@ index 0000000..55b5ae8
 +            },
 +            "evidence_analysis": {
 +                "start_analyzation": "Starta analys",
-+                "matching_biometric_data": "Jämför %s med registret …",
++                "matching_biometric_data": "Jämför %s med registret…",
 +                "database_match": {
-+                    "header": "Träff i registret!",
++                    "header": "Träff i registret",
 +                    "description": "Spåret (%s) på beviset tillhör följande person:",
 +                    "open_citizens_app": "Öppna i personregistret"
 +                },
 +                "no_database_match": {
-+                    "header": "Ingen träff i registret!",
++                    "header": "Ingen träff i registret",
 +                    "description": "Spåret (%s) på beviset tillhör en okänd person. Om du vet vem det är kan du koppla spåret (%s) från beviset till personen i personregistret."
 +                }
 +            },
@@ -343,29 +343,29 @@ index 0000000..55b5ae8
 +                    "suspended": "Spärrat"
 +                },
 +                "status_messages": {
-+                    "firearm_registration_success": "Vapnet har registrerats!",
-+                    "firearm_registration_error": "Vapnet kunde inte registreras!",
-+                    "firearm_already_registered": "Vapnet är redan registrerat!",
-+                    "firearm_update_success": "Vapnet har uppdaterats!",
-+                    "firearm_update_error": "Vapnet kunde inte sparas!",
-+                    "firearm_deletion_success": "Vapnet har tagits bort!",
-+                    "firearm_deletion_error": "Vapnet kunde inte tas bort!"
++                    "firearm_registration_success": "Vapnet har registrerats.",
++                    "firearm_registration_error": "Vapnet kunde inte registreras.",
++                    "firearm_already_registered": "Vapnet är redan registrerat.",
++                    "firearm_update_success": "Vapnet har uppdaterats.",
++                    "firearm_update_error": "Vapnet kunde inte sparas.",
++                    "firearm_deletion_success": "Vapnet har tagits bort.",
++                    "firearm_deletion_error": "Vapnet kunde inte tas bort."
 +                }
 +            },
 +            "ballistics_app": {
 +                "name": "Ballistisk analys",
 +                "no_ballistics_evidence_items": "Du har inga ballistiska bevis på dig.",
 +                "start_analyzation": "Starta analys",
-+                "matching_serial": "Analyserar ballistiskt bevis …",
++                "matching_serial": "Analyserar ballistiskt bevis…",
 +                "registry_match": {
-+                    "header": "Träff i vapenregistret!",
++                    "header": "Träff i vapenregistret",
 +                    "description": "Det ballistiska beviset kommer från följande vapen:",
 +                    "open_firearms_registry": "Öppna i vapenregistret"
 +                },
 +                "no_registry_match": {
-+                    "header": "Ingen träff i vapenregistret!",
++                    "header": "Ingen träff i vapenregistret",
 +                    "casing_description": "Hylsan har inget serienummer som matchar ett vapen i vapenregistret. Hylsor kan ändå identifieras genom de unika mikroskopiska verktygsspår som ojämnheter i vapnet lämnar. Välj ett vapen som du har på dig för att se om hylsan kommer från just det vapnet (eller åtminstone från ett vapen av samma typ).",
-+                    "bullet_description": "Avfyrade kulor kan identifieras genom de unika mikroskopiska spår som ojämnheter i vapnets pipa lämnar. Välj ett vapen som du har på dig för att se om kulan kommer från just det vapnet (eller åtminstone från ett vapen av samma typ).",
++                    "bullet_description": "Avfyrade projektiler kan identifieras genom de unika mikroskopiska spår som ojämnheter i vapnets pipa lämnar. Välj ett vapen som du har på dig för att se om projektilen kommer från just det vapnet (eller åtminstone från ett vapen av samma typ).",
 +                    "inventory_match": {
 +                        "microstamp": "Det ballistiska beviset kommer från just det valda vapnet: serienumret är mikrostämplat på beviset.",
 +                        "imperfections": "Det ballistiska beviset kommer från just det valda vapnet: de har samma unika ojämnheter.",
@@ -434,8 +434,8 @@ index 0000000..55b5ae8
 +                    "ObservableRadioFreq": "Pågående avlyssning av radiokanal %s MHz",
 +                    "ObservableSpyMicrophone": "Lyssnar på buggmikrofonen %s",
 +                    "status_messages": {
-+                        "protocol_save_success": "Avlyssningsprotokollet har sparats!",
-+                        "protocol_save_error": "Avlyssningsprotokollet kunde inte sparas!"
++                        "protocol_save_success": "Avlyssningsprotokollet har sparats.",
++                        "protocol_save_error": "Avlyssningsprotokollet kunde inte sparas."
 +                    }
 +                },
 +                "protocol_popup": {

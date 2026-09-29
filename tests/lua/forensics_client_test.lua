@@ -205,7 +205,7 @@ tests['02 lab: entering adds Analysera + a local laptop, which opens evidences; 
         t.eq(#env.notifies, 0)
         env.openLaptopResult = 'error' -- evidences without patches/evidences.20-fredpd-integration.patch
         analyse.onSelect({ entity = entity })
-        t.eq(env.lastNotify().description, 'Öppna laptopen med dess eget alternativ, Använd laptop.')
+        t.eq(env.lastNotify().description, 'Öppna laptopen med dess eget alternativ, ”Använd laptop”.')
         env.resources.evidences = 'stopped'
         analyse.onSelect({ entity = entity })
         t.eq(env.lastNotify().description, 'Bevislaptopen är inte tillgänglig just nu.')

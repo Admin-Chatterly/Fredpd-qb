@@ -17,6 +17,7 @@ local Mirror = require 'server.mirror'
 local Officers = require 'server.officers'
 local Adapters = require 'adapters.loader'
 local Bridge = require 'server.bridge'
+local Virtual = require 'server.virtual'
 
 ---------------------------------------------------------------------------------------------------------------
 -- 1. Config files (copied into config/ by scripts/build.mjs). A broken file is logged, never fatal.
@@ -63,6 +64,7 @@ CanView.register()
 Audit.register()
 Mirror.register()
 Officers.register()
+Virtual.register()
 Adapters.register()
 Adapters.load(Core.config.integrations)
 

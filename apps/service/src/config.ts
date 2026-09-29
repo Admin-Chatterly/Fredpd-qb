@@ -72,6 +72,8 @@ export const ConfigSchema = z.object({
   SESSION_SECRET: secret(32),
   /** Relative paths resolve against the service's working directory (apps/service). */
   UPLOAD_DIR: z.string().min(1).default('data/uploads'),
+  /** The built portal SPA (pnpm build → apps/portal/dist), served at / (relative to apps/service). */
+  PORTAL_DIR: z.string().min(1).default('../portal/dist'),
   OFFICER_NAME_SOURCE: z.enum(OFFICER_NAME_SOURCES).default('discord_nick'),
   /** Only false for plain-http development; the portal runs behind HTTPS (Cloudflare Tunnel or Caddy). */
   COOKIE_SECURE: bool(true),

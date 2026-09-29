@@ -14,7 +14,7 @@ import { CaseRefList } from '../components/CaseRefs';
 import { QueryView } from '../components/Common';
 import { LevelSelect, MutationError } from '../components/Fields';
 import { PERMS, usePerm } from '../perms';
-import { useSession } from '../tablet/TabletContext';
+import { useSession } from '../session';
 
 function CaseCreateDialog({ onClose }: { onClose: () => void }) {
   const { t } = useI18n();

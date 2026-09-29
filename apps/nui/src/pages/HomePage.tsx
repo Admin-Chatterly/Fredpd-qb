@@ -16,7 +16,7 @@ import { CaseRefList } from '../components/CaseRefs';
 import { ErrorState } from '../components/Common';
 import { unitLabel } from '../format';
 import { canSeePage } from '../nav';
-import { useSession } from '../tablet/TabletContext';
+import { useSession } from '../session';
 import { homeVariantFor } from '../units';
 import type { HomeVariant } from '../units';
 
@@ -102,7 +102,7 @@ function StatCard({ stat, value, emphasis, to }: { stat: HomeStat; value: number
 
 type RosterRow = HomeOutput['roster'][number];
 
-function Roster({ roster }: { roster: HomeOutput['roster'] }) {
+export function Roster({ roster }: { roster: HomeOutput['roster'] }) {
   const i18n = useI18n();
   const { t } = i18n;
   const columns: TableColumn<RosterRow>[] = [

@@ -12,7 +12,7 @@ import { LEVELS } from '../bolo';
 import { officerLabel } from '../format';
 import { LEVEL_HINT_KEYS } from '../levels';
 import { canSeePage } from '../nav';
-import { useSession } from '../tablet/TabletContext';
+import { useSession } from '../session';
 
 export function LevelSelect({ value, onChange, tier, label, min = 0 }: { value: Level; onChange: (level: Level) => void; tier: Level; label?: string; min?: Level }) {
   const { t } = useI18n();

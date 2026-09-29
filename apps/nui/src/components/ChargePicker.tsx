@@ -6,7 +6,7 @@
 // which is all the server accepts). The perms are hints; fredpd_records checks them.
 import { useMemo, useState } from 'react';
 import type { Charge, CaseSubject } from '@fredpd/types/records';
-import { Badge, Button, Dialog, IconButton, IconClose, Input, Label, SearchInput, fieldClass, useI18n } from '@fredpd/ui';
+import { Badge, Button, Dialog, IconButton, IconClose, Input, Label, SearchInput, fieldClass, useActionAvailable, useI18n } from '@fredpd/ui';
 import { useMdtMutation, useMdtQuery } from '../api/hooks';
 import { CHARGE_CLASS_KEYS, CHARGE_CLASS_TONES, QUANTITY_MAX, QUANTITY_MIN, addLine, canIssueFine, filterCharges, removeLine, setQuantity, sumLines } from '../charges';
 import type { ChargeLine } from '../charges';
@@ -34,7 +34,9 @@ export function ChargePicker({ reportId, caseId, subjects }: ChargePickerProps) 
   const i18n = useI18n();
   const { t, tx } = i18n;
   const canApply = usePerm(PERMS.chargesApply);
-  const canFine = usePerm(PERMS.chargesFine);
+  // An ordningsbot is billed to a player standing next to the officer: tablet only (hidden in the portal).
+  const fineAvailable = useActionAvailable('issueFine');
+  const canFine = usePerm(PERMS.chargesFine) && fineAvailable;
   const catalogue = useMdtQuery('listCharges', {});
   const byCode = useMemo(() => new Map((catalogue.data?.items ?? []).map((c) => [c.code, c])), [catalogue.data]);
   const [person, setPerson] = useState<PickedPerson | null>(null);

@@ -1,44 +1,73 @@
 // SPDX-License-Identifier: GPL-3.0-only
+// Portal frame: sidebar with the grant-filtered sections (the tablet's nav model without its 6-slot cap, so every
+// allowed section is listed), "Begär ut allmän handling", Behörigheter (perm admin.permissions), the officer with
+// "Byt karaktär" and logout; header with the tablet's search. With a picked character everything below runs inside
+// the portal MDT host (transport + session), so the shared tablet pages work unchanged. The client copy of the grants
+// only shapes the menus; the service and FXServer check every call.
+import { Suspense } from 'react';
+import type { ComponentType } from 'react';
 import { Outlet, useHref, useLocation, useNavigate } from 'react-router';
 import { useMutation, useQueryClient } from '@tanstack/react-query';
-import { AppShell, IconButton, IconHome, IconKey, IconLogout, IconShield, NavItem, Sidebar, useT } from '@fredpd/ui';
+import { AppShell, IconButton, IconFolder, IconKey, IconLogout, IconShield, IconUsers, NavItem, Sidebar, useI18n } from '@fredpd/ui';
 import type { IconProps } from '@fredpd/ui';
-import type { ComponentType } from 'react';
-import type { LocaleKey } from '@fredpd/types/locale-keys';
+import type { GrantSet } from '@fredpd/types/grants';
 import { apiFetch } from '../api';
+import { PortalMdtHost, primaryUnit } from '../mdt/PortalHost';
+import { HeaderSearch, PageSpinner, activeNavId, allowedNavEntries, canSeePage } from '../mdt/shared';
 import { ADMIN_PERMISSIONS_PERM, SESSION_QUERY_KEY, hasPerm, useSession } from '../session';
 import type { PortalSession } from '../session';
 
-interface PortalNavEntry {
+export interface PortalNavEntry {
+  id: string;
   to: string;
-  label: LocaleKey;
+  label: string;
   icon: ComponentType<IconProps>;
-  /** perm grant needed; null = every logged-in user. */
-  perm: string | null;
 }
 
-export const PORTAL_NAV: readonly PortalNavEntry[] = [
-  { to: '/', label: 'nav.home', icon: IconHome, perm: null },
-  { to: '/behorigheter', label: 'nav.permissions', icon: IconKey, perm: ADMIN_PERMISSIONS_PERM },
-];
+export const RELEASE_REQUEST_PATH = '/begar-ut';
+export const CHARACTER_PATH = '/karaktar';
+export const PERMISSIONS_PATH = '/behorigheter';
 
-function RouterNavItem({ entry }: { entry: PortalNavEntry }) {
-  const t = useT();
+/** Sidebar entries for a user: MDT sections only with a picked character (they act as it). */
+export function portalNav(
+  grants: GrantSet,
+  hasCharacter: boolean,
+  isAdmin: boolean,
+  t: (key: 'nav.home' | 'release.title' | 'nav.permissions') => string,
+  label: (key: string) => string,
+): PortalNavEntry[] {
+  const out: PortalNavEntry[] = [];
+  if (hasCharacter) {
+    for (const e of allowedNavEntries(grants, primaryUnit(grants))) out.push({ id: e.id, to: e.to, label: label(e.label), icon: e.icon });
+    out.push({ id: 'release', to: RELEASE_REQUEST_PATH, label: t('release.title'), icon: IconFolder });
+  } else {
+    out.push({ id: 'home', to: '/', label: t('nav.home'), icon: IconUsers });
+  }
+  if (isAdmin) out.push({ id: 'permissions', to: PERMISSIONS_PATH, label: t('nav.permissions'), icon: IconKey });
+  return out;
+}
+
+function activeId(pathname: string): string | undefined {
+  if (pathname === RELEASE_REQUEST_PATH) return 'release';
+  if (pathname === PERMISSIONS_PATH) return 'permissions';
+  return activeNavId(pathname);
+}
+
+function RouterNavItem({ entry, active }: { entry: PortalNavEntry; active: boolean }) {
   const navigate = useNavigate();
-  const { pathname } = useLocation();
   const href = useHref(entry.to);
   const Icon = entry.icon;
-  const active = entry.to === '/' ? pathname === '/' : pathname === entry.to || pathname.startsWith(`${entry.to}/`);
-  return <NavItem href={href} label={t(entry.label)} icon={<Icon />} active={active} onNavigate={() => void navigate(entry.to)} />;
+  return <NavItem href={href} label={entry.label} icon={<Icon />} active={active} data-nav={entry.id} onNavigate={() => void navigate(entry.to)} />;
 }
 
 const EmptyBody = { parse: () => undefined };
 
 export function PortalLayout() {
-  const t = useT();
+  const { t, tx } = useI18n();
   const { user, csrfToken } = useSession();
   const queryClient = useQueryClient();
   const navigate = useNavigate();
+  const { pathname } = useLocation();
 
   const logout = useMutation({
     mutationFn: () => apiFetch('/auth/logout', { method: 'POST', csrfToken, schema: EmptyBody }),
@@ -51,8 +80,14 @@ export function PortalLayout() {
     onError: () => void queryClient.invalidateQueries({ queryKey: SESSION_QUERY_KEY }),
   });
 
+  if (!user) return null;
+  const hasCharacter = user.citizenid !== null;
+  const nav = portalNav(user.grants, hasCharacter, hasPerm(user, ADMIN_PERMISSIONS_PERM), t, (key) => tx(key));
+  const current = activeId(pathname);
+
   const sidebar = (
     <Sidebar
+      className="print:hidden"
       brand={
         <span className="flex items-center gap-2 font-semibold">
           <IconShield className="text-accent-text" />
@@ -60,23 +95,36 @@ export function PortalLayout() {
         </span>
       }
       footer={
-        <div className="flex items-center gap-2 px-1">
-          <span className="min-w-0 flex-1 truncate text-sm">{user?.displayName}</span>
+        <div className="flex items-center gap-1 px-1">
+          <span className="min-w-0 flex-1 truncate text-sm">{user.displayName}</span>
+          {hasCharacter && (
+            <IconButton label={t('portal.character.switch')} icon={<IconUsers />} onClick={() => void navigate(CHARACTER_PATH)} data-switch-character />
+          )}
           <IconButton label={t('portal.logout')} icon={<IconLogout />} onClick={() => logout.mutate()} disabled={logout.isPending} />
         </div>
       }
     >
-      {PORTAL_NAV.filter((e) => e.perm === null || hasPerm(user, e.perm)).map((entry) => (
-        <RouterNavItem key={entry.to} entry={entry} />
+      {nav.map((entry) => (
+        <RouterNavItem key={entry.id} entry={entry} active={entry.id === current} />
       ))}
     </Sidebar>
   );
 
-  return (
-    <AppShell sidebar={sidebar} className="h-dvh">
-      <div className="p-6">
-        <Outlet />
+  const header =
+    hasCharacter && canSeePage(user.grants, 'search') ? (
+      <header className="flex h-14 shrink-0 items-center gap-3 border-b border-line bg-surface px-4 print:hidden" data-print-hide>
+        <HeaderSearch />
+      </header>
+    ) : undefined;
+
+  const shell = (
+    <AppShell sidebar={sidebar} header={header} className="h-dvh print:h-auto">
+      <div className="p-6 print:p-0">
+        <Suspense fallback={<PageSpinner />}>
+          <Outlet />
+        </Suspense>
       </div>
     </AppShell>
   );
+  return hasCharacter ? <PortalMdtHost>{shell}</PortalMdtHost> : shell;
 }

@@ -84,7 +84,7 @@ describe('sources', () => {
     renderAt('/intel/kallor', INTEL);
     await screen.findByText('KORPEN');
     expect(screen.getByText('FALKEN')).toBeTruthy();
-    expect(document.querySelector('[data-source-visibility="masked"]')?.textContent).toContain('Begränsad insyn');
+    expect(document.querySelector('[data-source-visibility="masked"]')?.textContent).toContain('Delvis maskerat');
     const notice = document.querySelector('[data-source-visibility="notice"]') as HTMLElement;
     expect(notice.textContent).toBe('KontaktnotisDet finns uppgifter som rör en källa. Kontakta Bo Carlsson (Spaning).');
     expect(document.body.textContent).not.toContain('UGGLAN');
@@ -142,7 +142,7 @@ describe('entity page (list-first)', () => {
     installMockRegister();
     renderAt('/intel/objekt/7', INTEL); // XYZ98A: both links are Hemlig (tier 1)
     expect(await screen.findByRole('heading', { level: 1, name: 'XYZ98A (sentinel)' })).toBeTruthy();
-    expect(document.querySelector('[data-hidden-links]')?.textContent).toBe('2 kopplingar är dolda för dig.');
+    expect(document.querySelector('[data-hidden-links]')?.textContent).toBe('Kopplingar som är dolda för dig: 2');
     expect(document.querySelectorAll('[data-link]')).toHaveLength(0);
     const notices = document.querySelector('[data-entity-notices]') as HTMLElement;
     expect(notices.textContent).toBe('KontaktnotisDet finns uppgifter som rör XYZ98A (sentinel). Kontakta Bo Carlsson (Spaning).');

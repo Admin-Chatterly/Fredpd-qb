@@ -3,7 +3,7 @@
 // the action's grant on every call.
 import { hasGrant } from '@fredpd/types/grants';
 import type { GrantLists } from '@fredpd/types/grants';
-import { useSession } from './tablet/TabletContext';
+import { useSession } from './session';
 
 export const PERMS = {
   boloCreate: 'bolo.create',

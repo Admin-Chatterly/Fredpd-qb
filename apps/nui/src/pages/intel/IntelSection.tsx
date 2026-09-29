@@ -4,7 +4,7 @@
 // so without it their tabs are hidden and their routes show "not authorised" without calling anything.
 import type { ReactNode } from 'react';
 import { Navigate, Route, Routes, useLocation, useNavigate } from 'react-router';
-import { EmptyState, IconShield, PageHeader, Tabs, useI18n } from '@fredpd/ui';
+import { EmptyState, IconShield, PageHeader, Tabs, useI18n, useMdtMode } from '@fredpd/ui';
 import { PERMS, usePerm } from '../../perms';
 import { EntitiesPage, EntityPage } from './EntityPages';
 import { IntelReportPage, IntelReportsPage, MissionPage, MissionsPage, SourcePage, SourcesPage } from './IntelPages';
@@ -14,7 +14,10 @@ type IntelTab = 'objekt' | 'kallor' | 'rapporter' | 'insatser';
 function NeedsRead({ children }: { children: ReactNode }) {
   const { t } = useI18n();
   const canRead = usePerm(PERMS.intelRead);
-  return canRead ? <>{children}</> : <EmptyState icon={<IconShield size={28} />} title={t('errors.unauthorized')} />;
+  // The portal answers intel routes without intel.read with "not found", never "not authorised" (§C15).
+  const portal = useMdtMode() === 'portal';
+  if (canRead) return <>{children}</>;
+  return portal ? <EmptyState title={t('errors.notFound')} /> : <EmptyState icon={<IconShield size={28} />} title={t('errors.unauthorized')} />;
 }
 
 export function IntelSection() {

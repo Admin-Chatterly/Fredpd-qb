@@ -1,3 +1,4 @@
+// SPDX-License-Identifier: GPL-3.0-only
 // Public surface of @fredpd/types. Each module is owned by one task; see docs/contracts.md.
 export * from './grants';
 export * from './canView';

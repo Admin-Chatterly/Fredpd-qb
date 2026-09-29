@@ -12,7 +12,25 @@ const SERVICE = 'http://127.0.0.1:3000';
 export default defineConfig({
   plugins: [tailwindcss()],
   esbuild: { jsx: 'automatic' },
-  build: { outDir: 'dist', emptyOutDir: true, target: 'es2022', reportCompressedSize: false },
+  build: {
+    outDir: 'dist',
+    emptyOutDir: true,
+    target: 'es2022',
+    reportCompressedSize: true,
+    // Same split as the tablet (apps/nui/vite.config.ts): the shared MDT pages are lazy chunks (src/mdt/pages.tsx),
+    // Cytoscape stays in the graph chunk, and the eager third-party code gets its own long-cached vendor chunk.
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (/[\\/]node_modules[\\/](react|react-dom|scheduler|react-router|@tanstack[\\/](query-core|react-query)|zod)[\\/]/.test(id)) {
+            return 'vendor';
+          }
+          return undefined;
+        },
+      },
+    },
+    chunkSizeWarningLimit: 600,
+  },
   server: {
     port: 5173,
     strictPort: true,

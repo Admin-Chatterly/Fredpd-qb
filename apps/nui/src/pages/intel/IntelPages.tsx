@@ -21,7 +21,7 @@ import { fmtDateTime, noticeOwner, officerLabel, unitLabel } from '../../format'
 import { RELIABILITY_KEYS, entityPath, intelReportPath, linkTypeLabel, missionPath, sourcePath } from '../../intel';
 import type { Reliability } from '../../intel';
 import { PERMS, usePerm } from '../../perms';
-import { useSession } from '../../tablet/TabletContext';
+import { useSession } from '../../session';
 
 type SourceView = TabletOutput<'getSource'>;
 type IntelReportView = TabletOutput<'getIntelReport'>;

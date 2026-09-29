@@ -1,6 +1,8 @@
 /* SPDX-License-Identifier: GPL-3.0-only */
 @import "tailwindcss";
 @import "@fredpd/ui/theme.css";
+/* The shared MDT pages live in the tablet app (docs/modules/portal.md "Shared pages"): scan them for utilities. */
+@source "../../nui/src";
 
 @layer base {
   html,
@@ -20,5 +22,47 @@
     background: var(--color-canvas);
     color: var(--color-fg);
     font-family: var(--font-sans);
+  }
+}
+
+/*
+ * Print (POI-blad, Skriv ut): paper is white, so the sheet prints black on white; the sidebar, the header and every
+ * [data-print-hide] control (share box, buttons) are left out, and the scrolling shell is unrolled so the whole
+ * sheet reaches the printer, not just the part on screen.
+ */
+@media print {
+  html {
+    color-scheme: light;
+  }
+
+  html,
+  body,
+  #root {
+    height: auto;
+    background: #fff;
+    color: #000;
+  }
+
+  aside,
+  header[data-print-hide],
+  [data-print-hide] {
+    display: none !important;
+  }
+
+  main {
+    overflow: visible !important;
+  }
+
+  .poi-sheet {
+    border-color: #000;
+    background: #fff;
+    color: #000;
+    break-inside: avoid;
+  }
+
+  .poi-sheet * {
+    color: #000 !important;
+    border-color: #000 !important;
+    background: transparent !important;
   }
 }

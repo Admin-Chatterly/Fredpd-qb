@@ -1,0 +1,23 @@
+{
+  "author": {
+    "callsign": "UTR-02",
+    "citizenid": "REC10002",
+    "displayName": "Olle Utredare",
+    "unit": "utredning"
+  },
+  "body": "andra",
+  "caseId": 1,
+  "caseNumber": "K-1-26",
+  "charges": [],
+  "createdAt": "2026-09-05T20:00:00Z",
+  "draft": {
+    "body": "Utkasttext",
+    "savedAt": "2026-09-05T21:15:00Z"
+  },
+  "editable": true,
+  "id": 1,
+  "level": 0,
+  "reportNumber": "K-1-26/1",
+  "title": "Förhör med vittne",
+  "updatedAt": "2026-09-05T20:30:00Z"
+}

@@ -12,7 +12,7 @@ import type { Core, ElementDefinition } from 'cytoscape';
 import { GRAPH_NODE_CAP } from '@fredpd/types/intel';
 import type { Graph } from '@fredpd/types/intel';
 import { Button, Card, useI18n } from '@fredpd/ui';
-import { mdtQueryOptions, useMdtQuery } from '../../api/hooks';
+import { mdtQueryOptions, useMdtQuery, useTransport } from '../../api/hooks';
 import { useErrorText } from '../../api/errors';
 import { Callout, PageSpinner, QueryView } from '../../components/Common';
 import { ENTITY_TYPE_KEYS, entityPath, linkTypeLabel, mergeGraph } from '../../intel';
@@ -107,6 +107,7 @@ function GraphPanel({ initial, rootId }: { initial: Graph; rootId: number }) {
   const { t, tx } = i18n;
   const errorText = useErrorText();
   const queryClient = useQueryClient();
+  const transport = useTransport();
   const [graph, setGraph] = useState(initial);
   const [selected, setSelected] = useState<number | null>(null);
   const [expanded, setExpanded] = useState<ReadonlySet<number>>(() => new Set([rootId]));
@@ -119,7 +120,7 @@ function GraphPanel({ initial, rootId }: { initial: Graph; rootId: number }) {
     setExpanding(true);
     setError(null);
     try {
-      const more = await queryClient.fetchQuery(mdtQueryOptions('getGraph', { entityId: id, depth: 1 }));
+      const more = await queryClient.fetchQuery(mdtQueryOptions('getGraph', { entityId: id, depth: 1 }, transport));
       const merged = mergeGraph(graph, more);
       setGraph(merged.graph);
       setExpanded((s) => new Set([...s, id]));

@@ -33,6 +33,10 @@ M.CHARGES_SQL = 'SELECT rec.id, rec.citizenid, p.firstname, p.lastname, rec.char
     .. 'rec.quantity, rec.fine, rec.jail_min, rec.status FROM fredpd_records rec '
     .. 'LEFT JOIN fredpd_persons p ON p.citizenid = rec.citizenid WHERE rec.report_id = ? ORDER BY rec.id'
 
+--- The viewer's own autosaved draft of a report (fredpd_report_drafts, one per author and report).
+M.DRAFT_SQL = 'SELECT title, body, ' .. Time.isoSelect('updated_at', 'savedAt')
+    .. ' FROM fredpd_report_drafts WHERE author_citizenid = ? AND report_id = ?'
+
 M.NEXT_N_SQL = 'SELECT COALESCE(MAX(n), 0) + 1 FROM fredpd_reports WHERE case_id = ?'
 M.LOCK_CASE_SQL = 'SELECT id FROM fredpd_cases WHERE id = ? FOR UPDATE'
 
@@ -113,20 +117,34 @@ function M.toApplied(rows)
     return out
 end
 
+--- The viewer's draft of a report as { title?, body, savedAt }, or nil. Only the draft's author ever gets it (the
+--- query is keyed on the viewer's citizenid), and only while the viewer may edit (a draft that cannot be restored is
+--- not sent). title is nil when the autosave carried none (ReportDetail.draft.title is nullable).
+function M.draftOf(cid, reportId)
+    if not cid then return nil end
+    local row = MySQL.single.await(M.DRAFT_SQL, { cid, reportId })
+    if not row then return nil end
+    local savedAt = Time.toIsoUtc(C.str(row.savedAt))
+    if not savedAt then return nil end
+    return { title = C.str(row.title), body = C.str(row.body) or '', savedAt = savedAt }
+end
+
 --- ReportDetail.
 function M.detail(src, cid, r, c)
     local authors = Refs.officers({ r.author })
+    local editable = M.editable(src, cid, c, r, C.tier(src))
     return {
         id = r.id, reportNumber = r.number, caseId = c.id, caseNumber = c.caseNumber, title = r.title, body = r.body,
         level = r.level, author = Cases.officerRef(r.author, authors, false), createdAt = r.createdAt,
-        updatedAt = r.updatedAt, charges = M.chargesOf(r.id), editable = M.editable(src, cid, c, r, C.tier(src)),
+        updatedAt = r.updatedAt, charges = M.chargesOf(r.id), editable = editable,
+        draft = editable and M.draftOf(cid, r.id) or nil,
     }
 end
 
 ---------------------------------------------------------------------------------------------------------------
 -- Exports
 
---- export getReport(src, { id }) -> ReportDetail
+--- export getReport(src, { id }) -> ReportDetail (with `draft` = the viewer's own autosave while editable, §C14)
 function M.getReport(src, input)
     local actor
     src, actor = C.gate(src, 'mdt_page', 'cases')

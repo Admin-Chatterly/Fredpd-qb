@@ -1389,7 +1389,7 @@ tests['19 evidence lockers: opening needs the FredPD grant and duty (openInvento
         t.eq(env.clientEvents[1].name, 'ox_lib:notify')
         t.eq(env.clientEvents[1].target, 4)
         t.eq(env.clientEvents[1].args[1], { type = 'error',
-            description = 'Bevisförrådet kräver att du är i tjänst och har behörighet till Bevis.' })
+            description = 'För att öppna bevisförrådet måste du vara i tjänst och ha behörighet till Bevis.' })
         mods.service.cfg.lockerGrant = false
         t.eq(open(6, LOCKER), { true, 1 }, 'lockerGrant = false: groups only')
     end)

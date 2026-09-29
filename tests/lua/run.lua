@@ -1,3 +1,4 @@
+-- SPDX-License-Identifier: GPL-3.0-only
 -- FredPD Lua test runner. Runs outside FiveM with plain Lua 5.4.
 -- Usage (from repo root): lua5.4 tests/lua/run.lua [filter]
 -- Each tests/lua/*_test.lua file returns a table { [name] = function(t) ... end }.

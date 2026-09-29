@@ -30,8 +30,10 @@ shared_scripts {
 
 -- server/*.lua modules are loaded with ox_lib `require` from server/main.lua (server-side LoadResourceFile reads any
 -- file of the resource, so they need no `files` entry and are never sent to clients).
+-- server/http.js: POST /fredpd_mdt/portal (HMAC-signed by fredpd_service; portal mode, server/portal.lua).
 server_scripts {
     '@oxmysql/lib/MySQL.lua',
+    'server/http.js',
     'server/main.lua',
 }
 

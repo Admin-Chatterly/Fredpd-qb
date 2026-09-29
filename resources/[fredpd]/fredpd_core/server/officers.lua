@@ -148,6 +148,15 @@ function M.getOfficer(src)
     return out
 end
 
+--- Is `citizenid` a police character of `discordId`: a fredpd_officers row (created or relinked when that police
+--- character loads in game) pointing at that Discord user? Portal actors must be (server/virtual.lua): a civilian alt
+--- on the same license, or a character now played from another Discord account, is not.
+function M.isOfficerOf(citizenid, discordId)
+    if type(citizenid) ~= 'string' or type(discordId) ~= 'string' then return false end
+    local officer = ByCitizen[citizenid]
+    return officer ~= nil and officer.discordId == discordId
+end
+
 ---------------------------------------------------------------------------------------------------------------
 -- Database (await; call from a thread)
 

@@ -8,7 +8,7 @@ import { useState } from 'react';
 import { useSearchParams } from 'react-router';
 import { PAGE_SIZE } from '@fredpd/types/mdt';
 import type { EvidenceItem } from '@fredpd/types/evidence';
-import { Badge, Button, Card, Drawer, EmptyState, PageHeader, Pagination, Table, Tabs, useI18n } from '@fredpd/ui';
+import { Badge, Button, Card, Drawer, EmptyState, PageHeader, Pagination, Table, Tabs, useActionAvailable, useI18n } from '@fredpd/ui';
 import type { TableColumn } from '@fredpd/ui';
 import { useMdtMutation, useMdtQuery } from '../api/hooks';
 import { MdtClientError, useErrorText } from '../api/errors';
@@ -74,7 +74,9 @@ function LinkToCase({ item }: { item: EvidenceItem }) {
 function EvidenceDetail({ item }: { item: EvidenceItem }) {
   const i18n = useI18n();
   const { t, tx } = i18n;
-  const canLink = usePerm(PERMS.evidenceLink);
+  // Linking is not a portal action (portal contract: reads + records/intel/BOLO writes only).
+  const linkAvailable = useActionAvailable('linkEvidence');
+  const canLink = usePerm(PERMS.evidenceLink) && linkAvailable;
   const match = resultMatch(item.result);
   const fields = resultFields(item.result);
   return (

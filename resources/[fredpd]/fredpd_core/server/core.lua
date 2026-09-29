@@ -249,11 +249,35 @@ end
 -- Players, through the framework bridge (server/bridge.lua, docs/contracts.md §C17: qb-core or qbx_core). Always
 -- asks the framework, so the actor is never taken from a stale cache or from the client.
 
+--- Portal actors (server/virtual.lua, docs/modules/portal-api.md): server-side stand-ins for a portal user acting as
+--- one of their characters. Their ids start at VIRTUAL_BASE, far above any FiveM player id, so no native ever finds a
+--- ped, vehicle or client for them. getPlayerData answers their stand-in player (citizenid, a leo job that counts as
+--- on duty: the portal has no duty, §7 task 7.1); the framework bridge (getPlayer export) still answers nil.
+M.VIRTUAL_BASE = 1000000000
+local virtualActors = {} -- [src] = { discordId, citizenid, player }
+
+--- The portal actor behind `src`, or nil for players and the console.
+function M.virtualActor(src)
+    src = tonumber(src)
+    return src and virtualActors[src] or nil
+end
+
+function M.isVirtual(src)
+    return M.virtualActor(src) ~= nil
+end
+
+--- server/virtual.lua only.
+function M.setVirtualActor(src, actor)
+    virtualActors[src] = actor
+end
+
 --- Normalised player of an online player ({ source, citizenid, license, name, job = { name, type, grade, onduty,
---- ... }, charinfo }), or nil.
+--- ... }, charinfo }), a portal actor's stand-in player, or nil.
 function M.getPlayerData(src)
     src = tonumber(src)
     if not src or src <= 0 then return nil end
+    local actor = virtualActors[src]
+    if actor then return actor.player end
     local ok, player = pcall(function() return require('server.bridge').getPlayer(src) end)
     if ok and type(player) == 'table' then return player end
     return nil

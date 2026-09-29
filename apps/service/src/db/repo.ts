@@ -9,10 +9,10 @@
 // writers of tables with updated_at only touch rows that really change (callers pass diffRoles output, the officer
 // identity update filters stale rows, markRolesDeleted skips deleted ones); SQL never uses the session clock
 // (comparisons take the injected clock's Date).
-import { and, eq, gt, inArray, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, sql } from 'drizzle-orm';
 import type { GrantSet, GrantType, RoleGrantRow, RoleRow } from '@fredpd/types/grants';
 import type { Db } from './client';
-import { audit, grantCache, identities, officers, roleGrants, roles, sessions, uploads } from './schema';
+import { audit, grantCache, identities, officers, persons, roleGrants, roles, sessions, uploads } from './schema';
 import type { GatewayRole } from '../discord/gateway';
 
 /** A transaction handle or the database itself. */
@@ -250,6 +250,49 @@ export async function deleteSessionsOf(db: DbOrTx, discordId: string): Promise<v
 /** Housekeeping on login/logout instead of a timer; bounded so one login never does a large delete. */
 export async function purgeExpiredSessions(db: DbOrTx, now: Date): Promise<void> {
   await db.execute(sql`DELETE FROM ${sessions} WHERE ${sessions.expiresAt} <= ${now} LIMIT 500`);
+}
+
+/** The character picked for a portal session (docs/modules/portal-api.md); null clears it. Not audited per row. */
+export async function setSessionCitizenid(db: DbOrTx, id: string, citizenid: string | null): Promise<void> {
+  await db.update(sessions).set({ citizenid }).where(eq(sessions.id, id));
+}
+
+// ---------------------------------------------------------------------------------------------------------------
+// Portal characters: fredpd_persons rows whose license is the one fredpd_core linked to the Discord user
+// (fredpd_identities.license, written when that user's character loads in game) AND that are police characters of
+// that same Discord user (a fredpd_officers row with discord_id = the user, created/relinked when the police
+// character loads). A civilian alt on the same license is never a portal actor (8.3 review). Read only.
+
+export interface CharacterRow {
+  citizenid: string;
+  firstname: string;
+  lastname: string;
+}
+
+export const MAX_CHARACTERS = 50;
+
+const charactersOf = (db: DbOrTx, discordId: string) =>
+  db
+    .select({ citizenid: persons.citizenid, firstname: persons.firstname, lastname: persons.lastname })
+    .from(persons)
+    .innerJoin(identities, eq(identities.license, persons.license))
+    .innerJoin(officers, and(eq(officers.citizenid, persons.citizenid), eq(officers.discordId, identities.discordId)))
+    .where(and(eq(identities.discordId, discordId), isNotNull(identities.license)));
+
+export async function listCharacters(db: DbOrTx, discordId: string): Promise<CharacterRow[]> {
+  return charactersOf(db, discordId).orderBy(persons.lastname, persons.firstname, persons.citizenid).limit(MAX_CHARACTERS);
+}
+
+/** Is `citizenid` one of the user's characters (same rule as listCharacters)? */
+export async function ownsCharacter(db: DbOrTx, discordId: string, citizenid: string): Promise<boolean> {
+  const rows = await db
+    .select({ citizenid: persons.citizenid })
+    .from(persons)
+    .innerJoin(identities, eq(identities.license, persons.license))
+    .innerJoin(officers, and(eq(officers.citizenid, persons.citizenid), eq(officers.discordId, identities.discordId)))
+    .where(and(eq(identities.discordId, discordId), isNotNull(identities.license), eq(persons.citizenid, citizenid)))
+    .limit(1);
+  return rows.length === 1;
 }
 
 // ---------------------------------------------------------------------------------------------------------------
