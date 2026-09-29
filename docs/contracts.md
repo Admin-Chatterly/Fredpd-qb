@@ -187,3 +187,33 @@ Requires perm `admin.permissions` (grant `perm:admin.permissions`). Schemas in `
 ## C11. Ownership while modules are built in parallel
 
 Do not edit `docs/contracts.md` from a module task; record module-level decisions in `docs/modules/<module>.md`.
+
+## C12. Tablet actions (Phase 2) — `packages/types/src/mdt.ts`
+
+- Flow: NUI `fetchNui(action, input)` → fredpd_mdt client `RegisterNUICallback(action)` → one server callback
+  `lib.callback.await('fredpd:mdt:action', false, { action, input })` → fredpd_mdt server dispatcher:
+  1. `local src = source`; the tablet must be open for `src` (`OpenTablets[src]`, set by `fredpd:mdt:open`), except `close`;
+  2. unknown action → `{ error = 'validation' }`; input validated with the Lua mirror of the zod shape
+     (`fredpd_mdt/shared/validate.lua`, table-driven, strings trimmed and length-capped, ints range-checked);
+  3. grant from `MDT_ACTIONS[action].grant` via `exports.fredpd_core:hasGrant(src, type, key)` → `{ error = 'unauthorized' }`;
+     on-duty required for every action except `close`;
+  4. rate limit per src per action (search/getPerson/getVehicle/checkPlate 1 per 500 ms, writes 1 per 2 s) → `rate_limited`;
+  5. route to the owning resource's export; return its data or `{ error = <MDT_ERROR_CODES> }`.
+- Cross-resource export convention for actions: `exports.<res>:<fn>(src, input)` returns
+  `{ ok = true, data = <output shape> }` or `{ ok = false, error = '<code>' }`. The dispatcher unwraps it.
+- Owners: `fredpd_records` exports `search`, `getPersonSummary(src, { citizenid })`, `getVehicleSummary(src, { plate })`,
+  `getHomeCases(src, { limit })` (case refs with canView applied; no case writes in Phase 2).
+  `fredpd_bolo` exports `listBolos`, `createBolo`, `resolveBolo`, `plateCheck(src, { plate })` (records the check,
+  fires `fredpd:boloHit`), plus the §4.3 lookups `checkPlate(plate) → bolo|nil`, `checkPerson(citizenid) → bolo|nil`
+  and `getBolosFor(src, kind, id)` (canView-filtered, used by records for person/vehicle pages).
+  `fredpd_mdt` owns `getHome` (composes records + bolo + core), `close`, `listTablets`, `setTabletRevoked`.
+- Timestamps on the wire: ISO-8601 UTC via `fredpd_core/shared/time.lua` `toIsoUtc(v)` (accepts oxmysql epoch-ms
+  numbers and `YYYY-MM-DD HH:MM:SS` strings). All SQL writes use `UTC_TIMESTAMP()`, never `NOW()`/`CURRENT_TIMESTAMP`.
+- Officers on the wire are `OfficerRef` from `fredpd_officers` (display name + callsign, §4.9).
+- Perm keys used so far (service catalog must list them): `admin.permissions`, `records.admin`, `bolo.create`,
+  `bolo.resolve`, `tablets.manage`, `intel.read`, `intel.handler`, `intel.command`, `rank:<key>`.
+  `mdt_page` keys: `packages/ui/src/mdtPages.ts` (`search, alerts, bolos, cases, evidence, intel, charges, roster, command`).
+- Migrations added in Phase 2: `010_plate_checks.sql` (fredpd_bolo: `fredpd_plate_checks (id, plate, officer_citizenid,
+  hit, bolo_id, created_at)`, index (plate, created_at)).
+- Items live in `patches/ox_inventory.*.patch` (upstream is never edited): `pd_tablet` (`client.export =
+  'fredpd_mdt.open'`, `stack = false`, metadata `serial`, `owner`).
