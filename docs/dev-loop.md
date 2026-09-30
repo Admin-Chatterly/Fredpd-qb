@@ -5,7 +5,7 @@ restart of the FredPD resources. No copying, no reinstall, no full server restar
 
 ## One-time setup (≈ 10 minutes)
 
-All commands run in PowerShell on the server machine.
+All commands work in Command Prompt or PowerShell on the server machine.
 
 1. **Clone and build once** (if you haven't already):
    ```powershell
@@ -17,8 +17,8 @@ All commands run in PowerShell on the server machine.
    ```
 2. **Link and patch the server.** This replaces copying. `SETUP.md` step 2 explains what these do:
    ```powershell
-   .\scripts\link-server.ps1  -ServerResources "C:\Users\FiveM\Desktop\SalamDevQB\resources"
-   .\scripts\patch-server.ps1 --server "C:\Users\FiveM\Desktop\SalamDevQB\resources"
+   node scripts\link-server.mjs  --server "C:\Users\FiveM\Desktop\SalamDevQB\resources"
+   node scripts\patch-server.mjs --server "C:\Users\FiveM\Desktop\SalamDevQB\resources"
    ```
    Then delete `resources\[upstream]` on the server if it is still there, and move the `*.bak-*` folders out of
    `resources\`.
@@ -49,7 +49,7 @@ All commands run in PowerShell on the server machine.
 
 ```powershell
 cd C:\FredPD\fredpd
-.\scripts\update.ps1
+node scripts\update.mjs
 ```
 
 It pulls, installs/builds only what changed, patches your qb resources if a patch changed, and restarts FredPD live:
@@ -119,4 +119,4 @@ For each failure, send:
 - **Console:** the txAdmin console lines around it (everything with `fredpd`, `qb-policejob` or `SCRIPT ERROR`).
 - **Tablet UI errors:** press F8 in game and copy any red lines.
 
-I fix, push, and you run `.\scripts\update.ps1` again. That is the whole loop.
+I fix, push, and you run `node scripts\update.mjs` again. That is the whole loop.

@@ -74,11 +74,11 @@ pnpm install
 
 ## 2. Put FredPD on the server (once)
 
-Run these in PowerShell from the repo folder (`C:\FredPD\fredpd`), with your server's resources folder:
+Run these in Command Prompt (or PowerShell) from the repo folder (`C:\FredPD\fredpd`), with your server's resources folder:
 
 ```powershell
-.\scripts\link-server.ps1  -ServerResources "C:\Users\FiveM\Desktop\SalamDevQB\resources"
-.\scripts\patch-server.ps1 --server "C:\Users\FiveM\Desktop\SalamDevQB\resources"
+node scripts\link-server.mjs  --server "C:\Users\FiveM\Desktop\SalamDevQB\resources"
+node scripts\patch-server.mjs --server "C:\Users\FiveM\Desktop\SalamDevQB\resources"
 ```
 
 - **link-server** makes the server's `resources\[fredpd]` a junction to this clone, so updates need no copying. An
