@@ -26,8 +26,19 @@ if (!serverDir || !existsSync(serverDir)) {
   process.exit(2);
 }
 
-/** Find a resource folder by name under the server's resources (category folders like [qb] included). */
+/** Folder names a patched resource may have on a server (txAdmin's Qbox recipe installs qbx_police as 'qbx_police'). */
+const ALIASES = { qbx_policejob: ['qbx_police'] };
+
+/** Find a resource folder by name (or alias) under the server's resources (category folders like [qb] included). */
 function findResource(name) {
+  for (const candidate of [name, ...(ALIASES[name] || [])]) {
+    const found = findFolder(candidate);
+    if (found) return found;
+  }
+  return null;
+}
+
+function findFolder(name) {
   const queue = [[serverDir, 0]];
   while (queue.length) {
     const [dir, depth] = queue.shift();

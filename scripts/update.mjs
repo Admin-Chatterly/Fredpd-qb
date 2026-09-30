@@ -82,7 +82,9 @@ if (refetch.length) {
 const serviceChanged = touched(/^(apps\/service|packages\/types)\//);
 const liveRestartable = refetch.filter((n) => !['qb-core', 'qbx_core', 'ox_lib', 'oxmysql', 'ox_inventory', 'qb-inventory'].includes(n));
 const needsServerRestart = refetch.filter((n) => !liveRestartable.includes(n));
-const reloadCmd = ['fredpd_reload', ...liveRestartable].join(' ');
+// Folder aliases (txAdmin's Qbox recipe names the police job qbx_police); fredpd_reload skips names that don't exist.
+const restartNames = liveRestartable.flatMap((n) => (n === 'qbx_policejob' ? [n, 'qbx_police'] : [n]));
+const reloadCmd = ['fredpd_reload', ...restartNames].join(' ');
 
 function rcon(command) {
   const password = process.env.FREDPD_RCON_PASSWORD;
