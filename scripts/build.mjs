@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-only
 // Builds the web apps and copies generated/shared files into the FiveM resources:
 //   locales/*.json              -> resources/[fredpd]/<each>/locales/
-//   config/*.json               -> resources/[fredpd]/fredpd_core/config/
+//   config/*.json               -> resources/[fredpd]/fredpd_core/config/ (config/<name>.local.json, git-ignored,
+//                                  is merged over <name>.json: server-specific settings survive git pull)
 //   db/migrations/*.sql         -> resources/[fredpd]/fredpd_core/migrations/ (+ index.json)
 //   packages/types/test/fixtures/*.fixtures.json -> resources/[fredpd]/fredpd_devtools/fixtures/
 //   apps/nui/dist               -> resources/[fredpd]/fredpd_mdt/web/build/
 // Usage: node scripts/build.mjs [--skip-web]
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
+import { cpSync, existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { spawnSync } from 'node:child_process';
 
@@ -35,7 +36,15 @@ const resources = existsSync(res) ? readdirSync(res).filter((n) => statSync(join
 for (const r of resources) copyMatching(join(root, 'locales'), join(res, r, 'locales'), (n) => /^[a-z]{2}\.json$/.test(n));
 
 if (existsSync(join(res, 'fredpd_core'))) {
-  copyMatching(join(root, 'config'), join(res, 'fredpd_core', 'config'), (n) => n.endsWith('.json'));
+  const cfgOut = join(res, 'fredpd_core', 'config');
+  const cfgNames = copyMatching(join(root, 'config'), cfgOut, (n) => n.endsWith('.json') && !n.endsWith('.local.json'));
+  for (const name of cfgNames) {
+    const local = join(root, 'config', name.replace(/\.json$/, '.local.json'));
+    if (!existsSync(local)) continue;
+    const merged = { ...JSON.parse(readFileSync(join(root, 'config', name), 'utf8')), ...JSON.parse(readFileSync(local, 'utf8')) };
+    writeFileSync(join(cfgOut, name), JSON.stringify(merged, null, 2) + '\n');
+    console.log(`build: config/${name} + ${name.replace(/\.json$/, '.local.json')}`);
+  }
   const migrations = copyMatching(join(root, 'db', 'migrations'), join(res, 'fredpd_core', 'migrations'), (n) => /^\d{3}_.+\.sql$/.test(n));
   writeFileSync(join(res, 'fredpd_core', 'migrations', 'index.json'), JSON.stringify(migrations, null, 2) + '\n');
   // Seeds are applied by the migration runner after migrations; keep them next to the migrations.

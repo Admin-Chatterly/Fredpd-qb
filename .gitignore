@@ -21,3 +21,5 @@ test-results/
 Thumbs.db
 resources/[[]fredpd[]]/fredpd_core/migrations/
 resources/[[]fredpd[]]/fredpd_devtools/fixtures/
+*.local.json
+.server-backups/

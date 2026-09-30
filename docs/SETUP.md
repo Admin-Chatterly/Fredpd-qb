@@ -72,24 +72,30 @@ pnpm install
 ./scripts/build.sh           # builds the tablet UI and copies locales/config into the resources
 ```
 
-## 2. Copy resources to the server
+## 2. Put FredPD on the server (once)
 
-- Copy `resources/[fredpd]/` into the server's `resources/` folder.
-  Leave out `fredpd_devtools`; it is for test servers only.
-- From `resources/[upstream]/`, copy **only** these patched folders over the server's copies:
-  `qb-core`, `qb-policejob`, `qb-doorlock`, `ps-dispatch`, and `qb-garages` if you run it.
-  Don't copy the others (qb-inventory, qb-target, ox_lib, qbx_*, …); two copies with the same name break startup.
-- **Back up the server's `qb-core` first.** Copying replaces local edits (`shared/jobs.lua`, `shared/items.lua`,
-  `config.lua`). If yours has edits, re-apply them afterwards, or keep your copy and add only the FredPD item entries
-  from `patches/qb-core.10-fredpd-items.patch`.
-- The new items (tablet `pd_tablet`, ram `pd_ram`) come with the patched `qb-core` (`shared/items.lua`). Item images
-  are optional.
-- **xt-prison** (optional): unpack the v1.4.9 release zip into `resources/[standalone]/xt-prison`. In its
-  `configs/server.lua`, set `PoliceJobs = { 'police' }`.
-- **Only for the ox stack:** install ox_inventory, ox_target and ox_doorlock from their release zips, then copy
-  `resources/[upstream]/ox_inventory` over it (FredPD items). For evidence: unpack the **evidences v1.3.1 release
-  zip** into `resources/[police]/evidences` (the git copy has no built laptop UI), then copy
-  `resources/[upstream]/evidences` over it.
+Run these in PowerShell from the repo folder (`C:\FredPD\fredpd`), with your server's resources folder:
+
+```powershell
+.\scripts\link-server.ps1  -ServerResources "C:\Users\FiveM\Desktop\SalamDevQB\resources"
+.\scripts\patch-server.ps1 --server "C:\Users\FiveM\Desktop\SalamDevQB\resources"
+```
+
+- **link-server** makes the server's `resources\[fredpd]` a junction to this clone, so updates need no copying. An
+  existing `[fredpd]` folder is renamed to `[fredpd].bak-<time>`. Move that backup out of `resources\`.
+- **patch-server** applies FredPD's patches to **your own** qb-policejob, qb-doorlock, qb-garages and ps-dispatch.
+  It patches them in place, so your configs (doors, police locations) stay. Every touched file is backed up to
+  `.server-backups\`. A patch that doesn't fit a customised file is reported, and nothing is changed for it.
+- **Do not copy `resources\[upstream]` to the server.** Those are clean clones for development only.
+- **Items:** FredPD adds the items itself at start (tablet `pd_tablet`, ram `pd_ram`, through qb-core's `AddItem`).
+  qb-core is not patched.
+- **Server config:** your settings go in `config\integrations.local.json` in the repo. It overrides
+  `config\integrations.json`, and `git pull` never touches it. Example for a QBCore server:
+  `{ "inventory": "qb-inventory", "target": "qb-target", "doorlock": "qb-doorlock", "prison": "qb-prison", "housing": "none" }`
+- **Only for the ox stack:** install ox_inventory, ox_target and ox_doorlock from their release zips, and evidences
+  from its v1.3.1 release zip. Then run patch-server again; it patches ox_inventory and evidences too.
+
+After this, every later update is one command: see `docs/dev-loop.md`.
 
 ## 3. Database (HeidiSQL)
 
@@ -125,6 +131,7 @@ ensure fredpd_dispatch
 # ensure fredpd_forensics   # ox stack only (needs ox_inventory + ox_target)
 ensure fredpd_intel
 ensure fredpd_breach
+ensure fredpd_reloader   # console command fredpd_reload: restart all FredPD resources in order
 ```
 
 Then edit `resources/[fredpd]/fredpd_core/config/integrations.json`:

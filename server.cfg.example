@@ -84,6 +84,7 @@ ensure fredpd_dispatch
 # ensure fredpd_forensics
 ensure fredpd_intel
 ensure fredpd_breach
+ensure fredpd_reloader   # console command fredpd_reload: restart all FredPD resources in order
 
 # DEV ONLY. fredpd_devtools (/fredpd_selftest, /fredpd_backfill, /fredpd_seed, /fredpd_fakeunits) must never be
 # started on the production server. Uncomment on a development server only:

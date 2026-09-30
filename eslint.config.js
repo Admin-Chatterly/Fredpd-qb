@@ -8,7 +8,7 @@ export default tseslint.config(
   {
     ignores: [
       '**/node_modules/**', '**/dist/**', '**/build/**', '**/coverage/**',
-      'resources/[[]upstream[]]/**', 'resources/**/web/build/**', 'playwright-report/**', 'test-results/**',
+      'resources/[[]upstream[]]/**', '.server-backups/**', 'resources/**/web/build/**', 'playwright-report/**', 'test-results/**',
     ],
   },
   js.configs.recommended,

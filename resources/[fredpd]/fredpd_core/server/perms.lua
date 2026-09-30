@@ -402,7 +402,9 @@ function M.register()
     exports('getTier', M.getTier)
     exports('getUnits', M.getUnits)
     -- Only for server/http.js (POST /grants, /recompute): refused for every other resource (Core.internalExport).
-    Core.internalExport('applyGrants', M.applyGrants)
+    -- fredpd_devtools' /fredpd_devgrant may call it on a dev server only (set fredpd_dev true), never in production.
+    Core.internalExport('applyGrants', M.applyGrants,
+        type(GetConvar) == 'function' and GetConvar('fredpd_dev', 'false') == 'true' and { 'fredpd_devtools' } or nil)
     Core.internalExport('recomputeGrants', M.recompute)
 
     AddEventHandler('playerJoining', function()

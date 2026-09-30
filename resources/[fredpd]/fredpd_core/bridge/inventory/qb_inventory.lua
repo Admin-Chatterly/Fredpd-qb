@@ -59,8 +59,30 @@ function M.server()
         return inv():RemoveItem(src, item, count, slot, M.REASON) == true
     end
 
+    --- FredPD's items, added at runtime through qb-core's AddItem export (qb-core server/exports.lua:111-128), so the
+    --- server's own qb-core/shared/items.lua never has to be patched or replaced. Idempotent ('item_exists' is fine);
+    --- re-run whenever usable items are (re)applied, e.g. after qb-core restarts and forgets runtime items.
+    function impl.ensureItems()
+        local okL, Locale = pcall(require, 'shared.locale')
+        local label = function(key, fallback)
+            local text = okL and Locale.L(key) or nil
+            return (type(text) == 'string' and text ~= key) and text or fallback
+        end
+        local defs = {
+            pd_tablet = { name = 'pd_tablet', label = label('tablet.itemLabel', 'pd_tablet'), weight = 800, type = 'item',
+                image = 'tablet.png', unique = true, useable = true, shouldClose = true, description = '' },
+            pd_ram = { name = 'pd_ram', label = label('breach.itemLabel', 'pd_ram'), weight = 9000, type = 'item',
+                image = 'police_stormram.png', unique = true, useable = false, shouldClose = true, description = '' },
+        }
+        for name, def in pairs(defs) do
+            pcall(function() exports['qb-core']:AddItem(name, def) end)
+        end
+        return true
+    end
+
     --- dispatch(src, itemName, slot, metadata) is server/bridge.lua's single handler (it looks up the latest fn).
     function impl.registerUsable(item, dispatch)
+        impl.ensureItems()
         exports['qb-core']:CreateUseableItem(item, function(source, itemData)
             local data = type(itemData) == 'table' and itemData or {}
             return dispatch(tonumber(source), item, tonumber(data.slot), type(data.info) == 'table' and data.info or {})

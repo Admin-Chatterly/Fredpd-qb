@@ -7,6 +7,9 @@
 --   /fredpd_backfill            rebuild fredpd_persons / fredpd_vehicles_idx from players / player_vehicles
 --   /fredpd_seed [n]            n fake persons (citizenid DEV#####) with vehicles, default 200
 --   /fredpd_fakeunits [n] [s]   n fake units + a test alert every 5 s for s seconds (n = 0 stops), default 20 / 60
+--   /fredpd_devgrant id [preset] give an online player a grant set without the Discord service (presets: all, igv,
+--                               none); needs `set fredpd_dev true`. Stored in fredpd_grant_cache, so it survives a
+--                               rejoin while the service is not running; the service's next push replaces it.
 
 local L = require('@fredpd_core.shared.locale').L
 local Grants = require '@fredpd_core.shared.grants'
@@ -145,3 +148,44 @@ end)
 AddEventHandler('onResourceStop', function(name)
     if name == RESOURCE then FakeUnits.stop('stopped') end
 end)
+
+---------------------------------------------------------------------------------------------------------------
+-- /fredpd_devgrant: test in game before the Discord service runs. The set goes through fredpd_core's applyGrants
+-- (validated, cached, pushed to the client) exactly like a service push.
+
+local DEV_PRESETS = {
+    all = { tier = 2, units = { 'ledning', 'igv' }, grants = {
+        'armory:*', 'mdt_page:*', 'perm:*', 'tool:*', 'unit:igv', 'unit:ledning', 'vehicle:*', 'weapon:*', 'intel_tier:2' } },
+    igv = { tier = 0, units = { 'igv' }, grants = {
+        'armory:*', 'mdt_page:alerts', 'mdt_page:bolos', 'mdt_page:cases', 'mdt_page:charges', 'mdt_page:search',
+        'perm:bolo.create', 'perm:bolo.resolve', 'perm:cases.create', 'perm:charges.apply', 'perm:charges.fine',
+        'unit:igv', 'vehicle:*', 'weapon:*' } },
+    none = { tier = 0, units = {}, grants = {} },
+}
+
+if GetConvar('fredpd_dev', 'false') == 'true' then
+    lib.addCommand('fredpd_devgrant', {
+        help = L('dev.command.devgrant'),
+        params = {
+            { name = 'id', type = 'playerId', help = L('dev.param.playerId') },
+            { name = 'preset', type = 'string', help = L('dev.param.preset'), optional = true },
+        },
+        restricted = ADMIN,
+    }, function(source, args)
+        local src = tonumber(source) or 0
+        local target = tonumber(args.id)
+        local name = args.preset or 'all'
+        local preset = DEV_PRESETS[name]
+        if not preset then return reply(src, 'error', L('dev.devgrant.unknownPreset', { preset = tostring(name) })) end
+        local discord = target and GetPlayerIdentifierByType(tostring(target), 'discord')
+        if not discord then return reply(src, 'error', L('dev.devgrant.noDiscord', { id = tostring(args.id) })) end
+        local grants = {}
+        for i, g in ipairs(preset.grants) do grants[i] = g end
+        table.sort(grants)
+        local set = { grants = grants, denied = {}, tier = preset.tier, units = preset.units,
+            computedAt = os.date('!%Y-%m-%dT%H:%M:%SZ') }
+        local applied = exports.fredpd_core:applyGrants((discord:gsub('^discord:', '')), set)
+        if not applied then return reply(src, 'error', L('dev.devgrant.failed')) end
+        reply(src, 'success', L('dev.devgrant.done', { preset = name, id = tostring(target) }))
+    end)
+end
